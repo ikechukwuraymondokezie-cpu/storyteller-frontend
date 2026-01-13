@@ -7,7 +7,7 @@ export default function TopNav() {
 
                 {/* LEFT */}
                 <div className="flex items-center gap-3">
-                    <img src={logo} alt="Storyteller" className="h-12 w-15" />
+                    <img src={logo} alt="Storyteller" className="h-16 w-19" />
                 </div>
 
                 {/* CENTER */}
@@ -19,7 +19,6 @@ export default function TopNav() {
 
                 {/* RIGHT */}
                 <div className="text-sm text-muted hover:text-white cursor-pointer transition">
-                    F3 Profile
                 </div>
             </div>
         </nav>
