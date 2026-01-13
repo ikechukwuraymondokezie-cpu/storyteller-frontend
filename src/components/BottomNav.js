@@ -1,4 +1,5 @@
-import { Home, BookOpen, Plus, User } from "lucide-react";
+import { HomeIcon, FolderIcon, UserCircleIcon } from "@heroicons/react/24/outline";
+import { Plus } from "lucide-react";
 import f3logo from "../assets/f3logo.png";
 
 function NavItem({ icon, label }) {
@@ -13,8 +14,8 @@ function NavItem({ icon, label }) {
 export default function BottomNav() {
     return (
         <nav className="fixed bottom-0 left-0 right-0 h-16 bg-black border-t border-gray-800 z-50 flex justify-around items-center md:hidden">
-            <NavItem icon={<Home className="w-5 h-5" />} label="Home" />
-            <NavItem icon={<BookOpen className="w-5 h-5" />} label="Library" />
+            <NavItem icon={<HomeIcon className="w-5 h-5" />} label="Home" />
+            <NavItem icon={<FolderIcon className="w-5 h-5" />} label="Library" />
 
             {/* Upload button */}
             <button
@@ -47,7 +48,7 @@ export default function BottomNav() {
                 }
             />
 
-            <NavItem icon={<User className="w-5 h-5" />} label="Profile" />
+            <NavItem icon={<UserCircleIcon className="w-5 h-5" />} label="Profile" />
         </nav>
     );
 }
