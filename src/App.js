@@ -1,4 +1,4 @@
-import Storyteller from "./components/storyteller";
+import Storyteller from "./components/Storyteller";
 
 function App() {
   return (
