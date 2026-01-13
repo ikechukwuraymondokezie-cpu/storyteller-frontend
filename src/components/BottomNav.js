@@ -42,7 +42,7 @@ export default function BottomNav() {
                     <img
                         src={f3logo}
                         alt="F3"
-                        className="w-6 h-6 object-contain"
+                        className="w-15 h-15 object-contain"
                     />
                 }
             />
