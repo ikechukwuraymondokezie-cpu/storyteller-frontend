@@ -1,13 +1,14 @@
-import { Home, BookOpen, Plus, Flame, User } from "lucide-react";
+import { Home, BookOpen, Plus, User } from "lucide-react";
+import f3logo from "../assets/f3logo.png";
 
 function NavItem({ icon, label }) {
     return (
         <button className="flex flex-col items-center justify-center text-xs text-gray-400 hover:text-white transition-colors">
             {icon}
-            <span className="mt-1">{label}</span>
+            {label && <span className="mt-1">{label}</span>}
         </button>
     );
-}
+} l
 
 export default function BottomNav() {
     return (
@@ -17,14 +18,35 @@ export default function BottomNav() {
 
             {/* Upload button */}
             <button
-                className="w-12 h-12 bg-gradient-to-r from-red-500 via-orange-400 to-yellow-300 
-                   flex items-center justify-center text-white text-xl rounded-full 
-                   shadow-[0_0_12px_rgba(255,140,0,0.7)] hover:scale-105 transition-transform"
+                className="
+          w-12 h-12
+          bg-yellow-400
+          flex items-center justify-center
+          text-black
+
+          rounded-md
+          border border-yellow-500
+
+          shadow-[inset_0_1px_0_rgba(255,255,255,0.45),0_4px_10px_rgba(255,200,0,0.6)]
+          hover:bg-yellow-300
+          active:translate-y-[1px]
+          transition-all
+        "
             >
                 <Plus className="w-5 h-5" />
             </button>
 
-            <NavItem icon={<Flame className="w-5 h-5" />} label="F3" />
+            {/* F3 logo (no label) */}
+            <NavItem
+                icon={
+                    <img
+                        src={f3logo}
+                        alt="F3"
+                        className="w-6 h-6 object-contain"
+                    />
+                }
+            />
+
             <NavItem icon={<User className="w-5 h-5" />} label="Profile" />
         </nav>
     );

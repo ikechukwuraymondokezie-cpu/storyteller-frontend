@@ -8,7 +8,8 @@ function App() {
   return (
     <div className="App">
       <TopNav />
-      <main className="pt-20">
+
+      <main className="pt-20 md:ml-24">
         <Storyteller />
       </main>
 
