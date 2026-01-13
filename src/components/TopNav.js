@@ -7,10 +7,7 @@ export default function TopNav() {
 
                 {/* LEFT */}
                 <div className="flex items-center gap-3">
-                    <img src={logo} alt="Storyteller" className="h-8 w-8" />
-                    <span className="text-lg font-semibold tracking-tight">
-                        Storyteller
-                    </span>
+                    <img src={logo} alt="Storyteller" className="h-12 w-15" />
                 </div>
 
                 {/* CENTER */}
