@@ -1,17 +1,12 @@
-import Storyteller from "./components/Storyteller";
+import Storyteller from "./components/storyteller";
 
 function App() {
   return (
-    <div style={{
-      minHeight: "100vh",
-      display: "flex",
-      justifyContent: "center",
-      alignItems: "center",
-      backgroundColor: "#f3f4f6"
-    }}>
+    <div className="min-h-screen bg-gradient-to-br from-indigo-100 via-white to-purple-100 flex items-center justify-center px-4">
       <Storyteller />
     </div>
   );
 }
 
 export default App;
+
