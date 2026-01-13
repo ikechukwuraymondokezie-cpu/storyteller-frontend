@@ -1,8 +1,4 @@
 import { useState, useEffect } from "react";
-import slide1 from "../assets/slide1.png";
-import slide2 from "../assets/slide2.png";
-import slide3 from "../assets/slide3.png";
-import slide4 from "../assets/slide4.png";
 
 const slides = [
     {
@@ -10,28 +6,28 @@ const slides = [
         title: "Upload a PDF",
         subtitle: "Get it read back to you in natural, emotional human voices",
         cta: "Try Upload",
-        bgImage: slide1,
+        bgImage: "https://images.unsplash.com/photo-1581091870623-7f99fca3f26b?auto=format&fit=crop&w=800&q=80",
     },
     {
         id: 2,
         title: "Scan Text",
         subtitle: "Use your camera to scan and get text read aloud instantly",
         cta: "Start Scanning",
-        bgImage: slide2,
+        bgImage: "https://images.unsplash.com/photo-1581091012184-5c0fa78c5d7a?auto=format&fit=crop&w=800&q=80",
     },
     {
         id: 3,
         title: "Paste URLs",
         subtitle: "Read directly from any website in natural voices",
         cta: "Read URL",
-        bgImage: slide3,
+        bgImage: "https://images.unsplash.com/photo-1581092337187-0fc9f69f9789?auto=format&fit=crop&w=800&q=80",
     },
     {
         id: 4,
         title: "Connect Google Drive",
         subtitle: "Access your documents directly and have them read aloud",
         cta: "Link Drive",
-        bgImage: slide4,
+        bgImage: "https://images.unsplash.com/photo-1581091215363-8ef8575ccf17?auto=format&fit=crop&w=800&q=80",
     },
 ];
 
@@ -60,7 +56,9 @@ export default function PromoSlider() {
           `}
                     style={{ backgroundImage: `url(${slide.bgImage})` }}
                 >
-                    <h2 className="text-lg md:text-2xl font-semibold drop-shadow-lg">{slide.title}</h2>
+                    <h2 className="text-lg md:text-2xl font-semibold drop-shadow-lg">
+                        {slide.title}
+                    </h2>
                     <p className="text-sm md:text-base mt-1 drop-shadow">{slide.subtitle}</p>
                     <button className="mt-3 bg-yellow-400 text-black px-4 py-2 rounded-md text-sm font-medium hover:bg-yellow-300 transition">
                         {slide.cta}
