@@ -1,12 +1,17 @@
+import TopNav from "./components/TopNav";
 import Storyteller from "./components/Storyteller";
+import BottomNav from "./components/BottomNav";
 
 function App() {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-100 via-white to-purple-100 flex items-center justify-center px-4">
+    <>
+      <TopNav />
       <Storyteller />
-    </div>
+      <BottomNav />
+    </>
   );
 }
 
 export default App;
+
 
