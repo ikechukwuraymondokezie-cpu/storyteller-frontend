@@ -26,7 +26,7 @@ export default function TopNav() {
                     <img
                         src={logo}
                         alt="Storyteller"
-                        className="h-16 w-20 md:h-10 md:w-12"
+                        className="h-20 w-27 md:h-14 md:w-20"
                     />
                 </div>
 
