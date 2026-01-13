@@ -8,7 +8,7 @@ function NavItem({ icon, label }) {
             {label && <span className="mt-1">{label}</span>}
         </button>
     );
-} l
+}
 
 export default function BottomNav() {
     return (
