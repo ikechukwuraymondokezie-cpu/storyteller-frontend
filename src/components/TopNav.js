@@ -1,19 +1,29 @@
-import React from "react";
-import Logo from "../assets/logo.png"; // your single logo.png
+import logo from "../assets/logo.png";
 
 export default function TopNav() {
     return (
-        <nav
-            className="fixed top-0 left-0 w-full h-16 bg-black z-50 border-b border-gray-800"
-            aria-label="Main navigation"
-        >
-            <div className="max-w-7xl mx-auto h-full px-6 flex items-center">
-                {/* Logo only */}
-                <img
-                    src={Logo}
-                    alt="Storyteller logo"
-                    className="h-[56px] w-auto transition-all duration-300"
-                />
+        <nav className="fixed top-0 z-50 w-full border-b border-white/10 bg-bg/80 backdrop-blur">
+            <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6">
+
+                {/* LEFT */}
+                <div className="flex items-center gap-3">
+                    <img src={logo} alt="Storyteller" className="h-8 w-8" />
+                    <span className="text-lg font-semibold tracking-tight">
+                        Storyteller
+                    </span>
+                </div>
+
+                {/* CENTER */}
+                <div className="hidden md:flex items-center gap-8 text-sm text-muted">
+                    <a className="hover:text-white transition" href="/">Home</a>
+                    <a className="hover:text-white transition" href="/library">Library</a>
+                    <a className="hover:text-white transition" href="/upload">Upload</a>
+                </div>
+
+                {/* RIGHT */}
+                <div className="text-sm text-muted hover:text-white cursor-pointer transition">
+                    F3 Profile
+                </div>
             </div>
         </nav>
     );
