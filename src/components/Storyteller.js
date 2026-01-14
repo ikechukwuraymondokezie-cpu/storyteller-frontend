@@ -4,21 +4,26 @@ import f3banner from "../assets/f3banner2.png";
 
 export default function Storyteller() {
     return (
-        /* FIX: We use 'h-full' and 'fixed' to ensure the background stays black, 
-           but allow the 'main' to handle the rubber-band bounce.
-        */
+        /* 1. This wrapper stays locked to the screen size */
         <div className="fixed inset-0 bg-bg overflow-hidden">
 
-            <main className="h-full w-full overflow-y-auto 
-                             overscroll-y-auto 
-                             flex flex-col pb-20">
+            {/* 2. TopNav is absolute/fixed so it sits ON TOP of the scrolling content */}
+            <div className="absolute top-0 left-0 w-full z-50">
+                <TopNav />
+            </div>
 
-                {/* PROMO SLIDER — 20% */}
-                <div className="h-[20vh] w-full px-6 flex-shrink-0 mt-2">
-                    <PromoSlider />
+            {/* 3. This is the scrolling "sheet" that stretches */}
+            <main className="h-full w-full overflow-y-auto overscroll-y-contain flex flex-col">
+
+                {/* 4. Padding top so the first section starts exactly where you want, 
+                   but the background can still slide behind the TopNav during a stretch */}
+                <div className="pt-20 flex-shrink-0">
+                    <div className="h-[20vh] w-full px-6">
+                        <PromoSlider />
+                    </div>
                 </div>
 
-                {/* MIDDLE BANNER — 30% */}
+                {/* MIDDLE BANNER */}
                 <div
                     className="h-[30vh] w-full mt-4 px-6 rounded-lg flex items-center justify-center bg-cover bg-[position:35%_50%] relative flex-shrink-0"
                     style={{ backgroundImage: `url(${f3banner})` }}
@@ -31,25 +36,19 @@ export default function Storyteller() {
                 </div>
 
                 {/* RECENTLY ADDED */}
-                <div className="w-full px-6 mt-6">
+                <div className="w-full px-6 mt-6 pb-24">
                     <h2 className="text-lg font-semibold text-white mb-4">Recently Added</h2>
-                    <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
+                    <div className="grid gap-4 grid-cols-1">
                         <div className="bg-gray-800 rounded-md p-4 text-white">
                             <h2 className="font-semibold">Example Story.pdf</h2>
                             <p className="text-sm text-gray-400 mt-1">10 hours ago • pdf</p>
                         </div>
-                        <div className="bg-gray-800 rounded-md p-4 text-white">
+                        <div className="bg-gray-800 rounded-md p-4 text-white mb-4">
                             <h2 className="font-semibold">Another Story.pdf</h2>
                             <p className="text-sm text-gray-400 mt-1">2 days ago • pdf</p>
                         </div>
                     </div>
                 </div>
-
-                {/* SPACER: This prevents the 'revealed space' look. 
-                   By making the content exactly fit the screen plus a tiny buffer,
-                   the bounce effect stays tight.
-                */}
-                <div className="h-[1px] w-full flex-shrink-0"></div>
             </main>
         </div>
     );
