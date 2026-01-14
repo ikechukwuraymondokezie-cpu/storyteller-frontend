@@ -6,10 +6,12 @@ import FloatingUploadButton from "./components/FloatingUploadButton";
 
 function App() {
   return (
-    <div className="App">
+    <div className="h-screen flex flex-col overflow-hidden overscroll-y-contain">
+      {/* Top navigation (fixed) */}
       <TopNav />
 
-      <main className="pt-20 md:ml-24">
+      {/* Main content fills remaining height */}
+      <main className="flex-1 pt-20 md:ml-24">
         <Storyteller />
       </main>
 
@@ -23,3 +25,4 @@ function App() {
 }
 
 export default App;
+
