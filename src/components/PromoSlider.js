@@ -51,6 +51,7 @@ export default function PromoSlider() {
                 <div
                     key={slide.id}
                     className={`
+                        
             absolute top-0 left-0 w-full h-full
             bg-cover bg-center
             flex flex-col justify-center items-center
