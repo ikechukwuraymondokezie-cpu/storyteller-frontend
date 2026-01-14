@@ -7,7 +7,7 @@ export default function Storyteller() {
         <div className="min-h-screen w-screen bg-bg flex flex-col">
 
             {/* Top Navigation is fixed */}
-            <main className="flex-1 flex flex-col pt-10 pb-16 md:pb-0">
+            <main className="flex-1 flex flex-col pb-16 md:pb-0">
 
                 {/* Page Sections Wrapper */}
                 <div className="flex flex-col space-y-6">
@@ -20,7 +20,7 @@ export default function Storyteller() {
                     {/* MIDDLE BANNER — 25% of viewport */}
                     <div
                         className="
-                            h-[30vh] w-full px-6 rounded-lg
+                            h-[25vh] w-full px-6 rounded-lg
                             flex items-center justify-center
                             bg-cover bg-[position:25%_50%]
                             relative
