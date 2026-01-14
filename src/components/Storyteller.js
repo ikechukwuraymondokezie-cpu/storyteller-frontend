@@ -1,6 +1,6 @@
 import TopNav from "./TopNav";
 import PromoSlider from "./PromoSlider";
-import f3banner from "../assets/f3banner1.png"; // import your banner image
+import f3banner from "../assets/f3banner2.png"; // import your banner image
 
 export default function Storyteller() {
     return (
