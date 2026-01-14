@@ -1,5 +1,6 @@
 import TopNav from "./TopNav";
 import PromoSlider from "./PromoSlider";
+import f3banner from "../assets/f3banner1.png"; // import your banner image
 
 export default function Storyteller() {
     return (
@@ -12,16 +13,22 @@ export default function Storyteller() {
                     <PromoSlider />
                 </div>
 
-                {/* Middle banner: 30% of viewport height */}
-                <div className="h-[30vh] w-full flex items-center justify-center bg-gray-800 rounded-lg mt-4 px-6">
-                    <div className="flex flex-col items-center text-center text-white">
-                        <img
-                            src="https://via.placeholder.com/80x80.png?text=F3+Logo"
-                            alt="F3 Logo"
-                            className="mb-3"
-                        />
-                        <h2 className="text-xl font-bold">Publish your novels with us</h2>
-                        <p className="text-gray-300 mt-1">Get visibility and reach new readers</p>
+                {/* Middle banner: 30% of viewport height with image background */}
+                <div
+                    className="h-[30vh] w-full rounded-lg mt-4 px-6 flex items-center justify-center bg-cover bg-center relative"
+                    style={{ backgroundImage: `url(${f3banner})` }}
+                >
+                    {/* Overlay for text readability */}
+                    <div className="absolute top-0 left-0 w-full h-full bg-black/30 rounded-lg"></div>
+
+                    {/* Text & Logo */}
+                    <div className="relative flex flex-col items-center text-center text-white">
+                        <h2 className="text-xl md:text-2xl font-bold drop-shadow-lg">
+                            Publish your novels with us
+                        </h2>
+                        <p className="text-sm md:text-base mt-1 drop-shadow">
+                            Get visibility and reach new readers
+                        </p>
                     </div>
                 </div>
 

@@ -1,36 +1,38 @@
 import { useState, useEffect } from "react";
 
+// Import local images
+import uploadImg from "../assets/upload.png";
+import scanImg from "../assets/scan.png";
+import pasteUrlImg from "../assets/pastingurl.png";
+import connectDriveImg from "../assets/connectdrive.png";
+
 const slides = [
     {
         id: 1,
         title: "Upload a PDF",
         subtitle: "Get it read back to you in natural, emotional human voices",
-        image:
-            "https://images.unsplash.com/photo-1591696331119-0e4bc3ef58d4?auto=format&fit=crop&w=1200&q=80",
+        image: uploadImg,
         link: "/upload",
     },
     {
         id: 2,
         title: "Scan Text",
         subtitle: "Use your camera to scan text and get it read aloud instantly",
-        image:
-            "https://images.unsplash.com/photo-1581091012184-5c0fa78c5d7a?auto=format&fit=crop&w=1200&q=80",
+        image: scanImg,
         link: "/scan",
     },
     {
         id: 3,
         title: "Paste URLs",
         subtitle: "Read directly from any website in natural voices",
-        image:
-            "https://images.unsplash.com/photo-1581092337187-0fc9f69f9789?auto=format&fit=crop&w=1200&q=80",
+        image: pasteUrlImg,
         link: "/url",
     },
     {
         id: 4,
         title: "Connect Google Drive",
         subtitle: "Access your documents directly and have them read aloud",
-        image:
-            "https://images.unsplash.com/photo-1581091215363-8ef8575ccf17?auto=format&fit=crop&w=1200&q=80",
+        image: connectDriveImg,
         link: "/drive",
     },
 ];
@@ -46,13 +48,13 @@ export default function PromoSlider() {
     }, []);
 
     return (
-        <div className="relative w-full overflow-hidden h-full rounded-lg cursor-pointer">
+        <div className="relative w-full h-full overflow-hidden rounded-lg cursor-pointer">
             {slides.map((slide, idx) => (
                 <a
                     key={slide.id}
                     href={slide.link}
                     className={`absolute top-0 left-0 w-full h-full bg-cover bg-center flex flex-col justify-center items-center text-center px-4 md:px-12 transition-opacity duration-700
-          ${idx === current ? "opacity-100 z-10" : "opacity-0 z-0"}`}
+            ${idx === current ? "opacity-100 z-10" : "opacity-0 z-0"}`}
                     style={{ backgroundImage: `url(${slide.image})` }}
                 >
                     {/* Overlay for readability */}
@@ -72,7 +74,8 @@ export default function PromoSlider() {
                     <span
                         key={idx}
                         onClick={() => setCurrent(idx)}
-                        className={`w-3 h-3 rounded-full cursor-pointer ${idx === current ? "bg-white" : "bg-white/40"}`}
+                        className={`w-3 h-3 rounded-full cursor-pointer ${idx === current ? "bg-white" : "bg-white/40"
+                            }`}
                     />
                 ))}
             </div>
