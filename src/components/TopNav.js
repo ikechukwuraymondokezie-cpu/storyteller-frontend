@@ -5,7 +5,7 @@ export default function TopNav() {
         <nav
             className="
         fixed z-50
-        top-0 left-0 right-0 h-16 w-full
+        top-0 left-0 right-0 h-13 w-full
         md:top-0 md:left-0 md:right-auto md:h-screen md:w-24
 
         bg-transparent
