@@ -4,16 +4,17 @@ import f3banner from "../assets/f3banner2.png";
 
 export default function Storyteller() {
     return (
-        <div className="h-screen w-screen bg-bg flex flex-col">
-            {/* TopNav is fixed, so we give main padding */}
-            <main className="flex-1 flex flex-col pt-16 md:pt-16 pb-16 md:pb-0">
+        <div className="min-h-screen w-screen bg-bg flex flex-col">
+
+            {/* Top Navigation is fixed */}
+            <main className="flex-1 flex flex-col pb-16 md:pb-0">
 
                 {/* PROMO SLIDER — 20% of viewport */}
                 <div className="h-[20vh] w-full px-6">
                     <PromoSlider />
                 </div>
 
-                {/* MIDDLE BANNER — 30% */}
+                {/* MIDDLE BANNER — 30% of viewport */}
                 <div
                     className="
             h-[30vh] w-full mt-4 px-6 rounded-lg
@@ -26,7 +27,7 @@ export default function Storyteller() {
                     {/* Overlay */}
                     <div className="absolute inset-0 bg-black/25 rounded-lg"></div>
 
-                    {/* Text */}
+                    {/* Text & Logo */}
                     <div className="relative text-center text-white">
                         <h2 className="text-lg md:text-xl font-semibold drop-shadow">
                             Publish your novels with us
@@ -37,8 +38,8 @@ export default function Storyteller() {
                     </div>
                 </div>
 
-                {/* RECENTLY ADDED — scrollable internally */}
-                <div className="h-[20vh] w-full mt-4 px-6 overflow-y-auto">
+                {/* RECENTLY ADDED — original style, 20% */}
+                <div className="h-[20vh] w-full px-6 mt-4 overflow-y-auto">
                     <h2 className="text-lg font-semibold text-white mb-4">Recently Added</h2>
 
                     <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
