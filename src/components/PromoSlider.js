@@ -46,7 +46,7 @@ export default function PromoSlider() {
     }, []);
 
     return (
-        <div className="relative w-full overflow-hidden h-72 md:h-[400px] lg:h-[500px]">
+        <div className="relative w-full overflow-hidden h-36 md:h-[200px] lg:h-[250px]">
             {slides.map((slide, idx) => (
                 <div
                     key={slide.id}
