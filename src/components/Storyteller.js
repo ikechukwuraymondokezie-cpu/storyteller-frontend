@@ -17,7 +17,7 @@ export default function Storyteller() {
             <TopNav />
 
             {/* Top Promotional Slider (20% of viewport height) */}
-            <div className="h-[20vh] mt-16">
+            <div className="h-[5vh] mt-10">
                 <PromoSlider />
             </div>
 

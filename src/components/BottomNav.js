@@ -20,7 +20,7 @@ export default function BottomNav() {
             {/* Upload button */}
             <button
                 className="
-          w-12 h-12
+          w-10 h-10
           bg-yellow-400
           flex items-center justify-center
           text-black
