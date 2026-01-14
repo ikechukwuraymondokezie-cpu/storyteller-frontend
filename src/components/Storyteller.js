@@ -4,28 +4,24 @@ import f3banner from "../assets/f3banner2.png";
 
 export default function Storyteller() {
     return (
-        /* Manual 105vh height to allow for the 'stretchy' scroll effect */
-        /* overscroll-contain prevents the browser from showing white gaps when you pull */
-        <div className="h-[105vh] w-screen bg-bg flex flex-col overflow-y-auto overscroll-y-contain">
+        <div className="min-h-screen w-screen bg-bg flex flex-col">
 
-            {/* Top Navigation is fixed/static at the top */}
-            {/* pt-4 pushes the slider close to the header logo */}
-            {/* pb-60 creates the large manual space at the very bottom */}
-            <main className="flex-1 flex flex-col pt-4 pb-60 md:pb-0">
+            {/* Top Navigation is fixed */}
+            <main className="flex-1 flex flex-col pb-16 md:pb-0">
 
-                {/* PROMO SLIDER — Sits close to the TopNav */}
-                <div className="h-[20vh] w-full px-6 flex-shrink-0">
+                {/* PROMO SLIDER — 20% of viewport */}
+                <div className="h-[20vh] w-full px-6">
                     <PromoSlider />
                 </div>
 
-                {/* MIDDLE BANNER — 30% of viewport with manual top margin */}
+                {/* MIDDLE BANNER — 30% of viewport */}
                 <div
                     className="
-                        h-[30vh] w-full mt-6 px-6 rounded-lg
-                        flex items-center justify-center
-                        bg-cover bg-[position:35%_50%]
-                        relative flex-shrink-0
-                    "
+            h-[30vh] w-full mt-4 px-6 rounded-lg
+            flex items-center justify-center
+            bg-cover bg-[position:35%_50%]
+            relative
+          "
                     style={{ backgroundImage: `url(${f3banner})` }}
                 >
                     {/* Overlay */}
@@ -42,8 +38,8 @@ export default function Storyteller() {
                     </div>
                 </div>
 
-                {/* RECENTLY ADDED — Spaced out from the banner */}
-                <div className="w-full px-6 mt-10 flex-shrink-0">
+                {/* RECENTLY ADDED — original style, 20% */}
+                <div className="h-[20vh] w-full px-6 mt-4 overflow-y-auto">
                     <h2 className="text-lg font-semibold text-white mb-4">Recently Added</h2>
 
                     <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
@@ -62,8 +58,6 @@ export default function Storyteller() {
                     </div>
                 </div>
 
-                {/* The 'pb-60' on the <main> tag above creates the empty space 
-                    under this section before you hit the bottom navigation. */}
             </main>
         </div>
     );
