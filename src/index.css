@@ -1,19 +1,9 @@
-/* index.css */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 /* global polish */
 html,
-body,
-#root {
-  /* Tailwind utilities */
+body {
   @apply bg-bg text-white antialiased;
-
-  /* Regular CSS */
-  height: 100%;
-  margin: 0;
-  overflow: hidden;
-  overscroll-behavior-y: auto;
-  -webkit-overflow-scrolling: touch;
 }
