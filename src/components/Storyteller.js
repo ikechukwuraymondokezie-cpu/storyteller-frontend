@@ -1,32 +1,36 @@
 import TopNav from "./TopNav";
 import PromoSlider from "./PromoSlider";
-import f3banner from "../assets/f3banner2.png"; // import your banner image
+import f3banner from "../assets/f3banner2.png";
 
 export default function Storyteller() {
     return (
         <div className="h-screen w-screen overflow-hidden overscroll-y-contain bg-bg flex flex-col">
             {/* Top Navigation is fixed */}
-            <main className="flex-1 flex flex-col md:pb-0 pb-16"> {/* pb-16 adds padding for mobile bottom nav */}
-
+            <main className="flex-1 flex flex-col md:pb-0 pb-16">
                 {/* Promotional Slideshow: 20% of viewport height */}
                 <div className="h-[20vh] w-full px-6">
                     <PromoSlider />
                 </div>
 
-                {/* Middle banner: 30% of viewport height with image background */}
+                {/* Middle banner: 30% of viewport height — FULL IMAGE (no crop) */}
                 <div
-                    className="h-[30vh] w-full rounded-lg mt-4 px-6 flex items-center justify-center bg-cover bg-center relative"
+                    className="
+            h-[30vh] w-full mt-4 px-6 rounded-lg
+            flex items-center justify-center
+            bg-contain bg-center bg-no-repeat
+            relative
+          "
                     style={{ backgroundImage: `url(${f3banner})` }}
                 >
-                    {/* Overlay for text readability */}
-                    <div className="absolute top-0 left-0 w-full h-full bg-black/30 rounded-lg"></div>
+                    {/* Optional soft overlay (very light so image still shows fully) */}
+                    <div className="absolute inset-0 bg-black/10 rounded-lg"></div>
 
-                    {/* Text & Logo */}
-                    <div className="relative flex flex-col items-center text-center text-white">
-                        <h2 className="text-xl md:text-2xl font-bold drop-shadow-lg">
+                    {/* Text */}
+                    <div className="relative text-center text-white">
+                        <h2 className="text-lg md:text-xl font-semibold drop-shadow">
                             Publish your novels with us
                         </h2>
-                        <p className="text-sm md:text-base mt-1 drop-shadow">
+                        <p className="text-xs md:text-sm mt-1 text-gray-200 drop-shadow">
                             Get visibility and reach new readers
                         </p>
                     </div>
@@ -34,19 +38,30 @@ export default function Storyteller() {
 
                 {/* Recently Added section: 20% of viewport height */}
                 <div className="h-[20vh] w-full px-6 mt-4 overflow-y-auto">
-                    <h2 className="text-lg font-semibold text-white mb-4">Recently Added</h2>
-                    <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
-                        <div className="bg-gray-800 rounded-md p-4 text-white">
-                            <h2 className="font-semibold">Example Story.pdf</h2>
-                            <p className="text-sm text-gray-400 mt-1">10 hours ago • pdf</p>
+                    <h2 className="text-sm font-semibold text-white mb-3">
+                        Recently Added
+                    </h2>
+
+                    <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
+                        <div className="bg-gray-800 rounded-md p-3 text-white">
+                            <h2 className="font-medium text-sm">Example Story.pdf</h2>
+                            <p className="text-xs text-gray-400 mt-1">
+                                10 hours ago • pdf
+                            </p>
                         </div>
-                        <div className="bg-gray-800 rounded-md p-4 text-white">
-                            <h2 className="font-semibold">Another Story.pdf</h2>
-                            <p className="text-sm text-gray-400 mt-1">2 days ago • pdf</p>
+
+                        <div className="bg-gray-800 rounded-md p-3 text-white">
+                            <h2 className="font-medium text-sm">Another Story.pdf</h2>
+                            <p className="text-xs text-gray-400 mt-1">
+                                2 days ago • pdf
+                            </p>
                         </div>
-                        <div className="bg-gray-800 rounded-md p-4 text-white">
-                            <h2 className="font-semibold">New Tale.pdf</h2>
-                            <p className="text-sm text-gray-400 mt-1">5 days ago • pdf</p>
+
+                        <div className="bg-gray-800 rounded-md p-3 text-white">
+                            <h2 className="font-medium text-sm">New Tale.pdf</h2>
+                            <p className="text-xs text-gray-400 mt-1">
+                                5 days ago • pdf
+                            </p>
                         </div>
                     </div>
                 </div>
