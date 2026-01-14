@@ -4,45 +4,36 @@ import f3banner from "../assets/f3banner2.png";
 
 export default function Storyteller() {
     return (
-        <div className="min-h-screen w-screen bg-bg flex flex-col">
+        /* FIX: We use 'h-full' and 'fixed' to ensure the background stays black, 
+           but allow the 'main' to handle the rubber-band bounce.
+        */
+        <div className="fixed inset-0 bg-bg overflow-hidden">
 
-            {/* Top Navigation is fixed */}
-            <main className="flex-1 flex flex-col pb-16 md:pb-0">
+            <main className="h-full w-full overflow-y-auto 
+                             overscroll-y-auto 
+                             flex flex-col pb-20">
 
-                {/* PROMO SLIDER — 20% of viewport */}
-                <div className="h-[20vh] w-full px-6">
+                {/* PROMO SLIDER — 20% */}
+                <div className="h-[20vh] w-full px-6 flex-shrink-0 mt-2">
                     <PromoSlider />
                 </div>
 
-                {/* MIDDLE BANNER — 30% of viewport */}
+                {/* MIDDLE BANNER — 30% */}
                 <div
-                    className="
-            h-[30vh] w-full mt-4 px-6 rounded-lg
-            flex items-center justify-center
-            bg-cover bg-[position:35%_50%]
-            relative
-          "
+                    className="h-[30vh] w-full mt-4 px-6 rounded-lg flex items-center justify-center bg-cover bg-[position:35%_50%] relative flex-shrink-0"
                     style={{ backgroundImage: `url(${f3banner})` }}
                 >
-                    {/* Overlay */}
                     <div className="absolute inset-0 bg-black/25 rounded-lg"></div>
-
-                    {/* Text & Logo */}
                     <div className="relative text-center text-white">
-                        <h2 className="text-lg md:text-xl font-semibold drop-shadow">
-                            Publish your novels with us
-                        </h2>
-                        <p className="text-xs md:text-sm mt-1 text-gray-200 drop-shadow">
-                            Get visibility and reach new readers
-                        </p>
+                        <h2 className="text-lg md:text-xl font-semibold drop-shadow">Publish your novels with us</h2>
+                        <p className="text-xs md:text-sm mt-1 text-gray-200 drop-shadow">Get visibility and reach new readers</p>
                     </div>
                 </div>
 
-                {/* RECENTLY ADDED — original style, 20% */}
-                <div className="h-[20vh] w-full px-6 mt-4 overflow-y-auto">
+                {/* RECENTLY ADDED */}
+                <div className="w-full px-6 mt-6">
                     <h2 className="text-lg font-semibold text-white mb-4">Recently Added</h2>
-
-                    <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
+                    <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
                         <div className="bg-gray-800 rounded-md p-4 text-white">
                             <h2 className="font-semibold">Example Story.pdf</h2>
                             <p className="text-sm text-gray-400 mt-1">10 hours ago • pdf</p>
@@ -51,13 +42,14 @@ export default function Storyteller() {
                             <h2 className="font-semibold">Another Story.pdf</h2>
                             <p className="text-sm text-gray-400 mt-1">2 days ago • pdf</p>
                         </div>
-                        <div className="bg-gray-800 rounded-md p-4 text-white">
-                            <h2 className="font-semibold">New Tale.pdf</h2>
-                            <p className="text-sm text-gray-400 mt-1">5 days ago • pdf</p>
-                        </div>
                     </div>
                 </div>
 
+                {/* SPACER: This prevents the 'revealed space' look. 
+                   By making the content exactly fit the screen plus a tiny buffer,
+                   the bounce effect stays tight.
+                */}
+                <div className="h-[1px] w-full flex-shrink-0"></div>
             </main>
         </div>
     );
