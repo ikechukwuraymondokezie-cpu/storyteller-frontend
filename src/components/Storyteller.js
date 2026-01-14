@@ -6,7 +6,7 @@ export default function Storyteller() {
         <div className="min-h-screen bg-bg">
             <TopNav />
 
-            <main className="mx-auto max-w-7xl px-6 pt-10">
+            <main className="mx-auto max-w-7xl px-6 pt-5">
                 {/* Promotional Slideshow */}
                 <PromoSlider />
 
