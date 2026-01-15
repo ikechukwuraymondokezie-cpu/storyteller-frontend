@@ -4,45 +4,48 @@ import f3banner from "../assets/f3banner2.png";
 
 export default function Storyteller() {
     return (
-        <div className="min-h-screen w-screen bg-bg flex flex-col">
+        // Root fills viewport
+        <div className="h-screen w-screen bg-bg flex flex-col overflow-hidden">
 
-            {/* Top Navigation is fixed */}
-            <main className="flex-1 flex flex-col pb-0 md:pb-0">
+            <TopNav />
 
-                {/* Page Sections Wrapper */}
-                <div className="flex flex-col space-y-6 -mt-8">
+            {/* Main scrollable container */}
+            <main className="flex-1 flex flex-col overflow-hidden">
+
+                {/* Page sections */}
+                <div className="flex flex-col flex-1 space-y-6 -mt-7">
 
                     {/* PROMO SLIDER — 20% of viewport */}
-                    <div className="h-[20vh] w-full px-6">
+                    <div className="flex-[0_0_20vh] w-full px-6">
                         <PromoSlider />
                     </div>
 
-                    {/* MIDDLE BANNER — 25% of viewport */}
+                    {/* F3 BANNER — 26% of viewport */}
                     <div
                         className="
-                            h-[26vh] w-full px-6 rounded-lg
-                            flex items-center justify-center
-                            bg-cover bg-[position:35%_50%]
-                            relative
-                        "
+              flex-[0_0_26vh] w-full px-6 rounded-lg
+              flex items-center justify-center
+              bg-cover bg-[position:35%_50%]
+              relative
+            "
                         style={{ backgroundImage: `url(${f3banner})` }}
                     >
-                        {/* Overlay */}
-                        <div className="absolute inset-0 bg-black/25 rounded-lg"></div>
+                        {/* Very dark overlay */}
+                        <div className="absolute inset-0 bg-black/75 rounded-lg"></div>
 
                         {/* Text */}
-                        <div className="relative text-center text-white">
-                            <h2 className="text-lg md:text-xl font-semibold drop-shadow">
+                        <div className="relative text-center">
+                            <h2 className="text-lg md:text-xl font-semibold text-blue-400 drop-shadow">
                                 Publish your novels
                             </h2>
-                            <p className="text-xs md:text-sm mt-1 text-gray-200 drop-shadow">
+                            <p className="text-xs md:text-sm mt-1 text-white drop-shadow">
                                 Get visibility and reach new readers
                             </p>
                         </div>
                     </div>
 
-                    {/* RECENTLY ADDED */}
-                    <div className="h-[20vh] w-full px-6 overflow-y-auto">
+                    {/* RECENTLY ADDED — inner scroll */}
+                    <div className="flex-1 w-full px-6 overflow-y-auto">
                         <h2 className="text-lg font-semibold text-white mb-4">
                             Recently Added
                         </h2>
@@ -68,6 +71,8 @@ export default function Storyteller() {
                                     5 days ago • pdf
                                 </p>
                             </div>
+
+                            {/* Add more items to see inner scroll in action */}
                         </div>
                     </div>
 
