@@ -7,7 +7,7 @@ export default function Storyteller() {
         <div className="min-h-screen w-screen bg-bg flex flex-col">
 
             {/* Top Navigation is fixed */}
-            <main className="flex-1 flex flex-col pb-0 md:pb-0">
+            <main className="flex-1 flex flex-col pt-4 pb-0 md:pb-0">
 
                 {/* Page Sections Wrapper */}
                 <div className="flex flex-col space-y-6">
