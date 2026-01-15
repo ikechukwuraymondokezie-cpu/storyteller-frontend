@@ -1,69 +1,71 @@
 import { useState } from "react";
-import TopNav from "./TopNav";
-import { MoreVertical } from "lucide-react";
-
-const libraryItems = [
-    { title: "Example Story.pdf", type: "pdf", date: "10 hours ago" },
-    { title: "Another Story.pdf", type: "pdf", date: "2 days ago" },
-    { title: "New Tale.pdf", type: "pdf", date: "5 days ago" },
-    // add more items...
-];
+import { Search, MoreVertical } from "lucide-react";
 
 export default function Library() {
     const [menuOpen, setMenuOpen] = useState(false);
 
     return (
-        <div className="min-h-screen w-screen bg-bg flex flex-col">
-            {/* Top Navigation */}
-            <TopNav />
+        <div className="w-full h-full flex flex-col text-white px-6">
 
-            {/* Top controls: search + menu */}
-            <div className="flex justify-end items-center px-6 py-4 space-x-4 mt-16">
-                {/* Search bar */}
-                <input
-                    type="text"
-                    placeholder="Search your library..."
-                    className="p-2 rounded-md bg-gray-800 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                />
+            {/* TOP BAR */}
+            <div className="flex items-center justify-between h-14">
+                {/* LEFT */}
+                <h1 className="text-lg font-semibold">Library</h1>
 
-                {/* 3-dot menu */}
-                <div className="relative">
-                    <button
-                        onClick={() => setMenuOpen(!menuOpen)}
-                        className="p-2 rounded-full hover:bg-gray-700 transition"
-                    >
-                        <MoreVertical className="w-5 h-5 text-white" />
+                {/* RIGHT */}
+                <div className="flex items-center gap-4 relative">
+                    <Search className="w-5 h-5 cursor-pointer" />
+
+                    <button onClick={() => setMenuOpen(!menuOpen)}>
+                        <MoreVertical className="w-5 h-5" />
                     </button>
 
                     {menuOpen && (
-                        <div className="absolute right-0 mt-2 w-48 bg-gray-800 text-white rounded-md shadow-lg z-50">
-                            <button className="w-full text-left px-4 py-2 hover:bg-gray-700 transition">Create Folder</button>
-                            <button className="w-full text-left px-4 py-2 hover:bg-gray-700 transition">List</button>
-                            <button className="w-full text-left px-4 py-2 hover:bg-gray-700 transition">Grid</button>
-                            <button className="w-full text-left px-4 py-2 hover:bg-gray-700 transition">Recent</button>
-                            <button className="w-full text-left px-4 py-2 hover:bg-gray-700 transition">Alphabetical</button>
+                        <div className="absolute right-0 top-8 bg-black border border-gray-800 rounded-md text-sm z-50">
+                            <button className="block px-4 py-2 hover:bg-gray-800 w-full text-left">
+                                Create folder
+                            </button>
+                            <button className="block px-4 py-2 hover:bg-gray-800 w-full text-left">
+                                List
+                            </button>
+                            <button className="block px-4 py-2 hover:bg-gray-800 w-full text-left">
+                                Grid
+                            </button>
+                            <button className="block px-4 py-2 hover:bg-gray-800 w-full text-left">
+                                Recent
+                            </button>
+                            <button className="block px-4 py-2 hover:bg-gray-800 w-full text-left">
+                                Alphabetical
+                            </button>
                         </div>
                     )}
                 </div>
             </div>
 
-            {/* Main content */}
-            <main className="flex-1 flex flex-col px-6">
-                {/* Welcome text */}
-                <h2 className="text-white text-xl font-semibold mb-4">Welcome to your library</h2>
+            {/* WELCOME TEXT */}
+            <p className="mt-4 mb-3 text-white">
+                Welcome to your library
+            </p>
 
-                {/* Library grid */}
-                <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 overflow-y-auto flex-1">
-                    {libraryItems.map((item, idx) => (
-                        <div key={idx} className="bg-gray-800 rounded-md p-4 text-white hover:bg-gray-700 transition">
-                            <h3 className="font-semibold">{item.title}</h3>
-                            <p className="text-sm text-gray-400 mt-1">
-                                {item.date} • {item.type}
-                            </p>
-                        </div>
-                    ))}
+            {/* BOOK LIST */}
+            <div className="flex-1 overflow-y-auto grid gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 pb-6">
+
+                <div className="bg-yellow-400/90 text-black rounded-md px-4 py-3 h-[72px]">
+                    <h2 className="font-semibold text-sm">Example Story.pdf</h2>
+                    <p className="text-xs text-black/70">PDF • Recent</p>
                 </div>
-            </main>
+
+                <div className="bg-yellow-400/90 text-black rounded-md px-4 py-3 h-[72px]">
+                    <h2 className="font-semibold text-sm">Another Story.pdf</h2>
+                    <p className="text-xs text-black/70">PDF • 2 days ago</p>
+                </div>
+
+                <div className="bg-yellow-400/90 text-black rounded-md px-4 py-3 h-[72px]">
+                    <h2 className="font-semibold text-sm">New Tale.pdf</h2>
+                    <p className="text-xs text-black/70">PDF • 5 days ago</p>
+                </div>
+
+            </div>
         </div>
     );
 }
