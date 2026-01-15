@@ -10,14 +10,14 @@ export default function Storyteller() {
             <main className="flex-1 flex flex-col pb-0 md:pb-0">
 
                 {/* Page Sections Wrapper */}
-                <div className="flex flex-col space-y-6 -mt-6">
+                <div className="flex flex-col space-y-6 -mt-5">
 
                     {/* PROMO SLIDER — 20% of viewport */}
                     <div className="h-[20vh] w-full px-6">
                         <PromoSlider />
                     </div>
 
-                    {/* MIDDLE BANNER — 25% of viewport */}
+                    {/* MIDDLE BANNER — 26% of viewport */}
                     <div
                         className="
                             h-[26vh] w-full px-6 rounded-lg
@@ -27,15 +27,15 @@ export default function Storyteller() {
                         "
                         style={{ backgroundImage: `url(${f3banner})` }}
                     >
-                        {/* Overlay */}
-                        <div className="absolute inset-0 bg-black/25 rounded-lg"></div>
+                        {/* VERY DARK OVERLAY */}
+                        <div className="absolute inset-0 bg-black/75 rounded-lg"></div>
 
                         {/* Text */}
-                        <div className="relative text-center text-white">
-                            <h2 className="text-lg md:text-xl font-semibold drop-shadow">
+                        <div className="relative text-center">
+                            <h2 className="text-lg md:text-xl font-semibold text-sky-400 drop-shadow">
                                 Publish your novels
                             </h2>
-                            <p className="text-xs md:text-sm mt-1 text-gray-200 drop-shadow">
+                            <p className="text-xs md:text-sm mt-1 text-white drop-shadow">
                                 Get visibility and reach new readers
                             </p>
                         </div>
