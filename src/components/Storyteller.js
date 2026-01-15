@@ -10,7 +10,7 @@ export default function Storyteller() {
             <main className="flex-1 flex flex-col pb-0 md:pb-0">
 
                 {/* Page Sections Wrapper */}
-                <div className="flex flex-col space-y-6 -mt-3">
+                <div className="flex flex-col space-y-6 -mt-7">
 
                     {/* PROMO SLIDER — 20% of viewport */}
                     <div className="h-[20vh] w-full px-6">
