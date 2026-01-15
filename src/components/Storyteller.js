@@ -22,7 +22,7 @@ export default function Storyteller() {
                 "
             >
                 {/* Page Sections */}
-                <div className="flex flex-col space-y-6 px-6 pt-4">
+                <div className="flex flex-col space-y-6 -mt-8">
 
                     {/* PROMO SLIDER */}
                     <div className="h-[20vh] w-full">
