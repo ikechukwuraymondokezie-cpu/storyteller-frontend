@@ -13,7 +13,7 @@ const slides = [
         subtitle: "Get it read back to you in natural, emotional human voices",
         image: uploadImg,
         link: "/upload",
-        position: "top center", // 👈 important
+        position: "top center",
     },
     {
         id: 2,
@@ -21,7 +21,7 @@ const slides = [
         subtitle: "Use your camera to scan text and get it read aloud instantly",
         image: scanImg,
         link: "/scan",
-        position: "top center", // 👈 important
+        position: "top center",
     },
     {
         id: 3,
@@ -46,6 +46,7 @@ export default function PromoSlider() {
         const timer = setInterval(() => {
             setCurrent((prev) => (prev + 1) % slides.length);
         }, 5000);
+
         return () => clearInterval(timer);
     }, []);
 
@@ -55,12 +56,14 @@ export default function PromoSlider() {
                 <a
                     key={slide.id}
                     href={slide.link}
-                    className={`absolute top-0 left-0 w-full h-full
-            bg-cover
-            flex flex-col justify-center items-center text-center
-            px-4 md:px-12
-            transition-opacity duration-700
-            ${idx === current ? "opacity-100 z-10" : "opacity-0 z-0"}`}
+                    className={`
+                        absolute top-0 left-0 w-full h-full
+                        bg-cover bg-center
+                        flex items-center justify-center
+                        px-4 md:px-12
+                        transition-opacity duration-700
+                        ${idx === current ? "opacity-100 z-10" : "opacity-0 z-0"}
+                    `}
                     style={{
                         backgroundImage: `url(${slide.image})`,
                         backgroundPosition: slide.position || "center",
@@ -70,25 +73,27 @@ export default function PromoSlider() {
                     <div className="absolute inset-0 bg-black/40 rounded-lg"></div>
 
                     {/* Text */}
-                    <div className="relative text-white max-w-xl">
-                        <h2 className="text-lg md:text-xl font-semibold drop-shadow">
+                    <div className="relative max-w-xl text-center">
+                        <h2 className="text-lg md:text-xl font-semibold text-yellow-400 drop-shadow">
                             {slide.title}
                         </h2>
-                        <p className="mt-1 text-xs md:text-sm text-gray-200 drop-shadow">
+                        <p className="mt-1 text-xs md:text-sm text-[#f5f1e6] drop-shadow">
                             {slide.subtitle}
                         </p>
                     </div>
                 </a>
             ))}
 
-            {/* Dots */}
+            {/* Navigation dots */}
             <div className="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-2 z-20">
                 {slides.map((_, idx) => (
                     <span
                         key={idx}
                         onClick={() => setCurrent(idx)}
-                        className={`w-2.5 h-2.5 rounded-full cursor-pointer transition
-              ${idx === current ? "bg-white" : "bg-white/40"}`}
+                        className={`
+                            w-2.5 h-2.5 rounded-full cursor-pointer transition
+                            ${idx === current ? "bg-yellow-400" : "bg-white/40"}
+                        `}
                     />
                 ))}
             </div>
