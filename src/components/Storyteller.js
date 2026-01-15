@@ -4,7 +4,7 @@ import f3banner from "../assets/f3banner2.png";
 
 export default function Storyteller() {
     return (
-        <div className="min-h-screen w-screen bg-bg flex flex-col">
+        <div className="w-screen bg-bg flex flex-col">
 
             {/* Top Navigation is fixed */}
             <main className="flex-1 flex flex-col pb-0 md:pb-0">
