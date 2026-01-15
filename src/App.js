@@ -1,28 +1,36 @@
 import React from "react";
+import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
+
 import TopNav from "./components/TopNav";
-import Storyteller from "./components/Storyteller";
 import BottomNav from "./components/BottomNav";
 import FloatingUploadButton from "./components/FloatingUploadButton";
 
+import Storyteller from "./components/Storyteller";
+import Library from "./components/Library";
+
 function App() {
   return (
-    <div className="App min-h-screen flex flex-col bg-bg">
-      {/* Top navigation */}
-      <TopNav />
+    <Router>
+      <div className="App min-h-screen flex flex-col bg-bg">
+        {/* Top navigation */}
+        <TopNav />
 
-      {/* Main content flexes and scrolls naturally */}
-      <main className="flex-1 pt-20 md:ml-24 overflow-auto">
-        <Storyteller />
-      </main>
+        {/* Main content */}
+        <main className="flex-1 pt-20 md:ml-24 overflow-auto">
+          <Routes>
+            <Route path="/" element={<Storyteller />} />
+            <Route path="/library" element={<Library />} />
+          </Routes>
+        </main>
 
-      {/* Mobile bottom navbar */}
-      <BottomNav />
+        {/* Mobile bottom navbar */}
+        <BottomNav />
 
-      {/* Desktop floating upload button */}
-      <FloatingUploadButton />
-    </div>
+        {/* Desktop floating upload button */}
+        <FloatingUploadButton />
+      </div>
+    </Router>
   );
 }
 
 export default App;
-
