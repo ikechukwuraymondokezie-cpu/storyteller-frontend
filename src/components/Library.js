@@ -70,12 +70,12 @@ export default function Library() {
                     onClick={() => setActiveBook(null)}
                 >
                     <div
-                        className="w-full max-w-3xl mx-auto bg-zinc-900 rounded-t-2xl p-6 animate-slideUp"
+                        className="w-full max-w-3xl mx-auto bg-zinc-900 rounded-t-2xl pt-1 px-6 pb-6 animate-slideUp"
                         onClick={(e) => e.stopPropagation()}
                     >
 
                         {/* DRAG HANDLE */}
-                        <div className="flex justify-center mb-2">
+                        <div className="flex justify-center mb-4">
                             <div className="w-12 h-1.5 bg-zinc-700 rounded-full"></div>
                         </div>
 
@@ -103,12 +103,12 @@ export default function Library() {
                                 <span className="font-medium">Download Audio (Offline)</span>
                             </button>
 
-                            <button className="w-full flex items-center gap-3 bg-black-800 hover:bg-bg-700 text-white py-3 px-4 rounded-xl">
+                            <button className="w-full flex items-center gap-3 bg-black-800 hover:bg-black-700 text-white py-3 px-4 rounded-xl">
                                 <img src={f3logo} className="w-8 h-8" alt="Funfiction" />
                                 <span>Read in Funfiction &amp; Fallacies</span>
                             </button>
 
-                            <button className="w-full flex items-center gap-3 bg-black-800 hover:bg-bg-700 text-white py-3 px-4 rounded-xl">
+                            <button className="w-full flex items-center gap-3 bg-black-800 hover:bg-black-700 text-white py-3 px-4 rounded-xl">
                                 <Folder className="w-5 h-5" />
                                 <span>Move to Folder</span>
                             </button>
