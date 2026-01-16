@@ -11,12 +11,13 @@ import Library from "./components/Library";
 function App() {
   return (
     <Router>
-      <div className="App min-h-screen flex flex-col bg-bg">
-        {/* Top navigation */}
+      <div className="App min-h-screen flex bg-bg">
+
+        {/* Top navigation / sidebar */}
         <TopNav />
 
         {/* Main content */}
-        <main className="flex-1 pt-20 md:ml-24 overflow-auto">
+        <main className="flex-1 pt-11 md:ml-32 overflow-auto">
           <Routes>
             <Route path="/" element={<Storyteller />} />
             <Route path="/library" element={<Library />} />

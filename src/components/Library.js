@@ -10,10 +10,10 @@ export default function Library() {
             </h1>
 
             {/* BOOK LIST */}
-            <div className="flex-1 overflow-y-auto grid gap-3 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 pb-6">
+            <div className="flex-1 overflow-y-auto grid gap-0 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 pb-6">
 
                 {/* Example Book Card */}
-                <div className="bg-bg/20 rounded-md px-4 py-3 flex items-center gap-3 h-[72px]">
+                <div className="bg-bg/20 rounded-md px-4 py-3 flex items-center gap-3 h-[72px] border-b border-cream/40">
                     {/* Cover Placeholder */}
                     <div className="w-12 h-16 bg-gray-700 rounded-md flex-shrink-0"></div>
 
@@ -24,7 +24,7 @@ export default function Library() {
                     </div>
                 </div>
 
-                <div className="bg-bg/20 rounded-md px-4 py-3 flex items-center gap-3 h-[72px]">
+                <div className="bg-bg/20 rounded-md px-4 py-3 flex items-center gap-3 h-[72px] border-b border-cream/40">
                     <div className="w-12 h-16 bg-gray-700 rounded-md flex-shrink-0"></div>
                     <div className="flex flex-col justify-center">
                         <h2 className="font-semibold text-sm">Another Story.pdf</h2>
@@ -32,7 +32,7 @@ export default function Library() {
                     </div>
                 </div>
 
-                <div className="bg-bg/20 rounded-md px-4 py-3 flex items-center gap-3 h-[72px]">
+                <div className="bg-bg/20 rounded-md px-4 py-3 flex items-center gap-3 h-[72px] border-b border-cream/40">
                     <div className="w-12 h-16 bg-gray-700 rounded-md flex-shrink-0"></div>
                     <div className="flex flex-col justify-center">
                         <h2 className="font-semibold text-sm">New Tale.pdf</h2>
