@@ -66,11 +66,11 @@ export default function Library() {
             {/* SLIDE-UP BOTTOM SHEET */}
             {activeBook && (
                 <div
-                    className="fixed inset-0 bg-black/60 z-50 flex items-end"
+                    className="fixed inset-0 bg-black/60 z-60 flex items-end"
                     onClick={() => setActiveBook(null)}
                 >
                     <div
-                        className="w-full max-w-3xl mx-auto bg-zinc-900 rounded-t-2xl pt-1 px-6 pb-6 animate-slideUp"
+                        className="w-full max-w-3xl mx-auto bg-zinc-900 rounded-t-2xl pt-2 px-6 pb-6 animate-slideUp"
                         onClick={(e) => e.stopPropagation()}
                     >
 
@@ -82,11 +82,11 @@ export default function Library() {
                         {/* HEADER */}
                         <div className="flex gap-3 mb-4">
                             {/* Smaller cover art */}
-                            <div className="w-12 h-18 bg-gray-700 rounded-md flex-shrink-0">
+                            <div className="w-16 h-24 rounded-md flex-shrink-0 overflow-hidden">
                                 <img
                                     src={activeBook.cover}
                                     alt={activeBook.title}
-                                    className="w-full h-full object-cover rounded-md"
+                                    className="w-full h-full object-cover"
                                 />
                             </div>
                             <div>
@@ -98,17 +98,19 @@ export default function Library() {
 
                         {/* ACTIONS */}
                         <div className="space-y-3">
+                            {/* PRIMARY ACTION */}
                             <button className="w-full flex items-center gap-3 bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-4 rounded-xl">
                                 <Download className="w-5 h-5" />
                                 <span className="font-medium">Download Audio (Offline)</span>
                             </button>
 
-                            <button className="w-full flex items-center gap-3 bg-black-800 hover:bg-black-700 text-white py-3 px-4 rounded-xl">
-                                <img src={f3logo} className="w-8 h-8" alt="Funfiction" />
+                            {/* SECONDARY ACTIONS (black buttons) */}
+                            <button className="w-full flex items-center gap-3 bg-black hover:bg-black/90 text-white py-3 px-4 rounded-xl">
+                                <img src={f3logo} className="w-6 h-6" alt="Funfiction" />
                                 <span>Read in Funfiction &amp; Fallacies</span>
                             </button>
 
-                            <button className="w-full flex items-center gap-3 bg-black-800 hover:bg-black-700 text-white py-3 px-4 rounded-xl">
+                            <button className="w-full flex items-center gap-3 bg-black hover:bg-black/90 text-white py-3 px-4 rounded-xl">
                                 <Folder className="w-5 h-5" />
                                 <span>Move to Folder</span>
                             </button>
