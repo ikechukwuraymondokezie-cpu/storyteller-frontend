@@ -73,10 +73,16 @@ export default function Library() {
                         className="w-full max-w-3xl mx-auto bg-zinc-900 rounded-t-2xl p-6 animate-slideUp"
                         onClick={(e) => e.stopPropagation()}
                     >
+
+                        {/* DRAG HANDLE */}
+                        <div className="flex justify-center mb-4">
+                            <div className="w-12 h-1.5 bg-zinc-700 rounded-full"></div>
+                        </div>
+
                         {/* HEADER */}
                         <div className="flex gap-3 mb-4">
                             {/* Smaller cover art */}
-                            <div className="w-16 h-24 bg-gray-700 rounded-md flex-shrink-0">
+                            <div className="w-12 h-18 bg-gray-700 rounded-md flex-shrink-0">
                                 <img
                                     src={activeBook.cover}
                                     alt={activeBook.title}
@@ -92,17 +98,17 @@ export default function Library() {
 
                         {/* ACTIONS */}
                         <div className="space-y-3">
-                            <button className="w-full flex items-center gap-3 bg-indigo-600 hover:bg-indigo-500 text-white py-3 px-4 rounded-xl">
+                            <button className="w-full flex items-center gap-3 bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-4 rounded-xl">
                                 <Download className="w-5 h-5" />
                                 <span className="font-medium">Download Audio (Offline)</span>
                             </button>
 
-                            <button className="w-full flex items-center gap-3 bg-zinc-800 hover:bg-zinc-700 text-white py-3 px-4 rounded-xl">
-                                <img src={f3logo} className="w-5 h-5" alt="Funfiction" />
+                            <button className="w-full flex items-center gap-3 bg-bg-800 hover:bg-bg-700 text-white py-3 px-4 rounded-xl">
+                                <img src={f3logo} className="w-8 h-8" alt="Funfiction" />
                                 <span>Read in Funfiction &amp; Fallacies</span>
                             </button>
 
-                            <button className="w-full flex items-center gap-3 bg-zinc-800 hover:bg-zinc-700 text-white py-3 px-4 rounded-xl">
+                            <button className="w-full flex items-center gap-3 bg-bg-800 hover:bg-bg-700 text-white py-3 px-4 rounded-xl">
                                 <Folder className="w-5 h-5" />
                                 <span>Move to Folder</span>
                             </button>
@@ -121,14 +127,14 @@ export default function Library() {
 
             {/* SLIDE-UP ANIMATION */}
             <style>{`
-        @keyframes slideUp {
-          0% { transform: translateY(100%); }
-          100% { transform: translateY(0); }
-        }
-        .animate-slideUp {
-          animation: slideUp 0.3s ease-out forwards;
-        }
-      `}</style>
+                @keyframes slideUp {
+                  0% { transform: translateY(100%); }
+                  100% { transform: translateY(0); }
+                }
+                .animate-slideUp {
+                  animation: slideUp 0.3s ease-out forwards;
+                }
+            `}</style>
         </div>
     );
 }
