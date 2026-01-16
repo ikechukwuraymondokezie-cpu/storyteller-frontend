@@ -51,7 +51,7 @@ export default function BottomNav() {
 
             {/* F3 logo (no label) */}
             <NavItem
-                icon={<img src={f3logo} alt="F3" className="w-15 h-15 object-contain" />}
+                icon={<img src={f3logo} alt="F3" className="w-13 h-13 object-contain" />}
             />
 
             <NavItem icon={<User className="w-5 h-5" />} label="Profile" />
