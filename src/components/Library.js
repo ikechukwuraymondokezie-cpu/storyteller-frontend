@@ -5,7 +5,7 @@ export default function Library() {
         <div className="w-full h-full flex flex-col text-white px-6">
 
             {/* WELCOME TEXT */}
-            <h1 className="mt-6 mb-4 text-3xl md:text-5xl font-extrabold tracking-wide text-yellow-400">
+            <h1 className="mt-12 mb-4 text-3xl md:text-5xl font-extrabold tracking-wide text-yellow-400">
                 Your Collection
             </h1>
 
