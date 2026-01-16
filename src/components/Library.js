@@ -5,15 +5,15 @@ export default function Library() {
         <div className="w-full h-full flex flex-col text-white px-6">
 
             {/* WELCOME TEXT */}
-            <h1 className="mt-6 mb-6 text-3xl md:text-5xl font-extrabold tracking-wide text-white">
-                Welcome to your library
+            <h1 className="mt-6 mb-4 text-3xl md:text-5xl font-extrabold tracking-wide text-yellow-400">
+                Your Collection
             </h1>
 
             {/* BOOK LIST */}
-            <div className="flex-1 overflow-y-auto grid gap-0 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 pb-6">
+            <div className="flex-1 overflow-y-auto grid gap-1 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 pb-6">
 
                 {/* Example Book Card */}
-                <div className="bg-bg/20 rounded-md px-4 py-3 flex items-center gap-3 h-[72px] border-b border-cream/40">
+                <div className="bg-bg/20 rounded-md px-4 py-3 flex items-center gap-3 h-[72px] border-b border-yellow-400/50">
                     {/* Cover Placeholder */}
                     <div className="w-12 h-16 bg-gray-700 rounded-md flex-shrink-0"></div>
 
@@ -24,7 +24,7 @@ export default function Library() {
                     </div>
                 </div>
 
-                <div className="bg-bg/20 rounded-md px-4 py-3 flex items-center gap-3 h-[72px] border-b border-cream/40">
+                <div className="bg-bg/20 rounded-md px-4 py-3 flex items-center gap-3 h-[72px] border-b border-yellow-400/50">
                     <div className="w-12 h-16 bg-gray-700 rounded-md flex-shrink-0"></div>
                     <div className="flex flex-col justify-center">
                         <h2 className="font-semibold text-sm">Another Story.pdf</h2>
@@ -32,7 +32,7 @@ export default function Library() {
                     </div>
                 </div>
 
-                <div className="bg-bg/20 rounded-md px-4 py-3 flex items-center gap-3 h-[72px] border-b border-cream/40">
+                <div className="bg-bg/20 rounded-md px-4 py-3 flex items-center gap-3 h-[72px] border-b border-yellow-400/50">
                     <div className="w-12 h-16 bg-gray-700 rounded-md flex-shrink-0"></div>
                     <div className="flex flex-col justify-center">
                         <h2 className="font-semibold text-sm">New Tale.pdf</h2>
