@@ -10,7 +10,7 @@ export default function TopNav() {
         <nav
             className="
         fixed z-50
-        top-0 left-0 right-0 h-16 w-full
+        top-0 left-0 right-0 h-11 w-full
         md:top-0 md:left-0 md:right-auto md:h-screen md:w-32
         bg-transparent
         md:bg-black/40 md:backdrop-blur
@@ -27,7 +27,7 @@ export default function TopNav() {
                 {/* LEFT SIDE: Logo OR Library text */}
                 <div className="flex items-center justify-center">
                     {isLibrary ? (
-                        <span className="text-white font-semibold text-lg md:text-xl">
+                        <span className="text-white font-semibold text-2xl md:text-xl">
                             Library
                         </span>
                     ) : (
