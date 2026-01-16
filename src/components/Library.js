@@ -10,7 +10,7 @@ export default function Library() {
             </h1>
 
             {/* BOOK LIST */}
-            <div className="flex-1 overflow-y-auto grid gap-1 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 pb-6">
+            <div className="flex-1 overflow-y-auto grid gap-0 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 pb-6">
 
                 {/* Example Book Card */}
                 <div className="bg-bg/20 rounded-md px-4 py-3 flex items-center gap-3 h-[72px] border-b border-yellow-400/50">
