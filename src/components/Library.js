@@ -70,7 +70,7 @@ export default function Library() {
                     onClick={() => setActiveBook(null)}
                 >
                     <div
-                        className="w-full max-w-3xl mx-auto bg-zinc-900 rounded-t-2xl p-3 animate-slideUp"
+                        className="w-full max-w-3xl mx-auto bg-zinc-900 rounded-t-2xl p-6 animate-slideUp"
                         onClick={(e) => e.stopPropagation()}
                     >
 
