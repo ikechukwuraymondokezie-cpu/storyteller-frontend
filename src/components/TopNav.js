@@ -25,7 +25,7 @@ export default function TopNav() {
                 "
             >
                 {/* LOGO OR LIBRARY TEXT */}
-                <div className="flex items-center justify-center">
+                <div className="flex items-center justify-center py-2 md:py-3">
                     {isLibrary ? (
                         <span className="text-white font-semibold text-2xl md:text-xl">
                             Library
@@ -35,7 +35,7 @@ export default function TopNav() {
                             src={logo}
                             alt="Storyteller"
                             className="
-                                h-18 w-24
+                                h-12 w-28
                                 md:h-14 md:w-28
                                 object-contain
                             "
