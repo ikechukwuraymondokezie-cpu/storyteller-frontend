@@ -20,7 +20,7 @@ export default function TopNav() {
         >
             <div
                 className="
-                    flex h-full items-center justify-between px-5
+                    flex h-full items-center justify-between px-6
                     md:flex-col md:items-center md:justify-start md:px-0 md:py-8 md:gap-12
                 "
             >
@@ -35,7 +35,7 @@ export default function TopNav() {
                             <img
                                 src={logo}
                                 alt="Storyteller"
-                                className="h-16 w-30"
+                                className="h-16 w-35"
                             />
                         </Link>
                     )}
