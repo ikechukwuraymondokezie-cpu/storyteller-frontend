@@ -21,7 +21,7 @@ export default function Library() {
     const [activeBook, setActiveBook] = useState(null);
     const sheetRef = useRef(null);
 
-    // Swipe down to close (mobile-safe)
+    // Swipe-down to close (PREVENTS PULL-TO-REFRESH)
     useEffect(() => {
         if (!sheetRef.current) return;
 
@@ -39,6 +39,10 @@ export default function Library() {
 
         const onTouchMove = (e) => {
             if (!dragging) return;
+
+            // 🔥 THIS STOPS PAGE REFRESH
+            e.preventDefault();
+
             currentY = e.touches[0].clientY;
             const diff = currentY - startY;
 
@@ -58,8 +62,8 @@ export default function Library() {
             }
         };
 
-        sheet.addEventListener("touchstart", onTouchStart);
-        sheet.addEventListener("touchmove", onTouchMove);
+        sheet.addEventListener("touchstart", onTouchStart, { passive: true });
+        sheet.addEventListener("touchmove", onTouchMove, { passive: false }); // IMPORTANT
         sheet.addEventListener("touchend", onTouchEnd);
 
         return () => {
@@ -112,7 +116,7 @@ export default function Library() {
                     className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center"
                     onClick={() => setActiveBook(null)}
                 >
-                    {/* SHEET / MODAL */}
+                    {/* SHEET */}
                     <div
                         ref={sheetRef}
                         onClick={(e) => e.stopPropagation()}
@@ -128,10 +132,11 @@ export default function Library() {
                             pb-6
                             md:max-h-[80vh]
                             md:overflow-y-auto
+                            overscroll-contain
                             animate-slideUp
                         "
                     >
-                        {/* DRAG HANDLE (mobile hint) */}
+                        {/* DRAG HANDLE */}
                         <div className="flex justify-center mb-4 md:hidden">
                             <div className="w-12 h-1.5 bg-zinc-700 rounded-full" />
                         </div>
@@ -157,8 +162,6 @@ export default function Library() {
 
                         {/* ACTIONS */}
                         <div className="space-y-3">
-
-                            {/* PRIMARY */}
                             <button className="w-full flex flex-col items-start gap-1 bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-3 rounded-xl">
                                 <div className="flex items-center gap-3">
                                     <Download className="w-6 h-6" />
@@ -171,7 +174,6 @@ export default function Library() {
                                 </span>
                             </button>
 
-                            {/* SECONDARY */}
                             <button className="w-full flex items-center gap-3 bg-black hover:bg-black/90 text-white text-sm py-3 px-4 rounded-xl">
                                 <img src={f3logo} className="w-6 h-6" alt="Funfiction" />
                                 <span>Read in Funfiction &amp; Fallacies</span>
@@ -186,7 +188,7 @@ export default function Library() {
                 </div>
             )}
 
-            {/* SLIDE UP ANIMATION */}
+            {/* ANIMATION */}
             <style>{`
                 @keyframes slideUp {
                     from { transform: translateY(100%); }

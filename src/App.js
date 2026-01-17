@@ -11,21 +11,23 @@ import Library from "./components/Library";
 function App() {
   return (
     <Router>
-      <div className="App min-h-screen flex bg-bg">
+      <div className="App min-h-screen flex flex-col md:flex-row bg-bg">
 
-        {/* Top navigation / sidebar */}
+        {/* Sidebar / TopNav */}
         <TopNav />
 
         {/* Main content */}
-        <main className="flex-1 pt-11 md:ml-32 overflow-auto">
+        <main className="flex-1 pt-11 md:pt-6 md:ml-32 overflow-auto">
           <Routes>
             <Route path="/" element={<Storyteller />} />
             <Route path="/library" element={<Library />} />
           </Routes>
         </main>
 
-        {/* Mobile bottom navbar */}
-        <BottomNav />
+        {/* Mobile bottom navbar ONLY */}
+        <div className="md:hidden">
+          <BottomNav />
+        </div>
 
         {/* Desktop floating upload button */}
         <FloatingUploadButton />
