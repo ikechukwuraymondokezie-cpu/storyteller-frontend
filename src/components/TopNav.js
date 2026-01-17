@@ -20,12 +20,14 @@ export default function TopNav() {
         >
             <div
                 className="
-                    flex h-full items-center justify-between px-4
+                    flex h-full items-center
+                    justify-center
+                    px-2
                     md:flex-col md:justify-start md:px-0 md:py-8 md:gap-12
                 "
             >
                 {/* LOGO OR LIBRARY TEXT */}
-                <div className="flex items-center justify-center md:justify-center md:pl-0 pl-6">
+                <div className="flex items-center justify-center w-full md:w-auto">
                     {isLibrary ? (
                         <span className="text-white font-semibold text-2xl md:text-xl">
                             Library
@@ -35,7 +37,7 @@ export default function TopNav() {
                             src={logo}
                             alt="Storyteller"
                             className="
-                                h-12 w-26
+                                h-14 w-28
                                 md:h-14 md:w-28
                                 object-contain
                             "
@@ -58,7 +60,7 @@ export default function TopNav() {
 
                 {/* MOBILE ICONS (Library page only) */}
                 {isLibrary && (
-                    <div className="flex items-center gap-4 md:hidden text-white">
+                    <div className="absolute right-4 flex items-center gap-4 md:hidden text-white">
                         <Search className="w-5 h-5 cursor-pointer" />
                         <MoreVertical className="w-5 h-5 cursor-pointer" />
                     </div>
