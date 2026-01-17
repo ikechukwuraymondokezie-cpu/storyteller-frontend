@@ -27,7 +27,8 @@ function NavItem({ icon, label, to }) {
 
 export default function BottomNav() {
     return (
-        <nav className="fixed bottom-0 left-0 right-0 h-16 bg-black border-t border-gray-800 z-50 flex justify-around items-center md:hidden">
+        <nav className="fixed bottom-0 left-0 right-0 h-16 bg-black border-t border-gray-800 z-40 flex justify-around items-center md:hidden">
+            {/* lowered z-index to z-40 so bottom sheet can appear above */}
             <NavItem icon={<Home className="w-5 h-5" />} label="Home" to="/" />
             <NavItem icon={<Folder className="w-5 h-5" />} label="Library" to="/library" />
 

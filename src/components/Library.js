@@ -66,7 +66,7 @@ export default function Library() {
             {/* SLIDE-UP BOTTOM SHEET */}
             {activeBook && (
                 <div
-                    className="fixed inset-0 bg-black/60 z-60 flex items-end"
+                    className="fixed inset-0 bg-black/60 z-50 flex items-end"
                     onClick={() => setActiveBook(null)}
                 >
                     <div
