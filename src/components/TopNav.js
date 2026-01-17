@@ -34,7 +34,7 @@ export default function TopNav() {
                         <img
                             src={logo}
                             alt="Storyteller"
-                            className="h-8 w-auto md:h-10 md:w-auto"
+                            className="h-13 w-auto md:h-10 md:w-auto"
                         />
                     )}
                 </div>
