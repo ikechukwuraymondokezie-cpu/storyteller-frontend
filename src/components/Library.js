@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { MoreHorizontal, Download, Folder } from "lucide-react";
 import f3logo from "../assets/f3logo.png";
 
@@ -6,14 +6,12 @@ const books = [
     {
         id: 1,
         title: "Atomic Habits",
-        author: "James Clear",
         words: "98,214 words",
         cover: "https://images.unsplash.com/photo-1512820790803-83ca734da794"
     },
     {
         id: 2,
         title: "Deep Work",
-        author: "Cal Newport",
         words: "120,540 words",
         cover: "https://images.unsplash.com/photo-1524995997946-a1c2e315a42f"
     }
@@ -21,10 +19,51 @@ const books = [
 
 export default function Library() {
     const [activeBook, setActiveBook] = useState(null);
+    const sheetRef = useRef(null);
+
+    // Swipe down to close
+    useEffect(() => {
+        if (!sheetRef.current) return;
+        let startY = 0;
+        let currentY = 0;
+
+        const handleTouchStart = (e) => {
+            startY = e.touches[0].clientY;
+        };
+
+        const handleTouchMove = (e) => {
+            currentY = e.touches[0].clientY;
+            const diff = currentY - startY;
+            if (diff > 0) {
+                sheetRef.current.style.transform = `translateY(${diff}px)`;
+            }
+        };
+
+        const handleTouchEnd = () => {
+            if (currentY - startY > 80) {
+                setActiveBook(null);
+            } else {
+                sheetRef.current.style.transform = `translateY(0)`;
+            }
+        };
+
+        const handle = sheetRef.current.querySelector("#drag-handle");
+        if (handle) {
+            handle.addEventListener("touchstart", handleTouchStart);
+            handle.addEventListener("touchmove", handleTouchMove);
+            handle.addEventListener("touchend", handleTouchEnd);
+        }
+
+        return () => {
+            if (!handle) return;
+            handle.removeEventListener("touchstart", handleTouchStart);
+            handle.removeEventListener("touchmove", handleTouchMove);
+            handle.removeEventListener("touchend", handleTouchEnd);
+        };
+    }, [activeBook]);
 
     return (
         <div className="min-h-screen bg-bg px-6 py-8">
-
             {/* TITLE */}
             <h1 className="text-3xl md:text-5xl font-extrabold text-yellow-400 mb-6">
                 Your Collection
@@ -47,9 +86,6 @@ export default function Library() {
                             <p className="text-white font-medium text-sm truncate">
                                 {book.title}
                             </p>
-                            <p className="text-zinc-400 text-xs truncate">
-                                {book.author}
-                            </p>
                         </div>
 
                         {/* 3 DOTS — RIGHT END */}
@@ -70,19 +106,21 @@ export default function Library() {
                     onClick={() => setActiveBook(null)}
                 >
                     <div
-                        className="w-full max-w-3xl mx-auto bg-zinc-900 rounded-t-2xl pt-2 px-6 pb-6 animate-slideUp"
+                        ref={sheetRef}
+                        className="w-full max-w-3xl mx-auto bg-zinc-900 rounded-t-2xl pt-2 px-6 pb-6 animate-slideUp z-[60]"
                         onClick={(e) => e.stopPropagation()}
                     >
-
                         {/* DRAG HANDLE */}
-                        <div className="flex justify-center mb-4">
+                        <div
+                            id="drag-handle"
+                            className="flex justify-center mb-4 cursor-grab"
+                        >
                             <div className="w-12 h-1.5 bg-zinc-700 rounded-full"></div>
                         </div>
 
                         {/* HEADER */}
                         <div className="flex gap-3 mb-4">
-                            {/* Smaller cover art */}
-                            <div className="w-16 h-24 rounded-md flex-shrink-0 overflow-hidden">
+                            <div className="w-12 h-18 rounded-md flex-shrink-0 overflow-hidden">
                                 <img
                                     src={activeBook.cover}
                                     alt={activeBook.title}
@@ -91,20 +129,24 @@ export default function Library() {
                             </div>
                             <div>
                                 <p className="text-white font-semibold">{activeBook.title}</p>
-                                <p className="text-zinc-400 text-sm">{activeBook.author}</p>
                                 <p className="text-zinc-500 text-xs mt-1">{activeBook.words}</p>
                             </div>
                         </div>
 
                         {/* ACTIONS */}
                         <div className="space-y-3">
-                            {/* PRIMARY ACTION */}
-                            <button className="w-full flex items-center gap-3 bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-4 rounded-xl">
-                                <Download className="w-5 h-5" />
-                                <span className="font-medium">Download Audio (Offline)</span>
+                            {/* PRIMARY ACTION (bigger with subtitle) */}
+                            <button className="w-full flex flex-col items-start gap-1 bg-yellow-600 hover:bg-yellow-500 text-white py-4 px-4 rounded-xl">
+                                <div className="flex items-center gap-3">
+                                    <Download className="w-6 h-6" />
+                                    <span className="font-medium text-lg">Download Audio</span>
+                                </div>
+                                <span className="text-gray-300 text-xs">
+                                    listen to your favourite stories offline
+                                </span>
                             </button>
 
-                            {/* SECONDARY ACTIONS (black buttons) */}
+                            {/* SECONDARY ACTIONS */}
                             <button className="w-full flex items-center gap-3 bg-black hover:bg-black/90 text-white py-3 px-4 rounded-xl">
                                 <img src={f3logo} className="w-6 h-6" alt="Funfiction" />
                                 <span>Read in Funfiction &amp; Fallacies</span>
@@ -115,14 +157,6 @@ export default function Library() {
                                 <span>Move to Folder</span>
                             </button>
                         </div>
-
-                        {/* CANCEL BUTTON */}
-                        <button
-                            className="w-full text-center text-zinc-400 mt-4"
-                            onClick={() => setActiveBook(null)}
-                        >
-                            Cancel
-                        </button>
                     </div>
                 </div>
             )}
