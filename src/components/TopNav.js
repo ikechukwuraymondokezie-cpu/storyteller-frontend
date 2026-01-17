@@ -11,7 +11,7 @@ export default function TopNav() {
             className="
                 fixed z-50
                 top-0 left-0
-                w-full h-14
+                w-full h-11
                 md:w-32 md:h-screen
                 bg-transparent
                 md:bg-black/40 md:backdrop-blur
@@ -20,7 +20,7 @@ export default function TopNav() {
         >
             <div
                 className="
-                    flex h-full items-center justify-between px-4
+                    flex h-full items-center justify-between px-5
                     md:flex-col md:items-center md:justify-start md:px-0 md:py-8 md:gap-12
                 "
             >
@@ -35,7 +35,7 @@ export default function TopNav() {
                             <img
                                 src={logo}
                                 alt="Storyteller"
-                                className="h-16 w-26"
+                                className="h-16 w-30"
                             />
                         </Link>
                     )}
