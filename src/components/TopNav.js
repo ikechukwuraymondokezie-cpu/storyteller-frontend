@@ -27,7 +27,7 @@ export default function TopNav() {
                 {/* LOGO OR LIBRARY TEXT */}
                 <div className="flex items-center">
                     {isLibrary ? (
-                        <span className="text-white font-semibold text-2xl md:text-xl">
+                        <span className="text-white font-semibold text-xl md:text-xl">
                             Library
                         </span>
                     ) : (
