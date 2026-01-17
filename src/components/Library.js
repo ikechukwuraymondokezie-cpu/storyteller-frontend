@@ -7,21 +7,21 @@ const books = [
         id: 1,
         title: "Atomic Habits",
         words: "98,214 words",
-        cover: "https://images.unsplash.com/photo-1512820790803-83ca734da794"
+        cover: "https://images.unsplash.com/photo-1512820790803-83ca734da794",
     },
     {
         id: 2,
         title: "Deep Work",
         words: "120,540 words",
-        cover: "https://images.unsplash.com/photo-1524995997946-a1c2e315a42f"
-    }
+        cover: "https://images.unsplash.com/photo-1524995997946-a1c2e315a42f",
+    },
 ];
 
 export default function Library() {
     const [activeBook, setActiveBook] = useState(null);
     const sheetRef = useRef(null);
 
-    // Swipe-down to close (PREVENTS PULL-TO-REFRESH)
+    // Swipe-down to close (prevents pull-to-refresh)
     useEffect(() => {
         if (!sheetRef.current) return;
 
@@ -39,9 +39,7 @@ export default function Library() {
 
         const onTouchMove = (e) => {
             if (!dragging) return;
-
-            // 🔥 THIS STOPS PAGE REFRESH
-            e.preventDefault();
+            e.preventDefault(); // 🔥 stops page refresh
 
             currentY = e.touches[0].clientY;
             const diff = currentY - startY;
@@ -63,7 +61,7 @@ export default function Library() {
         };
 
         sheet.addEventListener("touchstart", onTouchStart, { passive: true });
-        sheet.addEventListener("touchmove", onTouchMove, { passive: false }); // IMPORTANT
+        sheet.addEventListener("touchmove", onTouchMove, { passive: false });
         sheet.addEventListener("touchend", onTouchEnd);
 
         return () => {
@@ -75,7 +73,6 @@ export default function Library() {
 
     return (
         <div className="min-h-screen bg-bg px-6 py-8">
-
             {/* TITLE */}
             <h1 className="text-3xl md:text-5xl font-extrabold text-yellow-400 mb-6">
                 Your Collection
@@ -116,27 +113,21 @@ export default function Library() {
                     className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center"
                     onClick={() => setActiveBook(null)}
                 >
-                    {/* SHEET */}
+                    {/* BOTTOM SHEET */}
                     <div
                         ref={sheetRef}
                         onClick={(e) => e.stopPropagation()}
                         className="
-                            w-full
-                            max-w-3xl
-                            mx-auto
-                            bg-zinc-900
-                            rounded-t-2xl
-                            md:rounded-2xl
-                            pt-2
-                            px-6
-                            pb-6
-                            md:max-h-[80vh]
-                            md:overflow-y-auto
-                            overscroll-contain
-                            animate-slideUp
-                        "
+              w-full max-w-3xl mx-auto
+              bg-zinc-900
+              rounded-t-2xl md:rounded-2xl
+              pt-2 px-6 pb-6
+              md:max-h-[80vh] md:overflow-y-auto
+              overscroll-contain
+              animate-slideUp
+            "
                     >
-                        {/* DRAG HANDLE */}
+                        {/* DRAG HANDLE (mobile only) */}
                         <div className="flex justify-center mb-4 md:hidden">
                             <div className="w-12 h-1.5 bg-zinc-700 rounded-full" />
                         </div>
@@ -162,18 +153,20 @@ export default function Library() {
 
                         {/* ACTIONS */}
                         <div className="space-y-3">
-                            <button className="w-full flex flex-col items-start gap-1 bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-3 rounded-xl">
-                                <div className="flex items-center gap-3">
-                                    <Download className="w-6 h-6" />
+                            {/* PRIMARY ACTION — FIXED ALIGNMENT */}
+                            <button className="w-full flex items-start gap-3 bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-3 rounded-xl">
+                                <Download className="w-6 h-6 mt-1" />
+                                <div className="flex flex-col items-start">
                                     <span className="font-medium text-base">
                                         Download Audio
                                     </span>
+                                    <span className="text-gray-300 text-xs">
+                                        listen to your favourite stories offline
+                                    </span>
                                 </div>
-                                <span className="text-gray-300 text-xs">
-                                    listen to your favourite stories offline
-                                </span>
                             </button>
 
+                            {/* SECONDARY ACTIONS */}
                             <button className="w-full flex items-center gap-3 bg-black hover:bg-black/90 text-white text-sm py-3 px-4 rounded-xl">
                                 <img src={f3logo} className="w-6 h-6" alt="Funfiction" />
                                 <span>Read in Funfiction &amp; Fallacies</span>
@@ -190,14 +183,14 @@ export default function Library() {
 
             {/* ANIMATION */}
             <style>{`
-                @keyframes slideUp {
-                    from { transform: translateY(100%); }
-                    to { transform: translateY(0); }
-                }
-                .animate-slideUp {
-                    animation: slideUp 0.3s ease-out;
-                }
-            `}</style>
+        @keyframes slideUp {
+          from { transform: translateY(100%); }
+          to { transform: translateY(0); }
+        }
+        .animate-slideUp {
+          animation: slideUp 0.3s ease-out;
+        }
+      `}</style>
         </div>
     );
 }
