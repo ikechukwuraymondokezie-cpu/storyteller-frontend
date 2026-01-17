@@ -1,5 +1,5 @@
 import logo from "../assets/logo.png";
-import { useLocation } from "react-router-dom";
+import { useLocation, Link } from "react-router-dom";
 import { Search, MoreVertical } from "lucide-react";
 
 export default function TopNav() {
@@ -20,47 +20,43 @@ export default function TopNav() {
         >
             <div
                 className="
-                    flex h-full items-center
-                    justify-center
-                    px-2
-                    md:flex-col md:justify-start md:px-0 md:py-8 md:gap-12
+                    flex h-full items-center justify-between px-4
+                    md:flex-col md:items-center md:justify-start md:px-0 md:py-8 md:gap-12
                 "
             >
                 {/* LOGO OR LIBRARY TEXT */}
-                <div className="flex items-center justify-center w-full md:w-auto">
+                <div className="flex items-center">
                     {isLibrary ? (
                         <span className="text-white font-semibold text-2xl md:text-xl">
                             Library
                         </span>
                     ) : (
-                        <img
-                            src={logo}
-                            alt="Storyteller"
-                            className="
-                                h-14 w-28
-                                md:h-14 md:w-28
-                                object-contain
-                            "
-                        />
+                        <Link to="/">
+                            <img
+                                src={logo}
+                                alt="Storyteller"
+                                className="h-14 w-auto object-contain"
+                            />
+                        </Link>
                     )}
                 </div>
 
                 {/* DESKTOP NAV LINKS */}
                 <div className="hidden md:flex flex-col items-center gap-8 text-sm text-white">
-                    <a className="hover:text-yellow-400 transition" href="/">
+                    <Link className="hover:text-yellow-400 transition" to="/">
                         Home
-                    </a>
-                    <a className="hover:text-yellow-400 transition" href="/library">
+                    </Link>
+                    <Link className="hover:text-yellow-400 transition" to="/library">
                         Library
-                    </a>
-                    <a className="hover:text-yellow-400 transition" href="/upload">
+                    </Link>
+                    <Link className="hover:text-yellow-400 transition" to="/upload">
                         Upload
-                    </a>
+                    </Link>
                 </div>
 
                 {/* MOBILE ICONS (Library page only) */}
                 {isLibrary && (
-                    <div className="absolute right-4 flex items-center gap-4 md:hidden text-white">
+                    <div className="flex items-center gap-4 md:hidden text-white">
                         <Search className="w-5 h-5 cursor-pointer" />
                         <MoreVertical className="w-5 h-5 cursor-pointer" />
                     </div>
