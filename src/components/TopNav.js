@@ -35,9 +35,8 @@ export default function TopNav() {
                             src={logo}
                             alt="Storyteller"
                             className="
-                                h-10
-                                md:h-14
-                                w-auto
+                                h-12 w-18
+                                md:h-14 md:w-28
                                 object-contain
                             "
                         />
