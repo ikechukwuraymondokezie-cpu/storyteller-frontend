@@ -1,4 +1,5 @@
 import logo from "../assets/logo.png";
+import f3logo from "../assets/f3logo.png";
 import { useLocation, Link } from "react-router-dom";
 import { Search, MoreVertical } from "lucide-react";
 
@@ -27,7 +28,7 @@ export default function TopNav() {
                 {/* LOGO OR LIBRARY TEXT */}
                 <div className="flex items-center">
                     {isLibrary ? (
-                        <span className="text-white font-semibold text-xl md:text-xl">
+                        <span className="text-white font-semibold text-xl">
                             Library
                         </span>
                     ) : (
@@ -52,6 +53,21 @@ export default function TopNav() {
                     <Link className="hover:text-yellow-400 transition" to="/upload">
                         Upload
                     </Link>
+
+                    {/* F3 LOGO — DESKTOP ONLY */}
+                    <img
+                        src={f3logo}
+                        alt="F3"
+                        className="w-12 h-12 object-contain opacity-80 hover:opacity-100 transition"
+                    />
+
+                    {/* LIBRARY TOOLS — DESKTOP ONLY */}
+                    {isLibrary && (
+                        <div className="flex flex-col items-center gap-4 pt-4 border-t border-white/10">
+                            <Search className="w-5 h-5 cursor-pointer hover:text-yellow-400 transition" />
+                            <MoreVertical className="w-5 h-5 cursor-pointer hover:text-yellow-400 transition" />
+                        </div>
+                    )}
                 </div>
 
                 {/* MOBILE ICONS (Library page only) */}
