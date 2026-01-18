@@ -22,10 +22,7 @@ export default function TopNav() {
     // Close options when clicking outside
     useEffect(() => {
         const handler = (e) => {
-            if (
-                optionsRef.current &&
-                !optionsRef.current.contains(e.target)
-            ) {
+            if (optionsRef.current && !optionsRef.current.contains(e.target)) {
                 setShowOptions(false);
             }
         };
@@ -91,10 +88,7 @@ export default function TopNav() {
 
                         {/* LIBRARY TOOLS — DESKTOP */}
                         {isLibrary && (
-                            <div
-                                ref={optionsRef}
-                                className="relative flex flex-col items-center gap-4 pt-4 border-t border-white/10"
-                            >
+                            <div className="relative flex flex-col items-center gap-4 pt-4 border-t border-white/10">
                                 <Search
                                     className="w-5 h-5 cursor-pointer hover:text-yellow-400 transition"
                                     onClick={() => {
@@ -103,25 +97,24 @@ export default function TopNav() {
                                     }}
                                 />
 
-                                <MoreVertical
-                                    className="w-5 h-5 cursor-pointer hover:text-yellow-400 transition"
-                                    onClick={() => {
-                                        setShowOptions((p) => !p);
-                                        setShowSearch(false);
-                                    }}
-                                />
+                                <div ref={optionsRef} className="relative">
+                                    <MoreVertical
+                                        className="w-5 h-5 cursor-pointer hover:text-yellow-400 transition"
+                                        onClick={() => {
+                                            setShowOptions((p) => !p);
+                                            setShowSearch(false);
+                                        }}
+                                    />
 
-                                {showOptions && <OptionsMenu />}
+                                    {showOptions && <OptionsMenu />}
+                                </div>
                             </div>
                         )}
                     </div>
 
                     {/* MOBILE ICONS */}
                     {isLibrary && (
-                        <div
-                            ref={optionsRef}
-                            className="flex items-center gap-4 md:hidden text-white"
-                        >
+                        <div className="flex items-center gap-4 md:hidden text-white">
                             <Search
                                 className="w-5 h-5 cursor-pointer"
                                 onClick={() => {
@@ -130,15 +123,16 @@ export default function TopNav() {
                                 }}
                             />
 
-                            <MoreVertical
-                                className="w-5 h-5 cursor-pointer"
-                                onClick={() => {
-                                    setShowOptions((p) => !p);
-                                    setShowSearch(false);
-                                }}
-                            />
-
-                            {showOptions && <OptionsMenu />}
+                            <div ref={optionsRef} className="relative">
+                                <MoreVertical
+                                    className="w-5 h-5 cursor-pointer"
+                                    onClick={() => {
+                                        setShowOptions((p) => !p);
+                                        setShowSearch(false);
+                                    }}
+                                />
+                                {showOptions && <OptionsMenu />}
+                            </div>
                         </div>
                     )}
                 </div>
