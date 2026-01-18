@@ -1,153 +1,152 @@
 import { useState, useRef, useEffect } from "react";
-import { Link } from "react-router-dom";
-import { Home, Folder, User, Plus } from "lucide-react";
+import { Link as RouterLink } from "react-router-dom";
+import {
+  Home,
+  Folder,
+  User,
+  Plus,
+  Upload,
+  ScanText,
+  Link,
+  Cloud
+} from "lucide-react";
 import f3logo from "../assets/f3logo.png";
 
 function NavItem({ icon, label, to }) {
-    if (to) {
-        return (
-            <Link
-                to={to}
-                className="flex flex-col items-center justify-center text-xs text-gray-400 hover:text-white transition-colors"
-            >
-                {icon}
-                {label && <span className="mt-1">{label}</span>}
-            </Link>
-        );
-    }
-
+  if (to) {
     return (
-        <button className="flex flex-col items-center justify-center text-xs text-gray-400 hover:text-white transition-colors">
-            {icon}
-            {label && <span className="mt-1">{label}</span>}
-        </button>
+      <RouterLink
+        to={to}
+        className="flex flex-col items-center justify-center text-xs text-gray-400 hover:text-white transition-colors"
+      >
+        {icon}
+        {label && <span className="mt-1">{label}</span>}
+      </RouterLink>
     );
+  }
+
+  return (
+    <button className="flex flex-col items-center justify-center text-xs text-gray-400 hover:text-white transition-colors">
+      {icon}
+      {label && <span className="mt-1">{label}</span>}
+    </button>
+  );
 }
 
 export default function BottomNav() {
-    const [showSheet, setShowSheet] = useState(false);
-    const sheetRef = useRef(null);
+  const [showSheet, setShowSheet] = useState(false);
+  const sheetRef = useRef(null);
 
-    // Swipe down to close
-    useEffect(() => {
-        if (!sheetRef.current) return;
+  // MOBILE swipe-down close
+  useEffect(() => {
+    if (!sheetRef.current) return;
 
-        const sheet = sheetRef.current;
-        let startY = 0;
-        let currentY = 0;
-        let dragging = false;
+    const sheet = sheetRef.current;
+    let startY = 0;
+    let currentY = 0;
 
-        const onTouchStart = (e) => {
-            startY = e.touches[0].clientY;
-            currentY = startY;
-            dragging = true;
-            sheet.style.transition = "none";
-        };
+    const start = (e) => {
+      startY = e.touches[0].clientY;
+      sheet.style.transition = "none";
+    };
 
-        const onTouchMove = (e) => {
-            if (!dragging) return;
-            e.preventDefault();
-            currentY = e.touches[0].clientY;
-            const diff = currentY - startY;
+    const move = (e) => {
+      currentY = e.touches[0].clientY;
+      const diff = currentY - startY;
+      if (diff > 0) sheet.style.transform = `translateY(${diff}px)`;
+    };
 
-            if (diff > 0) {
-                sheet.style.transform = `translateY(${diff}px)`;
-            }
-        };
+    const end = () => {
+      sheet.style.transition = "transform 0.25s ease";
+      if (currentY - startY > 100) setShowSheet(false);
+      else sheet.style.transform = "translateY(0)";
+    };
 
-        const onTouchEnd = () => {
-            dragging = false;
-            sheet.style.transition = "transform 0.25s ease";
+    sheet.addEventListener("touchstart", start);
+    sheet.addEventListener("touchmove", move);
+    sheet.addEventListener("touchend", end);
 
-            if (currentY - startY > 100) {
-                setShowSheet(false);
-            } else {
-                sheet.style.transform = "translateY(0)";
-            }
-        };
+    return () => {
+      sheet.removeEventListener("touchstart", start);
+      sheet.removeEventListener("touchmove", move);
+      sheet.removeEventListener("touchend", end);
+    };
+  }, [showSheet]);
 
-        sheet.addEventListener("touchstart", onTouchStart, { passive: true });
-        sheet.addEventListener("touchmove", onTouchMove, { passive: false });
-        sheet.addEventListener("touchend", onTouchEnd);
+  return (
+    <>
+      {/* BOTTOM NAV */}
+      <nav className="fixed bottom-0 left-0 right-0 h-16 bg-black border-t border-gray-800 z-40 flex justify-around items-center md:hidden">
+        <NavItem icon={<Home className="w-5 h-5" />} label="Home" to="/" />
+        <NavItem icon={<Folder className="w-5 h-5" />} label="Library" to="/library" />
 
-        return () => {
-            sheet.removeEventListener("touchstart", onTouchStart);
-            sheet.removeEventListener("touchmove", onTouchMove);
-            sheet.removeEventListener("touchend", onTouchEnd);
-        };
-    }, [showSheet]);
+        <button
+          onClick={() => setShowSheet(true)}
+          className="w-10 h-10 bg-yellow-400 rounded-md flex items-center justify-center border border-yellow-500 shadow hover:bg-yellow-300 transition"
+        >
+          <Plus className="w-5 h-5 text-black" />
+        </button>
 
-    return (
-        <>
-            <nav className="fixed bottom-0 left-0 right-0 h-16 bg-black border-t border-gray-800 z-40 flex justify-around items-center md:hidden">
-                <NavItem icon={<Home className="w-5 h-5" />} label="Home" to="/" />
-                <NavItem icon={<Folder className="w-5 h-5" />} label="Library" to="/library" />
+        <NavItem icon={<img src={f3logo} className="w-12 h-12 object-contain" />} />
+        <NavItem icon={<User className="w-5 h-5" />} label="Profile" />
+      </nav>
 
-                {/* Upload button */}
-                <button
-                    onClick={() => setShowSheet(true)}
-                    className="
-            w-10 h-10
-            bg-yellow-400
-            flex items-center justify-center
-            text-black
-            rounded-md
-            border border-yellow-500
-            shadow-[inset_0_1px_0_rgba(255,255,255,0.45),0_4px_10px_rgba(255,200,0,0.6)]
-            hover:bg-yellow-300
-            active:translate-y-[1px]
-            transition-all
-          "
-                >
-                    <Plus className="w-5 h-5" />
-                </button>
+      {/* OVERLAY */}
+      {showSheet && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 flex items-end md:items-center md:justify-center"
+          onClick={() => setShowSheet(false)}
+        >
+          {/* SHEET / MODAL */}
+          <div
+            ref={sheetRef}
+            onClick={(e) => e.stopPropagation()}
+            className="
+              w-full md:w-[420px]
+              bg-zinc-900
+              rounded-t-2xl md:rounded-2xl
+              px-6 pb-6 pt-3
+              animate-slideUp
+            "
+          >
+            {/* Drag Handle (mobile only) */}
+            <div className="flex justify-center mb-4 md:hidden">
+              <div className="w-12 h-1.5 bg-zinc-700 rounded-full" />
+            </div>
 
-                {/* F3 logo (no label) */}
-                <NavItem
-                    icon={<img src={f3logo} alt="F3" className="w-12 h-12 object-contain" />}
-                />
+            <h2 className="text-white font-bold text-lg mb-5">
+              Storytime
+            </h2>
 
-                <NavItem icon={<User className="w-5 h-5" />} label="Profile" />
-            </nav>
+            <div className="space-y-3">
+              <Action icon={<Upload />} text="Upload Files" />
+              <Action icon={<ScanText />} text="Scan Text" />
+              <Action icon={<Link />} text="Paste Article URL" />
+              <Action icon={<Cloud />} text="Connect to Google Drive" />
+            </div>
+          </div>
+        </div>
+      )}
 
-            {/* Bottom Sheet */}
-            {showSheet && (
-                <div
-                    className="fixed inset-0 z-50 bg-black/60 flex items-end"
-                    onClick={() => setShowSheet(false)}
-                >
-                    <div
-                        ref={sheetRef}
-                        onClick={(e) => e.stopPropagation()}
-                        className="w-full bg-zinc-900 rounded-t-2xl p-6"
-                    >
-                        <div className="flex justify-between items-center mb-4">
-                            <h2 className="text-white font-bold text-lg">Storytime</h2>
-                            <button
-                                onClick={() => setShowSheet(false)}
-                                className="text-white text-xl font-bold"
-                            >
-                                ×
-                            </button>
-                        </div>
+      {/* SLIDE UP ANIMATION */}
+      <style>{`
+        @keyframes slideUp {
+          from { transform: translateY(100%); }
+          to { transform: translateY(0); }
+        }
+        .animate-slideUp {
+          animation: slideUp 0.3s ease-out;
+        }
+      `}</style>
+    </>
+  );
+}
 
-                        <div className="space-y-3">
-                            <button className="w-full bg-yellow-500 text-black py-3 rounded-xl">
-                                Upload Files
-                            </button>
-                            <button className="w-full bg-zinc-800 text-white py-3 rounded-xl">
-                                Scan Text
-                            </button>
-                            <button className="w-full bg-zinc-800 text-white py-3 rounded-xl">
-                                Paste Article URL
-                            </button>
-                            <button className="w-full bg-zinc-800 text-white py-3 rounded-xl">
-                                Connect to Google Drive
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-        </>
-    );
+function Action({ icon, text }) {
+  return (
+    <button className="w-full flex items-center gap-3 bg-zinc-800 hover:bg-zinc-700 text-white py-3 px-4 rounded-xl transition">
+      <span className="w-5 h-5">{icon}</span>
+      <span>{text}</span>
+    </button>
+  );
 }
