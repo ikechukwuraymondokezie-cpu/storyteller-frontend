@@ -53,7 +53,12 @@ export default function BottomNav() {
     const move = (e) => {
       currentY = e.touches[0].clientY;
       const diff = currentY - startY;
-      if (diff > 0) sheet.style.transform = `translateY(${diff}px)`;
+
+      if (diff > 0) {
+        // Prevent pull-to-refresh
+        e.preventDefault();
+        sheet.style.transform = `translateY(${diff}px)`;
+      }
     };
 
     const end = () => {
@@ -62,9 +67,9 @@ export default function BottomNav() {
       else sheet.style.transform = "translateY(0)";
     };
 
-    sheet.addEventListener("touchstart", start);
-    sheet.addEventListener("touchmove", move);
-    sheet.addEventListener("touchend", end);
+    sheet.addEventListener("touchstart", start, { passive: true });
+    sheet.addEventListener("touchmove", move, { passive: false });
+    sheet.addEventListener("touchend", end, { passive: true });
 
     return () => {
       sheet.removeEventListener("touchstart", start);
