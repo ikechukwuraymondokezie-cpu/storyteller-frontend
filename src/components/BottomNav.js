@@ -92,11 +92,11 @@ export default function BottomNav() {
           <Plus className="w-5 h-5 text-black" />
         </button>
 
-        {/* Added to="/store" to the F3 Logo NavItem */}
-        <NavItem icon={<img src={f3logo} className="w-12 h-12 object-contain" />} to="/store" />
-        
-        {/* Added to="/profile" to the Profile NavItem */}
-        <NavItem icon={<User className="w-5 h-5" />} label="Profile" to="/Profile" />
+        {/* F3 Logo (no route) */}
+        <NavItem icon={<img src={f3logo} className="w-12 h-12 object-contain" />} />
+
+        {/* Profile link fixed to /profile */}
+        <NavItem icon={<User className="w-5 h-5" />} label="Profile" to="/profile" />
       </nav>
 
       {/* OVERLAY */}
