@@ -1,0 +1,11 @@
+# dependencies
+node_modules/
+
+# env files
+.env
+backend/.env
+storyteller-frontend/.env
+
+# build outputs
+dist/
+build/

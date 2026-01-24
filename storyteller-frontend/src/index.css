@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* --------------------
+   GLOBAL POLISH
+-------------------- */
+html,
+body {
+  @apply bg-bg text-white antialiased;
+  height: 100%;
+  overflow-x: hidden;
+}
+
+/* Ensure React root fills screen */
+#root {
+  min-height: 100%;
+}
+
+/* --------------------
+   GEOMETRIC SANS FONT
+   (Tailwind default fallback-safe)
+-------------------- */
+body {
+  font-family: ui-sans-serif, system-ui, -apple-system,
+    BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans",
+    "Apple Color Emoji", "Segoe UI Emoji",
+    "Segoe UI Symbol", "Noto Color Emoji";
+}
+
+/* --------------------
+   BOTTOM SHEET ANIMATION
+-------------------- */
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+  }
+
+  to {
+    transform: translateY(0);
+  }
+}
+
+.animate-slideUp {
+  animation: slideUp 0.25s ease-out;
+}
+
+/* --------------------
+   DESKTOP QUALITY OF LIFE
+-------------------- */
+
+/* Smooth scrolling on desktop trackpads */
+* {
+  scroll-behavior: smooth;
+}
+
+/* Prevent image drag glitches */
+img {
+  user-select: none;
+  -webkit-user-drag: none;
+}
