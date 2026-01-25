@@ -1,27 +1,31 @@
 import { useState, useRef, useEffect } from "react";
-import { MoreHorizontal, Download, Folder } from "lucide-react";
+import { MoreHorizontal, Download } from "lucide-react";
 import f3logo from "../assets/f3logo.png";
 
 export default function Library() {
-    const API_URL = process.env.REACT_APP_API_URL; // <- use env variable
+    const API_URL = process.env.REACT_APP_API_URL;
     const [books, setBooks] = useState([]);
     const [activeBook, setActiveBook] = useState(null);
     const [selectedFolder, setSelectedFolder] = useState("default");
     const sheetRef = useRef(null);
 
-    // ---------------- FETCH BOOKS (BY FOLDER) ----------------
+    // ---------------- FETCH BOOKS ----------------
+    const fetchBooks = async () => {
+        try {
+            const res = await fetch(
+                `${API_URL}/api/books/folder/${selectedFolder}`
+            );
+            const data = await res.json();
+            setBooks(Array.isArray(data) ? data : []);
+        } catch (err) {
+            console.error("Failed to fetch books:", err);
+            setBooks([]);
+        }
+    };
+
     useEffect(() => {
-        const fetchBooks = async () => {
-            try {
-                const res = await fetch(`${API_URL}/api/books/folder/${selectedFolder}`);
-                const data = await res.json();
-                setBooks(data);
-            } catch (err) {
-                console.error("Failed to fetch books:", err);
-            }
-        };
         fetchBooks();
-    }, [selectedFolder, API_URL]);
+    }, [selectedFolder]);
 
     // ---------------- MOBILE SWIPE TO CLOSE ----------------
     useEffect(() => {
@@ -30,58 +34,57 @@ export default function Library() {
         const sheet = sheetRef.current;
         let startY = 0;
         let currentY = 0;
-        let dragging = false;
 
-        const onTouchStart = (e) => {
+        const start = (e) => {
             startY = e.touches[0].clientY;
-            currentY = startY;
-            dragging = true;
             sheet.style.transition = "none";
         };
 
-        const onTouchMove = (e) => {
-            if (!dragging) return;
+        const move = (e) => {
             currentY = e.touches[0].clientY;
             const diff = currentY - startY;
             if (diff > 0) sheet.style.transform = `translateY(${diff}px)`;
         };
 
-        const onTouchEnd = () => {
-            dragging = false;
+        const end = () => {
             sheet.style.transition = "transform 0.25s ease";
             if (currentY - startY > 90) setActiveBook(null);
             else sheet.style.transform = "translateY(0)";
         };
 
-        sheet.addEventListener("touchstart", onTouchStart);
-        sheet.addEventListener("touchmove", onTouchMove);
-        sheet.addEventListener("touchend", onTouchEnd);
+        sheet.addEventListener("touchstart", start);
+        sheet.addEventListener("touchmove", move);
+        sheet.addEventListener("touchend", end);
 
         return () => {
-            sheet.removeEventListener("touchstart", onTouchStart);
-            sheet.removeEventListener("touchmove", onTouchMove);
-            sheet.removeEventListener("touchend", onTouchEnd);
+            sheet.removeEventListener("touchstart", start);
+            sheet.removeEventListener("touchmove", move);
+            sheet.removeEventListener("touchend", end);
         };
     }, [activeBook]);
 
-    // ---------------- PATCH DOWNLOAD / TTS ----------------
-    const handleAction = async (bookId, actionType) => {
+    // ---------------- ACTIONS ----------------
+    const handleAction = async (bookId, action) => {
         try {
-            const res = await fetch(`${API_URL}/api/books/${bookId}/actions`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ action: actionType }),
-            });
+            const res = await fetch(
+                `${API_URL}/api/books/${bookId}/actions`,
+                {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ action }),
+                }
+            );
+
             const updatedBook = await res.json();
 
             setBooks((prev) =>
                 prev.map((b) => (b._id === bookId ? updatedBook : b))
             );
 
-            if (actionType === "download" && updatedBook.pdfPath) {
+            if (action === "download" && updatedBook.audioPath) {
                 const link = document.createElement("a");
-                link.href = `${API_URL}${updatedBook.pdfPath}`;
-                link.download = updatedBook.title;
+                link.href = `${API_URL}${updatedBook.audioPath}`;
+                link.download = `${updatedBook.title}.mp3`;
                 link.click();
             }
         } catch (err) {
@@ -96,7 +99,7 @@ export default function Library() {
                 Your Collection
             </h1>
 
-            {/* FOLDER FILTER */}
+            {/* FOLDERS */}
             <div className="flex gap-2 mb-6">
                 {["default", "favorites", "archive"].map((folder) => (
                     <button
@@ -112,7 +115,17 @@ export default function Library() {
                 ))}
             </div>
 
-            {/* BOOK GRID */}
+            {/* EMPTY STATE */}
+            {books.length === 0 && (
+                <div className="text-center text-zinc-400 mt-20">
+                    <p className="text-lg">No books yet</p>
+                    <p className="text-sm mt-2">
+                        Tap <span className="text-yellow-400">+</span> to upload one
+                    </p>
+                </div>
+            )}
+
+            {/* GRID */}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
                 {books.map((book) => (
                     <div
@@ -120,11 +133,14 @@ export default function Library() {
                         className="relative bg-zinc-900 rounded-lg p-2 hover:bg-zinc-800 transition"
                     >
                         <img
-                            src={book.cover}
+                            src={book.cover || "/placeholder-cover.png"}
                             alt={book.title}
                             className="w-full h-36 object-cover rounded-md"
                         />
-                        <p className="mt-2 text-white text-sm truncate">{book.title}</p>
+
+                        <p className="mt-2 text-white text-sm truncate">
+                            {book.title}
+                        </p>
 
                         <button
                             onClick={() => setActiveBook(book)}
@@ -136,7 +152,7 @@ export default function Library() {
                 ))}
             </div>
 
-            {/* BOTTOM SHEET */}
+            {/* ACTION SHEET */}
             {activeBook && (
                 <div
                     className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center"
@@ -153,18 +169,24 @@ export default function Library() {
 
                         <div className="flex gap-3 mb-4">
                             <img
-                                src={activeBook.cover}
+                                src={activeBook.cover || "/placeholder-cover.png"}
                                 className="w-12 h-16 rounded-md object-cover"
                             />
                             <div>
-                                <p className="text-white font-semibold">{activeBook.title}</p>
-                                <p className="text-zinc-500 text-xs">{activeBook.words}</p>
+                                <p className="text-white font-semibold">
+                                    {activeBook.title}
+                                </p>
+                                <p className="text-zinc-500 text-xs">
+                                    {activeBook.words || "—"} words
+                                </p>
                             </div>
                         </div>
 
                         <div className="space-y-3">
                             <button
-                                onClick={() => handleAction(activeBook._id, "download")}
+                                onClick={() =>
+                                    handleAction(activeBook._id, "download")
+                                }
                                 className="w-full flex gap-3 bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-3 rounded-xl"
                             >
                                 <Download className="w-6 h-6" />
@@ -172,11 +194,13 @@ export default function Library() {
                             </button>
 
                             <button
-                                onClick={() => handleAction(activeBook._id, "tts")}
+                                onClick={() =>
+                                    handleAction(activeBook._id, "tts")
+                                }
                                 className="w-full flex gap-3 bg-black hover:bg-black/90 text-white py-3 px-4 rounded-xl"
                             >
                                 <img src={f3logo} className="w-6 h-6" />
-                                <span>Read in Funfiction & Fallacies</span>
+                                <span>Read with Funfiction & Fallacies</span>
                             </button>
                         </div>
                     </div>
