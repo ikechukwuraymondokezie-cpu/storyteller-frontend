@@ -36,11 +36,15 @@ function NavItem({ icon, label, to }) {
 export default function BottomNav() {
   const [showSheet, setShowSheet] = useState(false);
   const sheetRef = useRef(null);
-  const fileInputRef = useRef(null); // hidden file input
+  const fileInputRef = useRef(null);
 
-  // ---------------- FILE UPLOAD ----------------
+  const API_URL = process.env.REACT_APP_API_URL;
+
+  // ---------- UPLOAD ----------
   const handleUploadClick = () => {
-    fileInputRef.current?.click();
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
+    }
   };
 
   const handleFileChange = async (e) => {
@@ -48,28 +52,31 @@ export default function BottomNav() {
     if (!file) return;
 
     const formData = new FormData();
-    formData.append("file", file);
+    formData.append("file", file); // must match backend field name
 
     try {
-      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/books/upload`, {
+      const res = await fetch(`${API_URL}/api/books/upload`, {
         method: "POST",
         body: formData,
       });
 
-      if (res.ok) {
-        alert("Book uploaded successfully!");
-        setShowSheet(false);
-        e.target.value = ""; // reset input
-      } else {
-        alert("Upload failed!");
+      const data = await res.json();
+      console.log("UPLOAD RESPONSE:", data);
+
+      if (!res.ok) {
+        throw new Error(data?.message || "Upload failed");
       }
+
+      alert("Book uploaded successfully!");
+      setShowSheet(false);
+      e.target.value = "";
     } catch (err) {
-      console.error("Upload error:", err);
-      alert("Upload failed!");
+      console.error("UPLOAD ERROR:", err);
+      alert("Upload failed. Check console.");
     }
   };
 
-  // ---------------- MOBILE SWIPE DOWN ----------------
+  // ---------- MOBILE SWIPE DOWN ----------
   useEffect(() => {
     if (!sheetRef.current) return;
 
@@ -111,15 +118,6 @@ export default function BottomNav() {
 
   return (
     <>
-      {/* HIDDEN FILE INPUT */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".pdf,.txt"
-        style={{ display: "none" }}
-        onChange={handleFileChange}
-      />
-
       {/* BOTTOM NAV */}
       <nav className="fixed bottom-0 left-0 right-0 h-16 bg-black border-t border-gray-800 z-40 flex justify-around items-center md:hidden">
         <NavItem icon={<Home className="w-5 h-5" />} label="Home" to="/" />
@@ -132,14 +130,11 @@ export default function BottomNav() {
           <Plus className="w-5 h-5 text-black" />
         </button>
 
-        {/* F3 Logo (no route) */}
         <NavItem icon={<img src={f3logo} className="w-12 h-12 object-contain" />} />
-
-        {/* Profile link */}
         <NavItem icon={<User className="w-5 h-5" />} label="Profile" to="/profile" />
       </nav>
 
-      {/* OVERLAY / SHEET */}
+      {/* OVERLAY */}
       {showSheet && (
         <div
           className="fixed inset-0 z-50 bg-black/60 flex items-end md:items-center md:justify-center"
@@ -156,7 +151,15 @@ export default function BottomNav() {
               animate-slideUp
             "
           >
-            {/* Drag Handle */}
+            {/* HIDDEN FILE INPUT (INSIDE OVERLAY — IMPORTANT) */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.txt"
+              onChange={handleFileChange}
+              className="hidden"
+            />
+
             <div className="flex justify-center mb-4 md:hidden">
               <div className="w-12 h-1.5 bg-zinc-700 rounded-full" />
             </div>
@@ -175,7 +178,6 @@ export default function BottomNav() {
         </div>
       )}
 
-      {/* SLIDE UP ANIMATION */}
       <style>{`
         @keyframes slideUp {
           from { transform: translateY(100%); }

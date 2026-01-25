@@ -106,8 +106,8 @@ export default function Library() {
                         key={folder}
                         onClick={() => setSelectedFolder(folder)}
                         className={`px-4 py-2 rounded-full text-sm font-medium ${selectedFolder === folder
-                                ? "bg-yellow-500 text-black"
-                                : "bg-zinc-800 text-white hover:bg-zinc-700"
+                            ? "bg-yellow-500 text-black"
+                            : "bg-zinc-800 text-white hover:bg-zinc-700"
                             }`}
                     >
                         {folder}
