@@ -10,8 +10,42 @@ import {
 export default function FloatingUploadButton() {
     const [open, setOpen] = useState(false);
     const sheetRef = useRef(null);
+    const fileInputRef = useRef(null); // <-- hidden file input
 
-    // Swipe-down to close
+    const API_URL = process.env.REACT_APP_API_URL;
+
+    // ---------------- FILE UPLOAD ----------------
+    const handleUploadClick = () => {
+        fileInputRef.current?.click();
+    };
+
+    const handleFileChange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append("file", file);
+
+        try {
+            const res = await fetch(`${API_URL}/api/books/upload`, {
+                method: "POST",
+                body: formData,
+            });
+
+            if (res.ok) {
+                alert("Book uploaded successfully!");
+                setOpen(false);
+                e.target.value = ""; // reset input
+            } else {
+                alert("Upload failed!");
+            }
+        } catch (err) {
+            console.error("Upload error:", err);
+            alert("Upload failed!");
+        }
+    };
+
+    // ---------------- SWIPE-DOWN TO CLOSE ----------------
     useEffect(() => {
         if (!open || !sheetRef.current) return;
 
@@ -30,24 +64,16 @@ export default function FloatingUploadButton() {
         const onTouchMove = (e) => {
             if (!dragging) return;
             e.preventDefault();
-
             currentY = e.touches[0].clientY;
             const diff = currentY - startY;
-
-            if (diff > 0) {
-                sheet.style.transform = `translateY(${diff}px)`;
-            }
+            if (diff > 0) sheet.style.transform = `translateY(${diff}px)`;
         };
 
         const onTouchEnd = () => {
             dragging = false;
             sheet.style.transition = "transform 0.25s ease";
-
-            if (currentY - startY > 90) {
-                setOpen(false);
-            } else {
-                sheet.style.transform = "translateY(0)";
-            }
+            if (currentY - startY > 90) setOpen(false);
+            else sheet.style.transform = "translateY(0)";
         };
 
         sheet.addEventListener("touchstart", onTouchStart, { passive: true });
@@ -63,23 +89,32 @@ export default function FloatingUploadButton() {
 
     return (
         <>
+            {/* HIDDEN FILE INPUT */}
+            <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.txt,.docx"
+                style={{ display: "none" }}
+                onChange={handleFileChange}
+            />
+
             {/* FLOATING BUTTON (DESKTOP ONLY) */}
             <button
                 onClick={() => setOpen(true)}
                 className="
-                    hidden md:flex
-                    fixed bottom-6 right-10
-                    w-16 h-16
-                    items-center justify-center
-                    bg-gradient-to-r from-red-500 via-orange-400 to-yellow-300
-                    text-white
-                    rounded-lg
-                    shadow-[0_0_20px_rgba(255,140,0,0.7)]
-                    hover:scale-110
-                    active:scale-95
-                    transition-transform
-                    z-40
-                "
+          hidden md:flex
+          fixed bottom-6 right-10
+          w-16 h-16
+          items-center justify-center
+          bg-gradient-to-r from-red-500 via-orange-400 to-yellow-300
+          text-white
+          rounded-lg
+          shadow-[0_0_20px_rgba(255,140,0,0.7)]
+          hover:scale-110
+          active:scale-95
+          transition-transform
+          z-40
+        "
             >
                 <Plus className="w-8 h-8" />
             </button>
@@ -90,17 +125,16 @@ export default function FloatingUploadButton() {
                     className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center"
                     onClick={() => setOpen(false)}
                 >
-                    {/* BOTTOM SHEET */}
                     <div
                         ref={sheetRef}
                         onClick={(e) => e.stopPropagation()}
                         className="
-                            w-full max-w-2xl mx-auto
-                            bg-zinc-900
-                            rounded-t-2xl md:rounded-2xl
-                            px-6 pt-3 pb-6
-                            animate-slideUp
-                        "
+              w-full max-w-2xl mx-auto
+              bg-zinc-900
+              rounded-t-2xl md:rounded-2xl
+              px-6 pt-3 pb-6
+              animate-slideUp
+            "
                     >
                         {/* DRAG HANDLE */}
                         <div className="flex justify-center mb-4">
@@ -118,6 +152,7 @@ export default function FloatingUploadButton() {
                                 icon={<Upload className="w-5 h-5" />}
                                 title="Upload files"
                                 subtitle="PDF, DOCX, TXT"
+                                onClick={handleUploadClick} // <-- attach handler
                             />
                             <Action
                                 icon={<ScanText className="w-5 h-5" />}
@@ -139,32 +174,33 @@ export default function FloatingUploadButton() {
                 </div>
             )}
 
-            {/* ANIMATION */}
+            {/* SLIDE UP ANIMATION */}
             <style>{`
-                @keyframes slideUp {
-                    from { transform: translateY(100%); }
-                    to { transform: translateY(0); }
-                }
-                .animate-slideUp {
-                    animation: slideUp 0.3s ease-out;
-                }
-            `}</style>
+        @keyframes slideUp {
+          from { transform: translateY(100%); }
+          to { transform: translateY(0); }
+        }
+        .animate-slideUp {
+          animation: slideUp 0.3s ease-out;
+        }
+      `}</style>
         </>
     );
 }
 
-function Action({ icon, title, subtitle }) {
+function Action({ icon, title, subtitle, onClick }) {
     return (
         <button
+            onClick={onClick}
             className="
-                w-full
-                flex items-start gap-3
-                bg-zinc-800 hover:bg-zinc-700
-                text-white
-                px-4 py-3
-                rounded-xl
-                transition
-            "
+        w-full
+        flex items-start gap-3
+        bg-zinc-800 hover:bg-zinc-700
+        text-white
+        px-4 py-3
+        rounded-xl
+        transition
+      "
         >
             <div className="mt-1">{icon}</div>
             <div className="flex flex-col items-start">
