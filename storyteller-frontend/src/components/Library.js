@@ -3,6 +3,7 @@ import { MoreHorizontal, Download, Folder } from "lucide-react";
 import f3logo from "../assets/f3logo.png";
 
 export default function Library() {
+    const API_URL = process.env.REACT_APP_API_URL; // <- use env variable
     const [books, setBooks] = useState([]);
     const [activeBook, setActiveBook] = useState(null);
     const [selectedFolder, setSelectedFolder] = useState("default");
@@ -12,9 +13,7 @@ export default function Library() {
     useEffect(() => {
         const fetchBooks = async () => {
             try {
-                const res = await fetch(
-                    `http://localhost:5000/api/books/folder/${selectedFolder}`
-                );
+                const res = await fetch(`${API_URL}/api/books/folder/${selectedFolder}`);
                 const data = await res.json();
                 setBooks(data);
             } catch (err) {
@@ -22,7 +21,7 @@ export default function Library() {
             }
         };
         fetchBooks();
-    }, [selectedFolder]);
+    }, [selectedFolder, API_URL]);
 
     // ---------------- MOBILE SWIPE TO CLOSE ----------------
     useEffect(() => {
@@ -68,15 +67,11 @@ export default function Library() {
     // ---------------- PATCH DOWNLOAD / TTS ----------------
     const handleAction = async (bookId, actionType) => {
         try {
-            const res = await fetch(
-                `http://localhost:5000/api/books/${bookId}/actions`,
-                {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ action: actionType }),
-                }
-            );
-
+            const res = await fetch(`${API_URL}/api/books/${bookId}/actions`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action: actionType }),
+            });
             const updatedBook = await res.json();
 
             setBooks((prev) =>
@@ -85,7 +80,7 @@ export default function Library() {
 
             if (actionType === "download" && updatedBook.pdfPath) {
                 const link = document.createElement("a");
-                link.href = `http://localhost:5000${updatedBook.pdfPath}`;
+                link.href = `${API_URL}${updatedBook.pdfPath}`;
                 link.download = updatedBook.title;
                 link.click();
             }
@@ -108,8 +103,8 @@ export default function Library() {
                         key={folder}
                         onClick={() => setSelectedFolder(folder)}
                         className={`px-4 py-2 rounded-full text-sm font-medium ${selectedFolder === folder
-                            ? "bg-yellow-500 text-black"
-                            : "bg-zinc-800 text-white hover:bg-zinc-700"
+                                ? "bg-yellow-500 text-black"
+                                : "bg-zinc-800 text-white hover:bg-zinc-700"
                             }`}
                     >
                         {folder}
@@ -129,9 +124,7 @@ export default function Library() {
                             alt={book.title}
                             className="w-full h-36 object-cover rounded-md"
                         />
-                        <p className="mt-2 text-white text-sm truncate">
-                            {book.title}
-                        </p>
+                        <p className="mt-2 text-white text-sm truncate">{book.title}</p>
 
                         <button
                             onClick={() => setActiveBook(book)}
@@ -164,20 +157,14 @@ export default function Library() {
                                 className="w-12 h-16 rounded-md object-cover"
                             />
                             <div>
-                                <p className="text-white font-semibold">
-                                    {activeBook.title}
-                                </p>
-                                <p className="text-zinc-500 text-xs">
-                                    {activeBook.words}
-                                </p>
+                                <p className="text-white font-semibold">{activeBook.title}</p>
+                                <p className="text-zinc-500 text-xs">{activeBook.words}</p>
                             </div>
                         </div>
 
                         <div className="space-y-3">
                             <button
-                                onClick={() =>
-                                    handleAction(activeBook._id, "download")
-                                }
+                                onClick={() => handleAction(activeBook._id, "download")}
                                 className="w-full flex gap-3 bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-3 rounded-xl"
                             >
                                 <Download className="w-6 h-6" />
@@ -185,9 +172,7 @@ export default function Library() {
                             </button>
 
                             <button
-                                onClick={() =>
-                                    handleAction(activeBook._id, "tts")
-                                }
+                                onClick={() => handleAction(activeBook._id, "tts")}
                                 className="w-full flex gap-3 bg-black hover:bg-black/90 text-white py-3 px-4 rounded-xl"
                             >
                                 <img src={f3logo} className="w-6 h-6" />
@@ -199,14 +184,14 @@ export default function Library() {
             )}
 
             <style>{`
-                @keyframes slideUp {
-                    from { transform: translateY(100%); }
-                    to { transform: translateY(0); }
-                }
-                .animate-slideUp {
-                    animation: slideUp 0.3s ease-out;
-                }
-            `}</style>
+        @keyframes slideUp {
+          from { transform: translateY(100%); }
+          to { transform: translateY(0); }
+        }
+        .animate-slideUp {
+          animation: slideUp 0.3s ease-out;
+        }
+      `}</style>
         </div>
     );
 }
