@@ -36,8 +36,40 @@ function NavItem({ icon, label, to }) {
 export default function BottomNav() {
   const [showSheet, setShowSheet] = useState(false);
   const sheetRef = useRef(null);
+  const fileInputRef = useRef(null); // hidden file input
 
-  // MOBILE swipe-down close
+  // ---------------- FILE UPLOAD ----------------
+  const handleUploadClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const res = await fetch(`${process.env.REACT_APP_API_URL}/api/books/upload`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (res.ok) {
+        alert("Book uploaded successfully!");
+        setShowSheet(false);
+        e.target.value = ""; // reset input
+      } else {
+        alert("Upload failed!");
+      }
+    } catch (err) {
+      console.error("Upload error:", err);
+      alert("Upload failed!");
+    }
+  };
+
+  // ---------------- MOBILE SWIPE DOWN ----------------
   useEffect(() => {
     if (!sheetRef.current) return;
 
@@ -55,7 +87,6 @@ export default function BottomNav() {
       const diff = currentY - startY;
 
       if (diff > 0) {
-        // Prevent pull-to-refresh
         e.preventDefault();
         sheet.style.transform = `translateY(${diff}px)`;
       }
@@ -80,6 +111,15 @@ export default function BottomNav() {
 
   return (
     <>
+      {/* HIDDEN FILE INPUT */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".pdf,.txt"
+        style={{ display: "none" }}
+        onChange={handleFileChange}
+      />
+
       {/* BOTTOM NAV */}
       <nav className="fixed bottom-0 left-0 right-0 h-16 bg-black border-t border-gray-800 z-40 flex justify-around items-center md:hidden">
         <NavItem icon={<Home className="w-5 h-5" />} label="Home" to="/" />
@@ -95,17 +135,16 @@ export default function BottomNav() {
         {/* F3 Logo (no route) */}
         <NavItem icon={<img src={f3logo} className="w-12 h-12 object-contain" />} />
 
-        {/* Profile link fixed to /profile */}
+        {/* Profile link */}
         <NavItem icon={<User className="w-5 h-5" />} label="Profile" to="/profile" />
       </nav>
 
-      {/* OVERLAY */}
+      {/* OVERLAY / SHEET */}
       {showSheet && (
         <div
           className="fixed inset-0 z-50 bg-black/60 flex items-end md:items-center md:justify-center"
           onClick={() => setShowSheet(false)}
         >
-          {/* SHEET / MODAL */}
           <div
             ref={sheetRef}
             onClick={(e) => e.stopPropagation()}
@@ -117,7 +156,7 @@ export default function BottomNav() {
               animate-slideUp
             "
           >
-            {/* Drag Handle (mobile only) */}
+            {/* Drag Handle */}
             <div className="flex justify-center mb-4 md:hidden">
               <div className="w-12 h-1.5 bg-zinc-700 rounded-full" />
             </div>
@@ -127,7 +166,7 @@ export default function BottomNav() {
             </h2>
 
             <div className="space-y-3">
-              <Action icon={<Upload />} text="Upload Files" />
+              <Action icon={<Upload />} text="Upload Files" onClick={handleUploadClick} />
               <Action icon={<ScanText />} text="Scan Text" />
               <Action icon={<Link />} text="Paste Article URL" />
               <Action icon={<Cloud />} text="Connect to Google Drive" />
@@ -150,9 +189,12 @@ export default function BottomNav() {
   );
 }
 
-function Action({ icon, text }) {
+function Action({ icon, text, onClick }) {
   return (
-    <button className="w-full flex items-center gap-3 bg-zinc-800 hover:bg-zinc-700 text-white py-3 px-4 rounded-xl transition">
+    <button
+      onClick={onClick}
+      className="w-full flex items-center gap-3 bg-zinc-800 hover:bg-zinc-700 text-white py-3 px-4 rounded-xl transition"
+    >
       <span className="w-5 h-5">{icon}</span>
       <span>{text}</span>
     </button>
