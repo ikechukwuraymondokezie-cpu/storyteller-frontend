@@ -33,7 +33,7 @@ function NavItem({ icon, label, to }) {
   );
 }
 
-export default function BottomNav() {
+export default function BottomNav({ onUploadSuccess }) {
   const [showSheet, setShowSheet] = useState(false);
   const sheetRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -55,20 +55,24 @@ export default function BottomNav() {
     formData.append("file", file); // must match backend field name
 
     try {
-      console.log("Uploading to:", `${API_URL}/api/books/upload`);
+      console.log("Uploading to:", `${API_URL}/api/books`);
 
-      const res = await fetch(`${API_URL}/api/books/upload`, {
+      const res = await fetch(`${API_URL}/api/books`, {
         method: "POST",
         body: formData,
       });
 
       if (!res.ok) {
-        throw new Error("Upload failed on server");
+        const text = await res.text();
+        throw new Error(`Upload failed: ${text}`);
       }
 
       alert("Book uploaded successfully!");
       setShowSheet(false);
       e.target.value = "";
+
+      // Refresh library if callback is provided
+      if (onUploadSuccess) onUploadSuccess();
 
     } catch (err) {
       console.error("UPLOAD ERROR:", err);
@@ -164,9 +168,7 @@ export default function BottomNav() {
               <div className="w-12 h-1.5 bg-zinc-700 rounded-full" />
             </div>
 
-            <h2 className="text-white font-bold text-lg mb-5">
-              Storytime
-            </h2>
+            <h2 className="text-white font-bold text-lg mb-5">Storytime</h2>
 
             <div className="space-y-3">
               <Action icon={<Upload />} text="Upload Files" onClick={handleUploadClick} />

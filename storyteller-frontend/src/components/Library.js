@@ -8,24 +8,38 @@ export default function Library() {
     const [activeBook, setActiveBook] = useState(null);
     const [selectedFolder, setSelectedFolder] = useState("default");
     const sheetRef = useRef(null);
+    const [loading, setLoading] = useState(true);
 
     // ---------------- FETCH BOOKS ----------------
     const fetchBooks = async () => {
+        if (!API_URL) {
+            console.error("REACT_APP_API_URL is undefined!");
+            return;
+        }
+
         try {
-            const res = await fetch(
-                `${API_URL}/api/books/folder/${selectedFolder}`
-            );
+            setLoading(true);
+            console.log("Fetching books from:", `${API_URL}/api/books/folder/${selectedFolder}`);
+            const res = await fetch(`${API_URL}/api/books/folder/${selectedFolder}`);
+
+            if (!res.ok) {
+                const text = await res.text(); // read raw response to avoid JSON error
+                throw new Error(`HTTP ${res.status}: ${text}`);
+            }
+
             const data = await res.json();
             setBooks(Array.isArray(data) ? data : []);
         } catch (err) {
             console.error("Failed to fetch books:", err);
             setBooks([]);
+        } finally {
+            setLoading(false);
         }
     };
 
     useEffect(() => {
         fetchBooks();
-    }, [selectedFolder]);
+    }, [selectedFolder, API_URL]);
 
     // ---------------- MOBILE SWIPE TO CLOSE ----------------
     useEffect(() => {
@@ -65,15 +79,18 @@ export default function Library() {
 
     // ---------------- ACTIONS ----------------
     const handleAction = async (bookId, action) => {
+        if (!API_URL) return;
         try {
-            const res = await fetch(
-                `${API_URL}/api/books/${bookId}/actions`,
-                {
-                    method: "PATCH",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ action }),
-                }
-            );
+            const res = await fetch(`${API_URL}/api/books/${bookId}/actions`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ action }),
+            });
+
+            if (!res.ok) {
+                const text = await res.text();
+                throw new Error(`HTTP ${res.status}: ${text}`);
+            }
 
             const updatedBook = await res.json();
 
@@ -106,8 +123,8 @@ export default function Library() {
                         key={folder}
                         onClick={() => setSelectedFolder(folder)}
                         className={`px-4 py-2 rounded-full text-sm font-medium ${selectedFolder === folder
-                            ? "bg-yellow-500 text-black"
-                            : "bg-zinc-800 text-white hover:bg-zinc-700"
+                                ? "bg-yellow-500 text-black"
+                                : "bg-zinc-800 text-white hover:bg-zinc-700"
                             }`}
                     >
                         {folder}
@@ -115,42 +132,41 @@ export default function Library() {
                 ))}
             </div>
 
-            {/* EMPTY STATE */}
-            {books.length === 0 && (
+            {/* EMPTY / LOADING STATE */}
+            {loading ? (
+                <div className="text-center text-zinc-400 mt-20">Loading books…</div>
+            ) : books.length === 0 ? (
                 <div className="text-center text-zinc-400 mt-20">
                     <p className="text-lg">No books yet</p>
                     <p className="text-sm mt-2">
                         Tap <span className="text-yellow-400">+</span> to upload one
                     </p>
                 </div>
-            )}
-
-            {/* GRID */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-                {books.map((book) => (
-                    <div
-                        key={book._id}
-                        className="relative bg-zinc-900 rounded-lg p-2 hover:bg-zinc-800 transition"
-                    >
-                        <img
-                            src={book.cover || "/placeholder-cover.png"}
-                            alt={book.title}
-                            className="w-full h-36 object-cover rounded-md"
-                        />
-
-                        <p className="mt-2 text-white text-sm truncate">
-                            {book.title}
-                        </p>
-
-                        <button
-                            onClick={() => setActiveBook(book)}
-                            className="absolute top-2 right-2 p-1 rounded-full hover:bg-zinc-700"
+            ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+                    {books.map((book) => (
+                        <div
+                            key={book._id}
+                            className="relative bg-zinc-900 rounded-lg p-2 hover:bg-zinc-800 transition"
                         >
-                            <MoreHorizontal className="w-5 h-5 text-white" />
-                        </button>
-                    </div>
-                ))}
-            </div>
+                            <img
+                                src={book.cover || "/placeholder-cover.png"}
+                                alt={book.title}
+                                className="w-full h-36 object-cover rounded-md"
+                            />
+
+                            <p className="mt-2 text-white text-sm truncate">{book.title}</p>
+
+                            <button
+                                onClick={() => setActiveBook(book)}
+                                className="absolute top-2 right-2 p-1 rounded-full hover:bg-zinc-700"
+                            >
+                                <MoreHorizontal className="w-5 h-5 text-white" />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
 
             {/* ACTION SHEET */}
             {activeBook && (
@@ -173,20 +189,14 @@ export default function Library() {
                                 className="w-12 h-16 rounded-md object-cover"
                             />
                             <div>
-                                <p className="text-white font-semibold">
-                                    {activeBook.title}
-                                </p>
-                                <p className="text-zinc-500 text-xs">
-                                    {activeBook.words || "—"} words
-                                </p>
+                                <p className="text-white font-semibold">{activeBook.title}</p>
+                                <p className="text-zinc-500 text-xs">{activeBook.words || "—"} words</p>
                             </div>
                         </div>
 
                         <div className="space-y-3">
                             <button
-                                onClick={() =>
-                                    handleAction(activeBook._id, "download")
-                                }
+                                onClick={() => handleAction(activeBook._id, "download")}
                                 className="w-full flex gap-3 bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-3 rounded-xl"
                             >
                                 <Download className="w-6 h-6" />
@@ -194,9 +204,7 @@ export default function Library() {
                             </button>
 
                             <button
-                                onClick={() =>
-                                    handleAction(activeBook._id, "tts")
-                                }
+                                onClick={() => handleAction(activeBook._id, "tts")}
                                 className="w-full flex gap-3 bg-black hover:bg-black/90 text-white py-3 px-4 rounded-xl"
                             >
                                 <img src={f3logo} className="w-6 h-6" />
