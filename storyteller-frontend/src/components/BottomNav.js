@@ -38,13 +38,17 @@ export default function BottomNav({ onUploadSuccess }) {
   const sheetRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  const API_URL = process.env.REACT_APP_API_URL;
+  const API_URL = process.env.REACT_APP_API_URL; // must be backend URL
+
+  if (!API_URL) {
+    console.warn(
+      "REACT_APP_API_URL is not set. Make sure you have .env file with REACT_APP_API_URL=https://your-backend-url"
+    );
+  }
 
   // ---------- UPLOAD ----------
   const handleUploadClick = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.click();
-    }
+    if (fileInputRef.current) fileInputRef.current.click();
   };
 
   const handleFileChange = async (e) => {
@@ -52,7 +56,7 @@ export default function BottomNav({ onUploadSuccess }) {
     if (!file) return;
 
     const formData = new FormData();
-    formData.append("file", file); // must match backend field name
+    formData.append("pdf", file); // match backend field name "pdf"
 
     try {
       console.log("Uploading to:", `${API_URL}/api/books`);
@@ -63,7 +67,7 @@ export default function BottomNav({ onUploadSuccess }) {
       });
 
       if (!res.ok) {
-        const text = await res.text();
+        const text = await res.text(); // get error message from server
         throw new Error(`Upload failed: ${text}`);
       }
 
@@ -71,12 +75,10 @@ export default function BottomNav({ onUploadSuccess }) {
       setShowSheet(false);
       e.target.value = "";
 
-      // Refresh library if callback is provided
-      if (onUploadSuccess) onUploadSuccess();
-
+      if (onUploadSuccess) onUploadSuccess(); // refresh library if callback exists
     } catch (err) {
       console.error("UPLOAD ERROR:", err);
-      alert("Upload failed. Check console.");
+      alert("Upload failed. Check console for details.");
     }
   };
 
@@ -96,7 +98,6 @@ export default function BottomNav({ onUploadSuccess }) {
     const move = (e) => {
       currentY = e.touches[0].clientY;
       const diff = currentY - startY;
-
       if (diff > 0) {
         e.preventDefault();
         sheet.style.transform = `translateY(${diff}px)`;
