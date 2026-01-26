@@ -55,21 +55,21 @@ export default function BottomNav() {
     formData.append("file", file); // must match backend field name
 
     try {
+      console.log("Uploading to:", `${API_URL}/api/books/upload`);
+
       const res = await fetch(`${API_URL}/api/books/upload`, {
         method: "POST",
         body: formData,
       });
 
-      const data = await res.json();
-      console.log("UPLOAD RESPONSE:", data);
-
       if (!res.ok) {
-        throw new Error(data?.message || "Upload failed");
+        throw new Error("Upload failed on server");
       }
 
       alert("Book uploaded successfully!");
       setShowSheet(false);
       e.target.value = "";
+
     } catch (err) {
       console.error("UPLOAD ERROR:", err);
       alert("Upload failed. Check console.");
@@ -151,7 +151,7 @@ export default function BottomNav() {
               animate-slideUp
             "
           >
-            {/* HIDDEN FILE INPUT (INSIDE OVERLAY — IMPORTANT) */}
+            {/* HIDDEN FILE INPUT */}
             <input
               ref={fileInputRef}
               type="file"
