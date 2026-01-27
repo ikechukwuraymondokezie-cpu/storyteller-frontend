@@ -1,13 +1,11 @@
 import { useState, useRef, useEffect } from "react";
 import { MoreHorizontal, Download, Plus } from "lucide-react";
 import f3logo from "../assets/f3logo.png";
-import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
-import pdfjsWorker from "pdfjs-dist/legacy/build/pdf.worker.js"; // <-- use .js, not .entry
+import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
+import pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.js"; // <-- proper CRA-compatible worker
 
 // Set the worker for pdf.js
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
-
-
+GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 export default function Library() {
     const API_URL = process.env.REACT_APP_API_URL;
@@ -37,38 +35,40 @@ export default function Library() {
 
             const data = await res.json();
 
-            const mapped = await Promise.all(data.map(async (b) => {
-                let cover = b.cover || null;
+            const mapped = await Promise.all(
+                data.map(async (b) => {
+                    let cover = b.cover || null;
 
-                // If no cover, generate first-page preview from PDF
-                if (!cover && b.pdfPath) {
-                    try {
-                        const pdfUrl = `${API_URL}${b.pdfPath}`;
-                        const pdf = await pdfjsLib.getDocument(pdfUrl).promise;
-                        const page = await pdf.getPage(1);
-                        const viewport = page.getViewport({ scale: 1 });
-                        const canvas = document.createElement("canvas");
-                        canvas.width = viewport.width;
-                        canvas.height = viewport.height;
-                        const context = canvas.getContext("2d");
-                        await page.render({ canvasContext: context, viewport }).promise;
-                        cover = canvas.toDataURL();
-                    } catch (err) {
-                        console.warn("❌ Failed to generate PDF preview:", err);
+                    // Generate first-page preview from PDF if no cover exists
+                    if (!cover && b.pdfPath) {
+                        try {
+                            const pdfUrl = `${API_URL}${b.pdfPath}`;
+                            const pdf = await getDocument(pdfUrl).promise;
+                            const page = await pdf.getPage(1);
+                            const viewport = page.getViewport({ scale: 1 });
+                            const canvas = document.createElement("canvas");
+                            canvas.width = viewport.width;
+                            canvas.height = viewport.height;
+                            const context = canvas.getContext("2d");
+                            await page.render({ canvasContext: context, viewport }).promise;
+                            cover = canvas.toDataURL();
+                        } catch (err) {
+                            console.warn("❌ Failed to generate PDF preview:", err);
+                        }
                     }
-                }
 
-                return {
-                    _id: b._id,
-                    title: b.title,
-                    cover,
-                    url: b.pdfPath,
-                    folder: b.folder,
-                    downloads: b.downloads,
-                    ttsRequests: b.ttsRequests,
-                    words: b.words,
-                };
-            }));
+                    return {
+                        _id: b._id,
+                        title: b.title,
+                        cover,
+                        url: b.pdfPath,
+                        folder: b.folder,
+                        downloads: b.downloads,
+                        ttsRequests: b.ttsRequests,
+                        words: b.words,
+                    };
+                })
+            );
 
             setBooks(mapped);
         } catch (err) {
@@ -298,14 +298,14 @@ export default function Library() {
             )}
 
             <style>{`
-        @keyframes slideUp {
-          from { transform: translateY(100%); }
-          to { transform: translateY(0); }
-        }
-        .animate-slideUp {
-          animation: slideUp 0.3s ease-out;
-        }
-      `}</style>
+                @keyframes slideUp {
+                    from { transform: translateY(100%); }
+                    to { transform: translateY(0); }
+                }
+                .animate-slideUp {
+                    animation: slideUp 0.3s ease-out;
+                }
+            `}</style>
         </div>
     );
 }
