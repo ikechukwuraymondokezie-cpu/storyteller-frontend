@@ -4,33 +4,35 @@ import f3logo from "../assets/f3logo.png";
 
 export default function Library() {
     const API_URL = process.env.REACT_APP_API_URL;
+
     const [books, setBooks] = useState([]);
     const [activeBook, setActiveBook] = useState(null);
-    const [selectedFolder, setSelectedFolder] = useState("default");
-    const sheetRef = useRef(null);
     const [loading, setLoading] = useState(true);
+    const sheetRef = useRef(null);
 
     // ---------------- FETCH BOOKS ----------------
     const fetchBooks = async () => {
         if (!API_URL) {
-            console.error("REACT_APP_API_URL is undefined!");
+            console.error("❌ REACT_APP_API_URL is undefined");
+            setLoading(false);
             return;
         }
 
         try {
             setLoading(true);
-            console.log("Fetching books from:", `${API_URL}/api/books/folder/${selectedFolder}`);
-            const res = await fetch(`${API_URL}/api/books/folder/${selectedFolder}`);
+            console.log("📚 Fetching books from:", `${API_URL}/api/books`);
+
+            const res = await fetch(`${API_URL}/api/books`);
 
             if (!res.ok) {
-                const text = await res.text(); // read raw response to avoid JSON error
+                const text = await res.text();
                 throw new Error(`HTTP ${res.status}: ${text}`);
             }
 
             const data = await res.json();
             setBooks(Array.isArray(data) ? data : []);
         } catch (err) {
-            console.error("Failed to fetch books:", err);
+            console.error("❌ Failed to fetch books:", err);
             setBooks([]);
         } finally {
             setLoading(false);
@@ -39,11 +41,11 @@ export default function Library() {
 
     useEffect(() => {
         fetchBooks();
-    }, [selectedFolder, API_URL]);
+    }, [API_URL]);
 
     // ---------------- MOBILE SWIPE TO CLOSE ----------------
     useEffect(() => {
-        if (!sheetRef.current) return;
+        if (!sheetRef.current || !activeBook) return;
 
         const sheet = sheetRef.current;
         let startY = 0;
@@ -80,6 +82,7 @@ export default function Library() {
     // ---------------- ACTIONS ----------------
     const handleAction = async (bookId, action) => {
         if (!API_URL) return;
+
         try {
             const res = await fetch(`${API_URL}/api/books/${bookId}/actions`, {
                 method: "PATCH",
@@ -105,36 +108,21 @@ export default function Library() {
                 link.click();
             }
         } catch (err) {
-            console.error("Action failed:", err);
+            console.error("❌ Action failed:", err);
         }
     };
 
     return (
         <div className="min-h-screen bg-bg px-6 py-8">
-            {/* TITLE */}
-            <h1 className="text-3xl md:text-5xl font-extrabold text-yellow-400 mb-4">
+            <h1 className="text-3xl md:text-5xl font-extrabold text-yellow-400 mb-6">
                 Your Collection
             </h1>
 
-            {/* FOLDERS */}
-            <div className="flex gap-2 mb-6">
-                {["default", "favorites", "archive"].map((folder) => (
-                    <button
-                        key={folder}
-                        onClick={() => setSelectedFolder(folder)}
-                        className={`px-4 py-2 rounded-full text-sm font-medium ${selectedFolder === folder
-                            ? "bg-yellow-500 text-black"
-                            : "bg-zinc-800 text-white hover:bg-zinc-700"
-                            }`}
-                    >
-                        {folder}
-                    </button>
-                ))}
-            </div>
-
-            {/* EMPTY / LOADING STATE */}
+            {/* LOADING / EMPTY */}
             {loading ? (
-                <div className="text-center text-zinc-400 mt-20">Loading books…</div>
+                <div className="text-center text-zinc-400 mt-20">
+                    Loading books…
+                </div>
             ) : books.length === 0 ? (
                 <div className="text-center text-zinc-400 mt-20">
                     <p className="text-lg">No books yet</p>
@@ -155,7 +143,9 @@ export default function Library() {
                                 className="w-full h-36 object-cover rounded-md"
                             />
 
-                            <p className="mt-2 text-white text-sm truncate">{book.title}</p>
+                            <p className="mt-2 text-white text-sm truncate">
+                                {book.title || "Untitled"}
+                            </p>
 
                             <button
                                 onClick={() => setActiveBook(book)}
@@ -189,15 +179,19 @@ export default function Library() {
                                 className="w-12 h-16 rounded-md object-cover"
                             />
                             <div>
-                                <p className="text-white font-semibold">{activeBook.title}</p>
-                                <p className="text-zinc-500 text-xs">{activeBook.words || "—"} words</p>
+                                <p className="text-white font-semibold">
+                                    {activeBook.title}
+                                </p>
+                                <p className="text-zinc-500 text-xs">
+                                    {activeBook.words || "—"} words
+                                </p>
                             </div>
                         </div>
 
                         <div className="space-y-3">
                             <button
                                 onClick={() => handleAction(activeBook._id, "download")}
-                                className="w-full flex gap-3 bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-3 rounded-xl"
+                                className="w-full flex gap-3 bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-4 rounded-xl"
                             >
                                 <Download className="w-6 h-6" />
                                 <span>Download Audio</span>
