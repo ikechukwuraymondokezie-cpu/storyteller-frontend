@@ -1,11 +1,11 @@
 import { useState, useRef, useEffect } from "react";
 import { MoreHorizontal, Download, Plus } from "lucide-react";
 import f3logo from "../assets/f3logo.png";
-import { GlobalWorkerOptions, getDocument } from "pdfjs-dist";
-import pdfjsWorker from "pdfjs-dist/build/pdf.worker.min.js"; // <-- proper CRA-compatible worker
+import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
+import pdfjsWorker from "pdfjs-dist/legacy/build/pdf.worker.js"; // CRA-compatible
 
 // Set the worker for pdf.js
-GlobalWorkerOptions.workerSrc = pdfjsWorker;
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 export default function Library() {
     const API_URL = process.env.REACT_APP_API_URL;
@@ -39,11 +39,11 @@ export default function Library() {
                 data.map(async (b) => {
                     let cover = b.cover || null;
 
-                    // Generate first-page preview from PDF if no cover exists
+                    // If no cover, generate first-page preview from PDF
                     if (!cover && b.pdfPath) {
                         try {
                             const pdfUrl = `${API_URL}${b.pdfPath}`;
-                            const pdf = await getDocument(pdfUrl).promise;
+                            const pdf = await pdfjsLib.getDocument(pdfUrl).promise;
                             const page = await pdf.getPage(1);
                             const viewport = page.getViewport({ scale: 1 });
                             const canvas = document.createElement("canvas");
@@ -298,14 +298,14 @@ export default function Library() {
             )}
 
             <style>{`
-                @keyframes slideUp {
-                    from { transform: translateY(100%); }
-                    to { transform: translateY(0); }
-                }
-                .animate-slideUp {
-                    animation: slideUp 0.3s ease-out;
-                }
-            `}</style>
+        @keyframes slideUp {
+          from { transform: translateY(100%); }
+          to { transform: translateY(0); }
+        }
+        .animate-slideUp {
+          animation: slideUp 0.3s ease-out;
+        }
+      `}</style>
         </div>
     );
 }
