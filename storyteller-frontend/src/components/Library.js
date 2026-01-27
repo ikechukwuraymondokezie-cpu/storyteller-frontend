@@ -1,6 +1,10 @@
 import { useState, useRef, useEffect } from "react";
 import { MoreHorizontal, Download, Plus } from "lucide-react";
 import f3logo from "../assets/f3logo.png";
+import * as pdfjsLib from "pdfjs-dist/build/pdf";
+import pdfjsWorker from "pdfjs-dist/build/pdf.worker.entry";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
 
 export default function Library() {
     const API_URL = process.env.REACT_APP_API_URL;
@@ -22,7 +26,6 @@ export default function Library() {
         try {
             setLoading(true);
             console.log("📚 Fetching books from:", `${API_URL}/api/books`);
-
             const res = await fetch(`${API_URL}/api/books`);
             if (!res.ok) {
                 const text = await res.text();
@@ -31,14 +34,37 @@ export default function Library() {
 
             const data = await res.json();
 
-            const mapped = data.map((b) => ({
-                _id: b._id,
-                title: b.title,
-                cover: b.cover || null,
-                url: b.pdfPath, // use pdfPath for download/view
-                folder: b.folder,
-                downloads: b.downloads,
-                ttsRequests: b.ttsRequests,
+            const mapped = await Promise.all(data.map(async (b) => {
+                let cover = b.cover || null;
+
+                // If no cover, generate first-page preview from PDF
+                if (!cover && b.pdfPath) {
+                    try {
+                        const pdfUrl = `${API_URL}${b.pdfPath}`;
+                        const pdf = await pdfjsLib.getDocument(pdfUrl).promise;
+                        const page = await pdf.getPage(1);
+                        const viewport = page.getViewport({ scale: 1 });
+                        const canvas = document.createElement("canvas");
+                        canvas.width = viewport.width;
+                        canvas.height = viewport.height;
+                        const context = canvas.getContext("2d");
+                        await page.render({ canvasContext: context, viewport }).promise;
+                        cover = canvas.toDataURL();
+                    } catch (err) {
+                        console.warn("❌ Failed to generate PDF preview:", err);
+                    }
+                }
+
+                return {
+                    _id: b._id,
+                    title: b.title,
+                    cover,
+                    url: b.pdfPath,
+                    folder: b.folder,
+                    downloads: b.downloads,
+                    ttsRequests: b.ttsRequests,
+                    words: b.words,
+                };
             }));
 
             setBooks(mapped);
@@ -57,7 +83,6 @@ export default function Library() {
     // ---------------- UPLOAD BOOK ----------------
     const handleUpload = async (file) => {
         if (!API_URL || !file) return;
-
         const formData = new FormData();
         formData.append("file", file);
 
@@ -76,7 +101,6 @@ export default function Library() {
             const data = await res.json();
             console.log("✅ Upload response:", data);
 
-            // Add the new book to the top of the library
             setBooks((prev) => [data.book, ...prev]);
         } catch (err) {
             console.error("❌ Upload failed:", err);
@@ -196,7 +220,6 @@ export default function Library() {
                                 alt={book.title}
                                 className="w-full h-36 object-cover rounded-md"
                             />
-
                             <p className="mt-2 text-white text-sm truncate">
                                 {book.title || "Untitled"}
                             </p>
@@ -251,10 +274,20 @@ export default function Library() {
 
                             <button
                                 onClick={() => handleAction(activeBook._id, "tts")}
-                                className="w-full flex gap-3 bg-black hover:bg-black/90 text-white py-3 px-4 rounded-xl"
+                                className="w-full flex flex-col gap-1 bg-black hover:bg-black/90 text-white py-3 px-4 rounded-xl"
                             >
-                                <img src={f3logo} className="w-6 h-6" />
-                                <span>Read with Funfiction & Fallacies</span>
+                                <div className="flex items-center gap-3">
+                                    <img src={f3logo} className="w-6 h-6" />
+                                    <span>Read with Funfiction & Fallacies</span>
+                                </div>
+                                <span className="text-zinc-400 text-xs">Listen to this book offline</span>
+                            </button>
+
+                            <button
+                                onClick={() => alert("Move to Folder clicked!")}
+                                className="w-full flex gap-3 bg-zinc-700 hover:bg-zinc-600 text-white py-3 px-4 rounded-xl"
+                            >
+                                <span>📂 Move to Folder</span>
                             </button>
                         </div>
                     </div>
