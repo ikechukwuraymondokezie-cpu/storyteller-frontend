@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import { MoreHorizontal, Download, Plus } from "lucide-react";
 import f3logo from "../assets/f3logo.png";
-import * as pdfjsLib from "pdfjs-dist/build/pdf";
-import pdfjsWorker from "pdfjs-dist/build/pdf.worker.entry";
+import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
+import pdfjsWorker from "pdfjs-dist/legacy/build/pdf.worker.entry";
 
+// Set worker
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+
 
 export default function Library() {
     const API_URL = process.env.REACT_APP_API_URL;
