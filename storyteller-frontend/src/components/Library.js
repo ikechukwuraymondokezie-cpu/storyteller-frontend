@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { MoreHorizontal, Download } from "lucide-react";
+import { MoreHorizontal, Download, Plus } from "lucide-react";
 import f3logo from "../assets/f3logo.png";
 
 export default function Library() {
@@ -8,6 +8,7 @@ export default function Library() {
     const [books, setBooks] = useState([]);
     const [activeBook, setActiveBook] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [uploading, setUploading] = useState(false);
     const sheetRef = useRef(null);
 
     // ---------------- FETCH BOOKS ----------------
@@ -23,14 +24,24 @@ export default function Library() {
             console.log("📚 Fetching books from:", `${API_URL}/api/books`);
 
             const res = await fetch(`${API_URL}/api/books`);
-
             if (!res.ok) {
                 const text = await res.text();
                 throw new Error(`HTTP ${res.status}: ${text}`);
             }
 
             const data = await res.json();
-            setBooks(Array.isArray(data) ? data : []);
+
+            const mapped = data.map((b) => ({
+                _id: b._id,
+                title: b.title,
+                cover: b.cover || null,
+                url: b.pdfPath, // use pdfPath for download/view
+                folder: b.folder,
+                downloads: b.downloads,
+                ttsRequests: b.ttsRequests,
+            }));
+
+            setBooks(mapped);
         } catch (err) {
             console.error("❌ Failed to fetch books:", err);
             setBooks([]);
@@ -42,6 +53,37 @@ export default function Library() {
     useEffect(() => {
         fetchBooks();
     }, [API_URL]);
+
+    // ---------------- UPLOAD BOOK ----------------
+    const handleUpload = async (file) => {
+        if (!API_URL || !file) return;
+
+        const formData = new FormData();
+        formData.append("file", file);
+
+        try {
+            setUploading(true);
+            const res = await fetch(`${API_URL}/api/books/upload`, {
+                method: "POST",
+                body: formData,
+            });
+
+            if (!res.ok) {
+                const text = await res.text();
+                throw new Error(`HTTP ${res.status}: ${text}`);
+            }
+
+            const data = await res.json();
+            console.log("✅ Upload response:", data);
+
+            // Add the new book to the top of the library
+            setBooks((prev) => [data.book, ...prev]);
+        } catch (err) {
+            console.error("❌ Upload failed:", err);
+        } finally {
+            setUploading(false);
+        }
+    };
 
     // ---------------- MOBILE SWIPE TO CLOSE ----------------
     useEffect(() => {
@@ -101,10 +143,10 @@ export default function Library() {
                 prev.map((b) => (b._id === bookId ? updatedBook : b))
             );
 
-            if (action === "download" && updatedBook.audioPath) {
+            if (action === "download" && updatedBook.pdfPath) {
                 const link = document.createElement("a");
-                link.href = `${API_URL}${updatedBook.audioPath}`;
-                link.download = `${updatedBook.title}.mp3`;
+                link.href = `${API_URL}${updatedBook.pdfPath}`;
+                link.download = `${updatedBook.title}.pdf`;
                 link.click();
             }
         } catch (err) {
@@ -114,15 +156,27 @@ export default function Library() {
 
     return (
         <div className="min-h-screen bg-bg px-6 py-8">
-            <h1 className="text-3xl md:text-5xl font-extrabold text-yellow-400 mb-6">
-                Your Collection
-            </h1>
+            <div className="flex justify-between items-center mb-6">
+                <h1 className="text-3xl md:text-5xl font-extrabold text-yellow-400">
+                    Your Collection
+                </h1>
+
+                {/* Upload Button */}
+                <label className="flex items-center gap-2 cursor-pointer bg-yellow-600 hover:bg-yellow-500 text-white py-2 px-4 rounded-xl">
+                    <Plus className="w-5 h-5" />
+                    {uploading ? "Uploading…" : "Upload"}
+                    <input
+                        type="file"
+                        accept=".pdf,.txt"
+                        className="hidden"
+                        onChange={(e) => handleUpload(e.target.files[0])}
+                    />
+                </label>
+            </div>
 
             {/* LOADING / EMPTY */}
             {loading ? (
-                <div className="text-center text-zinc-400 mt-20">
-                    Loading books…
-                </div>
+                <div className="text-center text-zinc-400 mt-20">Loading books…</div>
             ) : books.length === 0 ? (
                 <div className="text-center text-zinc-400 mt-20">
                     <p className="text-lg">No books yet</p>
@@ -179,9 +233,7 @@ export default function Library() {
                                 className="w-12 h-16 rounded-md object-cover"
                             />
                             <div>
-                                <p className="text-white font-semibold">
-                                    {activeBook.title}
-                                </p>
+                                <p className="text-white font-semibold">{activeBook.title}</p>
                                 <p className="text-zinc-500 text-xs">
                                     {activeBook.words || "—"} words
                                 </p>
@@ -194,7 +246,7 @@ export default function Library() {
                                 className="w-full flex gap-3 bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-4 rounded-xl"
                             >
                                 <Download className="w-6 h-6" />
-                                <span>Download Audio</span>
+                                <span>Download PDF</span>
                             </button>
 
                             <button

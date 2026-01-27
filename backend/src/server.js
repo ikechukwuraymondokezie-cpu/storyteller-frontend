@@ -51,13 +51,26 @@ const Book = mongoose.model("Book", bookSchema);
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadDir),
     filename: (req, file, cb) => {
-        const unique =
-            Date.now() + "-" + Math.round(Math.random() * 1e9);
+        const unique = Date.now() + "-" + Math.round(Math.random() * 1e9);
         cb(null, unique + path.extname(file.originalname));
     },
 });
 
 const upload = multer({ storage });
+
+/* -------------------- HELPER -------------------- */
+const formatBook = (book) => {
+    return {
+        _id: book._id,
+        title: book.title,
+        words: book.words,
+        cover: book.cover,
+        folder: book.folder,
+        downloads: book.downloads,
+        ttsRequests: book.ttsRequests,
+        url: book.pdfPath ? `${process.env.BACKEND_URL || "http://localhost:5000"}${book.pdfPath}` : null,
+    };
+};
 
 /* -------------------- ROUTES -------------------- */
 
@@ -70,7 +83,7 @@ app.get("/", (req, res) => {
 app.get("/api/books", async (req, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
-        res.json(books);
+        res.json(books.map(formatBook));
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Failed to fetch books" });
@@ -80,48 +93,38 @@ app.get("/api/books", async (req, res) => {
 /* ---------- GET BOOKS BY FOLDER ---------- */
 app.get("/api/books/folder/:folder", async (req, res) => {
     try {
-        const books = await Book.find({
-            folder: req.params.folder,
-        }).sort({ createdAt: -1 });
-
-        res.json(books);
+        const books = await Book.find({ folder: req.params.folder }).sort({ createdAt: -1 });
+        res.json(books.map(formatBook));
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Failed to fetch books" });
     }
 });
 
-/* ---------- UPLOAD BOOK (MATCHES FRONTEND) ---------- */
-app.post(
-    "/api/books/upload",
-    upload.single("file"),
-    async (req, res) => {
-        try {
-            if (!req.file) {
-                return res.status(400).json({ error: "No file uploaded" });
-            }
+/* ---------- UPLOAD BOOK ---------- */
+app.post("/api/books/upload", upload.single("file"), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-            const originalName = req.file.originalname;
-            const title = originalName.replace(/\.[^/.]+$/, "");
+        const title = req.file.originalname.replace(/\.[^/.]+$/, "");
 
-            const newBook = await Book.create({
-                title,
-                pdfPath: `/uploads/${req.file.filename}`,
-                folder: "default",       // 🔥 IMPORTANT
-                downloads: 0,
-                ttsRequests: 0,
-            });
+        const newBook = await Book.create({
+            title,
+            pdfPath: `/uploads/${req.file.filename}`,
+            folder: "default",
+            downloads: 0,
+            ttsRequests: 0,
+        });
 
-            res.status(201).json({
-                message: "Upload successful",
-                book: newBook,
-            });
-        } catch (err) {
-            console.error(err);
-            res.status(500).json({ error: "Upload failed" });
-        }
+        res.status(201).json({
+            message: "Upload successful",
+            book: formatBook(newBook),
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Upload failed" });
     }
-);
+});
 
 /* ---------- PATCH DOWNLOAD / TTS ---------- */
 app.patch("/api/books/:id/actions", async (req, res) => {
@@ -129,15 +132,13 @@ app.patch("/api/books/:id/actions", async (req, res) => {
         const { action } = req.body;
         const book = await Book.findById(req.params.id);
 
-        if (!book) {
-            return res.status(404).json({ error: "Book not found" });
-        }
+        if (!book) return res.status(404).json({ error: "Book not found" });
 
         if (action === "download") book.downloads += 1;
         if (action === "tts") book.ttsRequests += 1;
 
         await book.save();
-        res.json(book);
+        res.json(formatBook(book));
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Failed to update book" });
