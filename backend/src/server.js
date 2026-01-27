@@ -12,7 +12,7 @@ const app = express();
 /* -------------------- MIDDLEWARE -------------------- */
 app.use(
     cors({
-        origin: "*", // you can lock this to your frontend later
+        origin: "*",
     })
 );
 app.use(express.json());
@@ -35,10 +35,7 @@ if (!MONGO_URI) {
 }
 
 mongoose
-    .connect(MONGO_URI, {
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
-    })
+    .connect(MONGO_URI)
     .then(() => console.log("✅ MongoDB connected"))
     .catch((err) => {
         console.error("❌ MongoDB connection error:", err);
@@ -75,7 +72,8 @@ const upload = multer({ storage });
 /* -------------------- HELPER -------------------- */
 const formatBook = (book) => {
     const BACKEND_URL =
-        process.env.BACKEND_URL || "http://localhost:5000";
+        process.env.BACKEND_URL ||
+        "http://localhost:5000";
 
     return {
         _id: book._id,
@@ -85,9 +83,7 @@ const formatBook = (book) => {
         folder: book.folder,
         downloads: book.downloads,
         ttsRequests: book.ttsRequests,
-        url: book.pdfPath
-            ? `${BACKEND_URL}${book.pdfPath}`
-            : null,
+        url: book.pdfPath ? `${BACKEND_URL}${book.pdfPath}` : null,
     };
 };
 
