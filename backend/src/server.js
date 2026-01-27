@@ -15,21 +15,25 @@ app.use(express.json());
 
 /* -------------------- UPLOADS FOLDER -------------------- */
 const uploadDir = path.join(__dirname, "uploads");
-
 if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir);
 }
-
 app.use("/uploads", express.static(uploadDir));
 
 /* -------------------- MONGODB -------------------- */
-const MONGO_URI =
-    process.env.MONGO_URI || "mongodb://127.0.0.1:27017/storyteller";
+const MONGO_URI = process.env.MONGO_URI;
+if (!MONGO_URI) {
+    console.error("❌ MONGO_URI is not defined in environment variables!");
+    process.exit(1);
+}
 
 mongoose
     .connect(MONGO_URI)
     .then(() => console.log("✅ MongoDB connected"))
-    .catch((err) => console.error("❌ MongoDB error:", err));
+    .catch((err) => {
+        console.error("❌ MongoDB connection error:", err);
+        process.exit(1);
+    });
 
 /* -------------------- SCHEMA -------------------- */
 const bookSchema = new mongoose.Schema(
@@ -55,11 +59,14 @@ const storage = multer.diskStorage({
         cb(null, unique + path.extname(file.originalname));
     },
 });
-
 const upload = multer({ storage });
 
 /* -------------------- HELPER -------------------- */
 const formatBook = (book) => {
+    const BACKEND_URL = process.env.BACKEND_URL;
+    if (!BACKEND_URL) {
+        console.warn("⚠️ BACKEND_URL not set, using localhost for book URLs");
+    }
     return {
         _id: book._id,
         title: book.title,
@@ -68,18 +75,17 @@ const formatBook = (book) => {
         folder: book.folder,
         downloads: book.downloads,
         ttsRequests: book.ttsRequests,
-        url: book.pdfPath ? `${process.env.BACKEND_URL || "http://localhost:5000"}${book.pdfPath}` : null,
+        url: book.pdfPath ? `${BACKEND_URL || "http://localhost:5000"}${book.pdfPath}` : null,
     };
 };
 
 /* -------------------- ROUTES -------------------- */
-
 // Health check
 app.get("/", (req, res) => {
     res.json({ message: "Backend is running 🚀" });
 });
 
-/* ---------- GET ALL BOOKS ---------- */
+// GET ALL BOOKS
 app.get("/api/books", async (req, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
@@ -90,7 +96,7 @@ app.get("/api/books", async (req, res) => {
     }
 });
 
-/* ---------- GET BOOKS BY FOLDER ---------- */
+// GET BOOKS BY FOLDER
 app.get("/api/books/folder/:folder", async (req, res) => {
     try {
         const books = await Book.find({ folder: req.params.folder }).sort({ createdAt: -1 });
@@ -101,13 +107,12 @@ app.get("/api/books/folder/:folder", async (req, res) => {
     }
 });
 
-/* ---------- UPLOAD BOOK ---------- */
+// UPLOAD BOOK
 app.post("/api/books/upload", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
         const title = req.file.originalname.replace(/\.[^/.]+$/, "");
-
         const newBook = await Book.create({
             title,
             pdfPath: `/uploads/${req.file.filename}`,
@@ -126,7 +131,7 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
     }
 });
 
-/* ---------- PATCH DOWNLOAD / TTS ---------- */
+// PATCH DOWNLOAD / TTS
 app.patch("/api/books/:id/actions", async (req, res) => {
     try {
         const { action } = req.body;
@@ -147,7 +152,4 @@ app.patch("/api/books/:id/actions", async (req, res) => {
 
 /* -------------------- START SERVER -------------------- */
 const PORT = process.env.PORT || 5000;
-
-app.listen(PORT, () => {
-    console.log(`✅ Server running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
