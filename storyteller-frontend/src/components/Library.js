@@ -2,10 +2,12 @@ import { useState, useRef, useEffect } from "react";
 import { MoreHorizontal, Download, Plus } from "lucide-react";
 import f3logo from "../assets/f3logo.png";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
-import pdfjsWorker from "pdfjs-dist/legacy/build/pdf.worker.js"; // CRA-compatible
 
-// Set the worker for pdf.js
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+// ✅ CRA-safe worker import
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+    "pdfjs-dist/legacy/build/pdf.worker.min.js",
+    import.meta.url
+).toString();
 
 export default function Library() {
     const API_URL = process.env.REACT_APP_API_URL;
@@ -26,7 +28,6 @@ export default function Library() {
 
         try {
             setLoading(true);
-            console.log("📚 Fetching books from:", `${API_URL}/api/books`);
             const res = await fetch(`${API_URL}/api/books`);
             if (!res.ok) {
                 const text = await res.text();
@@ -39,7 +40,6 @@ export default function Library() {
                 data.map(async (b) => {
                     let cover = b.cover || null;
 
-                    // If no cover, generate first-page preview from PDF
                     if (!cover && b.pdfPath) {
                         try {
                             const pdfUrl = `${API_URL}${b.pdfPath}`;
@@ -95,15 +95,11 @@ export default function Library() {
                 method: "POST",
                 body: formData,
             });
-
             if (!res.ok) {
                 const text = await res.text();
                 throw new Error(`HTTP ${res.status}: ${text}`);
             }
-
             const data = await res.json();
-            console.log("✅ Upload response:", data);
-
             setBooks((prev) => [data.book, ...prev]);
         } catch (err) {
             console.error("❌ Upload failed:", err);
@@ -188,7 +184,6 @@ export default function Library() {
                     Your Collection
                 </h1>
 
-                {/* Upload Button */}
                 <label className="flex items-center gap-2 cursor-pointer bg-yellow-600 hover:bg-yellow-500 text-white py-2 px-4 rounded-xl">
                     <Plus className="w-5 h-5" />
                     {uploading ? "Uploading…" : "Upload"}
@@ -201,7 +196,6 @@ export default function Library() {
                 </label>
             </div>
 
-            {/* LOADING / EMPTY */}
             {loading ? (
                 <div className="text-center text-zinc-400 mt-20">Loading books…</div>
             ) : books.length === 0 ? (
@@ -238,7 +232,6 @@ export default function Library() {
                 </div>
             )}
 
-            {/* ACTION SHEET */}
             {activeBook && (
                 <div
                     className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center"
@@ -283,7 +276,9 @@ export default function Library() {
                                     <img src={f3logo} className="w-6 h-6" />
                                     <span>Read with Funfiction & Fallacies</span>
                                 </div>
-                                <span className="text-zinc-400 text-xs">Listen to this book offline</span>
+                                <span className="text-zinc-400 text-xs">
+                                    Listen to this book offline
+                                </span>
                             </button>
 
                             <button
