@@ -3,7 +3,7 @@ import f3banner from "../assets/f3banner2.png";
 
 export default function Storyteller() {
     return (
-        <div className="w-full bg-bg flex flex-col">
+        <div className="w-full bg-bg flex flex-col min-h-screen">
 
             <main className="flex-1 flex flex-col">
 
@@ -14,26 +14,36 @@ export default function Storyteller() {
                         <PromoSlider />
                     </div>
 
-                    {/* BANNER */}
+                    {/* FUN, FICTION & FALLACIES BILLBOARD */}
                     <div
                         className="
-              h-[26vh] w-full px-6 rounded-lg
-              flex items-center justify-center
-              bg-cover bg-center
-              relative
-            "
+                            h-[26vh] w-full px-6 rounded-lg
+                            flex items-end justify-center
+                            bg-cover bg-center
+                            relative
+                            pb-6
+                        "
                         style={{ backgroundImage: `url(${f3banner})` }}
                     >
-                        {/* overlay for readability */}
-                        <div className="absolute inset-0 bg-black/30 rounded-lg" />
+                        {/* OVERLAY FOR READABILITY */}
+                        <div className="absolute inset-0 bg-black/25 rounded-lg" />
 
-                        <div className="relative text-center text-white px-4">
-                            <h2 className="text-lg md:text-xl font-semibold drop-shadow-md">
-                                Publish your novels
+                        {/* TEXT CONTENT */}
+                        <div className="relative text-center px-4">
+                            <h2
+                                className="text-xl md:text-2xl font-bold tracking-wide drop-shadow-md"
+                                style={{ color: "#C04A1A" }} // burnt orange
+                            >
+                                BECOME A WRITER
                             </h2>
-                            <p className="text-xs md:text-sm mt-1 text-gray-200 drop-shadow-sm">
-                                Get visibility and reach new readers
+
+                            <p className="text-sm mt-1 text-gray-300 drop-shadow-sm">
+                                Fun, Fiction & Fallacies
                             </p>
+
+                            <div className="mt-3 text-xs text-gray-300 opacity-80">
+                                Enter →
+                            </div>
                         </div>
                     </div>
 
@@ -52,13 +62,13 @@ export default function Storyteller() {
                                 <div
                                     key={idx}
                                     className="
-                    bg-yellow-400/90 rounded-md p-4 text-black
-                    flex items-center justify-between
-                    cursor-pointer
-                    hover:bg-yellow-400
-                    active:scale-[0.98]
-                    transition-all
-                  "
+                                        bg-yellow-400/90 rounded-md p-4 text-black
+                                        flex items-center justify-between
+                                        cursor-pointer
+                                        hover:bg-yellow-400
+                                        active:scale-[0.98]
+                                        transition-all
+                                    "
                                 >
                                     {/* LEFT */}
                                     <div className="flex items-start gap-3">
