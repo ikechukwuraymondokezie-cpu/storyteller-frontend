@@ -19,44 +19,65 @@ export default function Storyteller() {
                         className="
               h-[26vh] w-full px-6 rounded-lg
               flex items-center justify-center
-              bg-cover bg-[position:35%_50%]
+              bg-cover bg-center
               relative
             "
                         style={{ backgroundImage: `url(${f3banner})` }}
                     >
-                        <div className="absolute inset-0 bg-black/25 rounded-lg"></div>
+                        {/* overlay for readability */}
+                        <div className="absolute inset-0 bg-black/30 rounded-lg" />
 
-                        <div className="relative text-center text-white">
-                            <h2 className="text-lg md:text-xl font-semibold">
+                        <div className="relative text-center text-white px-4">
+                            <h2 className="text-lg md:text-xl font-semibold drop-shadow-md">
                                 Publish your novels
                             </h2>
-                            <p className="text-xs md:text-sm mt-1 text-gray-200">
+                            <p className="text-xs md:text-sm mt-1 text-gray-200 drop-shadow-sm">
                                 Get visibility and reach new readers
                             </p>
                         </div>
                     </div>
 
-                    {/* RECENT */}
+                    {/* RECENTLY ADDED */}
                     <div className="h-[20vh] w-full px-6 overflow-y-auto">
                         <h2 className="text-lg font-semibold text-white mb-4">
                             Recently Added
                         </h2>
 
                         <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
-                            <div className="bg-yellow-400/90 rounded-md p-4 text-black">
-                                <h2 className="font-semibold">Example Story.pdf</h2>
-                                <p className="text-sm mt-1">10 hours ago • pdf</p>
-                            </div>
+                            {[
+                                { title: "Example Story.pdf", time: "10 hours ago" },
+                                { title: "Another Story.pdf", time: "2 days ago" },
+                                { title: "New Tale.pdf", time: "5 days ago" },
+                            ].map((item, idx) => (
+                                <div
+                                    key={idx}
+                                    className="
+                    bg-yellow-400/90 rounded-md p-4 text-black
+                    flex items-center justify-between
+                    cursor-pointer
+                    hover:bg-yellow-400
+                    active:scale-[0.98]
+                    transition-all
+                  "
+                                >
+                                    {/* LEFT */}
+                                    <div className="flex items-start gap-3">
+                                        <div className="text-lg">📄</div>
 
-                            <div className="bg-yellow-400/90 rounded-md p-4 text-black">
-                                <h2 className="font-semibold">Another Story.pdf</h2>
-                                <p className="text-sm mt-1">2 days ago • pdf</p>
-                            </div>
+                                        <div>
+                                            <h3 className="font-semibold leading-tight">
+                                                {item.title}
+                                            </h3>
+                                            <p className="text-sm mt-1 opacity-80">
+                                                {item.time} • PDF
+                                            </p>
+                                        </div>
+                                    </div>
 
-                            <div className="bg-yellow-400/90 rounded-md p-4 text-black">
-                                <h2 className="font-semibold">New Tale.pdf</h2>
-                                <p className="text-sm mt-1">5 days ago • pdf</p>
-                            </div>
+                                    {/* RIGHT */}
+                                    <div className="text-lg opacity-60">›</div>
+                                </div>
+                            ))}
                         </div>
                     </div>
 
