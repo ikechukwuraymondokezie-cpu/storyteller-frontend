@@ -6,7 +6,6 @@ export default function Storyteller() {
         <div className="w-full bg-bg flex flex-col min-h-screen">
 
             <main className="flex-1 flex flex-col">
-
                 <div className="flex flex-col space-y-6">
 
                     {/* PROMO SLIDER */}
@@ -14,35 +13,48 @@ export default function Storyteller() {
                         <PromoSlider />
                     </div>
 
-                    {/* FUN, FICTION & FALLACIES BILLBOARD */}
+                    {/* F3 IMAGE-FIRST CARD WITH HOVER/REVEAL EXPLANATION */}
                     <div
                         className="
+                            group
                             h-[26vh] w-full px-6 rounded-lg
-                            flex items-end justify-center
                             bg-cover bg-center
                             relative
-                            pb-6
+                            overflow-hidden
+                            cursor-pointer
                         "
                         style={{ backgroundImage: `url(${f3banner})` }}
                     >
-                        {/* OVERLAY FOR READABILITY */}
-                        <div className="absolute inset-0 bg-black/25 rounded-lg" />
+                        {/* DARK OVERLAY (hidden by default) */}
+                        <div
+                            className="
+                                absolute inset-0
+                                bg-black/0
+                                group-hover:bg-black/60
+                                group-active:bg-black/70
+                                transition-all duration-300
+                            "
+                        />
 
-                        {/* TEXT CONTENT */}
-                        <div className="relative text-center px-4">
-                            <h2
-                                className="text-xl md:text-2xl font-bold tracking-wide drop-shadow-md"
-                                style={{ color: "#C04A1A" }} // burnt orange
-                            >
-                                BECOME A WRITER
+                        {/* EXPLANATORY TEXT ON HOVER */}
+                        <div
+                            className="
+                                absolute inset-0
+                                flex flex-col items-center justify-center
+                                text-center
+                                opacity-0
+                                group-hover:opacity-100
+                                group-active:opacity-100
+                                transition-all duration-300
+                                px-6
+                            "
+                        >
+                            <h2 className="text-xl md:text-2xl font-bold text-white tracking-wide">
+                                Write and publish your web novels and reach readers
                             </h2>
 
-                            <p className="text-sm mt-1 text-gray-300 drop-shadow-sm">
-                                Fun, Fiction & Fallacies
-                            </p>
-
                             <div className="mt-3 text-xs text-gray-300 opacity-80">
-                                Enter →
+                                Explore →
                             </div>
                         </div>
                     </div>
@@ -70,7 +82,6 @@ export default function Storyteller() {
                                         transition-all
                                     "
                                 >
-                                    {/* LEFT */}
                                     <div className="flex items-start gap-3">
                                         <div className="text-lg">📄</div>
 
@@ -84,7 +95,6 @@ export default function Storyteller() {
                                         </div>
                                     </div>
 
-                                    {/* RIGHT */}
                                     <div className="text-lg opacity-60">›</div>
                                 </div>
                             ))}
