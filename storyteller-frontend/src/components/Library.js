@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { MoreHorizontal, Download, Plus } from "lucide-react";
+import { MoreHorizontal, Download, Plus, FolderPlus } from "lucide-react";
 import f3logo from "../assets/f3logo.png";
 
 export default function Library() {
@@ -32,8 +32,8 @@ export default function Library() {
             const mapped = data.map((b) => ({
                 _id: b._id,
                 title: b.title,
-                cover: b.cover || "/placeholder-cover.png", // Use backend cover or placeholder
-                url: b.pdfPath, // pdf download/view
+                cover: b.cover || "/placeholder-cover.png",
+                url: b.pdfPath,
                 folder: b.folder,
                 downloads: b.downloads,
                 ttsRequests: b.ttsRequests,
@@ -236,32 +236,36 @@ export default function Library() {
                         </div>
 
                         <div className="space-y-3">
+                            {/* Download Audio */}
                             <button
                                 onClick={() => handleAction(activeBook._id, "download")}
-                                className="w-full flex gap-3 bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-4 rounded-xl"
-                            >
-                                <Download className="w-6 h-6" />
-                                <span>Download PDF</span>
-                            </button>
-
-                            <button
-                                onClick={() => handleAction(activeBook._id, "tts")}
-                                className="w-full flex flex-col gap-1 bg-black hover:bg-black/90 text-white py-3 px-4 rounded-xl"
+                                className="w-full flex flex-col gap-1 bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-4 rounded-xl"
                             >
                                 <div className="flex items-center gap-3">
-                                    <img src={f3logo} className="w-6 h-6" />
-                                    <span>Read with Funfiction & Fallacies</span>
+                                    <Download className="w-6 h-6" />
+                                    <span>Download Audio</span>
                                 </div>
                                 <span className="text-zinc-400 text-xs">
                                     Listen to this book offline
                                 </span>
                             </button>
 
+                            {/* Read / TTS */}
+                            <button
+                                onClick={() => handleAction(activeBook._id, "tts")}
+                                className="w-full flex gap-3 bg-black hover:bg-black/90 text-white py-3 px-4 rounded-xl"
+                            >
+                                <img src={f3logo} className="w-6 h-6" />
+                                <span>Read with Funfiction & Fallacies</span>
+                            </button>
+
+                            {/* Move to Folder */}
                             <button
                                 onClick={() => alert("Move to Folder clicked!")}
-                                className="w-full flex gap-3 bg-zinc-700 hover:bg-zinc-600 text-white py-3 px-4 rounded-xl"
+                                className="w-full flex gap-3 bg-black hover:bg-zinc-800 text-white py-3 px-4 rounded-xl"
                             >
-                                <span>📂 Move to Folder</span>
+                                <FolderPlus className="w-6 h-6" />
+                                <span>Move to Folder</span>
                             </button>
                         </div>
                     </div>
