@@ -1,13 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { MoreHorizontal, Download, Plus } from "lucide-react";
 import f3logo from "../assets/f3logo.png";
-import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf";
-
-// ✅ CRA-safe worker import
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-    "pdfjs-dist/legacy/build/pdf.worker.min.js",
-    import.meta.url
-).toString();
 
 export default function Library() {
     const API_URL = process.env.REACT_APP_API_URL;
@@ -36,39 +29,16 @@ export default function Library() {
 
             const data = await res.json();
 
-            const mapped = await Promise.all(
-                data.map(async (b) => {
-                    let cover = b.cover || null;
-
-                    if (!cover && b.pdfPath) {
-                        try {
-                            const pdfUrl = `${API_URL}${b.pdfPath}`;
-                            const pdf = await pdfjsLib.getDocument(pdfUrl).promise;
-                            const page = await pdf.getPage(1);
-                            const viewport = page.getViewport({ scale: 1 });
-                            const canvas = document.createElement("canvas");
-                            canvas.width = viewport.width;
-                            canvas.height = viewport.height;
-                            const context = canvas.getContext("2d");
-                            await page.render({ canvasContext: context, viewport }).promise;
-                            cover = canvas.toDataURL();
-                        } catch (err) {
-                            console.warn("❌ Failed to generate PDF preview:", err);
-                        }
-                    }
-
-                    return {
-                        _id: b._id,
-                        title: b.title,
-                        cover,
-                        url: b.pdfPath,
-                        folder: b.folder,
-                        downloads: b.downloads,
-                        ttsRequests: b.ttsRequests,
-                        words: b.words,
-                    };
-                })
-            );
+            const mapped = data.map((b) => ({
+                _id: b._id,
+                title: b.title,
+                cover: b.cover || "/placeholder-cover.png", // Use backend cover or placeholder
+                url: b.pdfPath, // pdf download/view
+                folder: b.folder,
+                downloads: b.downloads,
+                ttsRequests: b.ttsRequests,
+                words: b.words,
+            }));
 
             setBooks(mapped);
         } catch (err) {
@@ -86,6 +56,7 @@ export default function Library() {
     // ---------------- UPLOAD BOOK ----------------
     const handleUpload = async (file) => {
         if (!API_URL || !file) return;
+
         const formData = new FormData();
         formData.append("file", file);
 
@@ -95,10 +66,12 @@ export default function Library() {
                 method: "POST",
                 body: formData,
             });
+
             if (!res.ok) {
                 const text = await res.text();
                 throw new Error(`HTTP ${res.status}: ${text}`);
             }
+
             const data = await res.json();
             setBooks((prev) => [data.book, ...prev]);
         } catch (err) {
@@ -184,6 +157,7 @@ export default function Library() {
                     Your Collection
                 </h1>
 
+                {/* Upload Button */}
                 <label className="flex items-center gap-2 cursor-pointer bg-yellow-600 hover:bg-yellow-500 text-white py-2 px-4 rounded-xl">
                     <Plus className="w-5 h-5" />
                     {uploading ? "Uploading…" : "Upload"}
@@ -196,6 +170,7 @@ export default function Library() {
                 </label>
             </div>
 
+            {/* LOADING / EMPTY */}
             {loading ? (
                 <div className="text-center text-zinc-400 mt-20">Loading books…</div>
             ) : books.length === 0 ? (
@@ -213,7 +188,7 @@ export default function Library() {
                             className="relative bg-zinc-900 rounded-lg p-2 hover:bg-zinc-800 transition"
                         >
                             <img
-                                src={book.cover || "/placeholder-cover.png"}
+                                src={book.cover}
                                 alt={book.title}
                                 className="w-full h-36 object-cover rounded-md"
                             />
@@ -232,6 +207,7 @@ export default function Library() {
                 </div>
             )}
 
+            {/* ACTION SHEET */}
             {activeBook && (
                 <div
                     className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center"
@@ -248,7 +224,7 @@ export default function Library() {
 
                         <div className="flex gap-3 mb-4">
                             <img
-                                src={activeBook.cover || "/placeholder-cover.png"}
+                                src={activeBook.cover}
                                 className="w-12 h-16 rounded-md object-cover"
                             />
                             <div>
