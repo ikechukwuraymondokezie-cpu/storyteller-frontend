@@ -5,7 +5,8 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const multer = require("multer");
 const path = require("path");
-const fs = require("fs");
+const fs = require("fs-extra");
+const { PDFImage } = require("pdf-poppler");
 
 const app = express();
 
@@ -19,16 +20,16 @@ app.use(express.json());
 
 /* -------------------- UPLOADS FOLDER -------------------- */
 const uploadDir = path.join(__dirname, "uploads");
+const coversDir = path.join(uploadDir, "covers");
 
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-}
+fs.ensureDirSync(uploadDir);
+fs.ensureDirSync(coversDir);
 
+// Serve uploads folder statically
 app.use("/uploads", express.static(uploadDir));
 
 /* -------------------- MONGODB -------------------- */
 const MONGO_URI = process.env.MONGO_URI;
-
 if (!MONGO_URI) {
     console.error("❌ MONGO_URI is not defined in environment variables!");
     process.exit(1);
@@ -69,23 +70,19 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-/* -------------------- HELPER -------------------- */
-const formatBook = (book) => {
-    const BACKEND_URL =
-        process.env.BACKEND_URL ||
-        "http://localhost:5000";
+/* -------------------- HELPERS -------------------- */
+const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:5000";
 
-    return {
-        _id: book._id,
-        title: book.title,
-        words: book.words,
-        cover: book.cover,
-        folder: book.folder,
-        downloads: book.downloads,
-        ttsRequests: book.ttsRequests,
-        url: book.pdfPath ? `${BACKEND_URL}${book.pdfPath}` : null,
-    };
-};
+const formatBook = (book) => ({
+    _id: book._id,
+    title: book.title,
+    words: book.words,
+    cover: book.cover ? `${BACKEND_URL}${book.cover}` : null,
+    folder: book.folder,
+    downloads: book.downloads,
+    ttsRequests: book.ttsRequests,
+    url: book.pdfPath ? `${BACKEND_URL}${book.pdfPath}` : null,
+});
 
 /* -------------------- ROUTES -------------------- */
 
@@ -108,10 +105,9 @@ app.get("/api/books", async (req, res) => {
 /* ---------- GET BOOKS BY FOLDER ---------- */
 app.get("/api/books/folder/:folder", async (req, res) => {
     try {
-        const books = await Book.find({
-            folder: req.params.folder,
-        }).sort({ createdAt: -1 });
-
+        const books = await Book.find({ folder: req.params.folder }).sort({
+            createdAt: -1,
+        });
         res.json(books.map(formatBook));
     } catch (err) {
         console.error(err);
@@ -119,36 +115,49 @@ app.get("/api/books/folder/:folder", async (req, res) => {
     }
 });
 
-/* ---------- UPLOAD BOOK ---------- */
-app.post(
-    "/api/books/upload",
-    upload.single("file"),
-    async (req, res) => {
-        try {
-            if (!req.file) {
-                return res
-                    .status(400)
-                    .json({ error: "No file uploaded" });
-            }
-
-            const title = req.file.originalname.replace(/\.[^/.]+$/, "");
-
-            const newBook = await Book.create({
-                title,
-                pdfPath: `/uploads/${req.file.filename}`,
-                folder: "default",
-            });
-
-            res.status(201).json({
-                message: "Upload successful",
-                book: formatBook(newBook),
-            });
-        } catch (err) {
-            console.error(err);
-            res.status(500).json({ error: "Upload failed" });
+/* ---------- UPLOAD BOOK WITH PDF COVER ---------- */
+app.post("/api/books/upload", upload.single("file"), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: "No file uploaded" });
         }
+
+        const title = req.file.originalname.replace(/\.[^/.]+$/, "");
+        const pdfPath = `/uploads/${req.file.filename}`;
+        let coverPath = null;
+
+        // Generate thumbnail (first page) using pdf-poppler
+        try {
+            const opts = {
+                format: "png",
+                out_dir: coversDir,
+                out_prefix: path.parse(req.file.filename).name,
+                page: 1,
+            };
+
+            await PDFImage.convert(path.join(uploadDir, req.file.filename), opts);
+
+            coverPath = `/uploads/covers/${opts.out_prefix}-1.png`;
+        } catch (thumbErr) {
+            console.warn("❌ Failed to generate PDF cover:", thumbErr);
+        }
+
+        const newBook = await Book.create({
+            title,
+            pdfPath,
+            cover: coverPath,
+            folder: "default",
+        });
+
+        res.status(201).json({
+            message: "Upload successful",
+            book: formatBook(newBook),
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: "Upload failed" });
     }
-);
+});
 
 /* ---------- PATCH DOWNLOAD / TTS ---------- */
 app.patch("/api/books/:id/actions", async (req, res) => {
@@ -156,8 +165,7 @@ app.patch("/api/books/:id/actions", async (req, res) => {
         const { action } = req.body;
         const book = await Book.findById(req.params.id);
 
-        if (!book)
-            return res.status(404).json({ error: "Book not found" });
+        if (!book) return res.status(404).json({ error: "Book not found" });
 
         if (action === "download") book.downloads += 1;
         if (action === "tts") book.ttsRequests += 1;

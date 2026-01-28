@@ -29,11 +29,12 @@ export default function Library() {
 
             const data = await res.json();
 
+            // Now use backend-generated cover
             const mapped = data.map((b) => ({
                 _id: b._id,
                 title: b.title,
-                cover: b.cover || "/placeholder-cover.png",
-                url: b.pdfPath,
+                cover: b.cover || null, // remove placeholder
+                url: b.url, // already full URL from backend
                 folder: b.folder,
                 downloads: b.downloads,
                 ttsRequests: b.ttsRequests,
@@ -139,9 +140,9 @@ export default function Library() {
                 prev.map((b) => (b._id === bookId ? updatedBook : b))
             );
 
-            if (action === "download" && updatedBook.pdfPath) {
+            if (action === "download" && updatedBook.url) {
                 const link = document.createElement("a");
-                link.href = `${API_URL}${updatedBook.pdfPath}`;
+                link.href = updatedBook.url; // full backend URL
                 link.download = `${updatedBook.title}.pdf`;
                 link.click();
             }
