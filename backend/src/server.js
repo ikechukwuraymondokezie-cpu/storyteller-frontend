@@ -5,7 +5,6 @@ const cors = require("cors");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs-extra");
-const pdf = require("pdf-poppler");
 
 const app = express();
 
@@ -97,7 +96,7 @@ app.get("/api/books", async (_, res) => {
     }
 });
 
-/* ---------- UPLOAD BOOK + PDF COVER ---------- */
+/* ---------- UPLOAD BOOK (PDF COVER TEMP DISABLED) ---------- */
 app.post("/api/books/upload", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) {
@@ -106,23 +105,9 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
 
         const title = req.file.originalname.replace(/\.[^/.]+$/, "");
         const pdfPath = `/uploads/${req.file.filename}`;
-        let coverPath = null;
 
-        // Generate cover from first page
-        try {
-            const opts = {
-                format: "png",
-                out_dir: coversDir,
-                out_prefix: path.parse(req.file.filename).name,
-                page: 1,
-            };
-
-            await pdf.convert(path.join(uploadDir, req.file.filename), opts);
-
-            coverPath = `/uploads/covers/${opts.out_prefix}-1.png`;
-        } catch (err) {
-            console.warn("⚠️ PDF cover generation failed:", err.message);
-        }
+        // ❗ PDF cover generation disabled (Linux-safe deploy)
+        const coverPath = null;
 
         const book = await Book.create({
             title,
@@ -159,9 +144,9 @@ app.patch("/api/books/:id/actions", async (req, res) => {
 });
 
 /* -------------------- START SERVER -------------------- */
-// IMPORTANT: Render Docker expects port 10000
+// Render + Docker compatible
 const PORT = process.env.PORT || 10000;
 
-app.listen(PORT, "0.0.0.0", () =>
-    console.log(`✅ Server running on port ${PORT}`)
-);
+app.listen(PORT, "0.0.0.0", () => {
+    console.log(`✅ Server running on port ${PORT}`);
+});

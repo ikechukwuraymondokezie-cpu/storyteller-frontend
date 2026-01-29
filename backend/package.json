@@ -20,8 +20,7 @@
     "jsonwebtoken": "^9.0.3",
     "mongodb": "^7.0.0",
     "mongoose": "^9.1.5",
-    "multer": "^2.0.2",
-    "pdf-poppler": "^0.2.3"
+    "multer": "^2.0.2"
   },
   "devDependencies": {
     "fs-extra": "^11.3.3",
