@@ -5,6 +5,7 @@ const cors = require("cors");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs-extra");
+const { exec } = require("child_process"); // <-- added for pdftoppm
 
 const app = express();
 
@@ -80,7 +81,7 @@ const formatBook = (book) => ({
 
 /* -------------------- ROUTES -------------------- */
 
-// Health check (Render uses this)
+// Health check
 app.get("/", (_, res) => {
     res.status(200).json({ status: "Backend running 🚀" });
 });
@@ -96,7 +97,7 @@ app.get("/api/books", async (_, res) => {
     }
 });
 
-/* ---------- UPLOAD BOOK (PDF COVER TEMP DISABLED) ---------- */
+/* ---------- UPLOAD BOOK + PDF COVER (LINUX SAFE) ---------- */
 app.post("/api/books/upload", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) {
@@ -105,20 +106,34 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
 
         const title = req.file.originalname.replace(/\.[^/.]+$/, "");
         const pdfPath = `/uploads/${req.file.filename}`;
+        const pdfFullPath = path.join(uploadDir, req.file.filename);
 
-        // ❗ PDF cover generation disabled (Linux-safe deploy)
-        const coverPath = null;
+        const baseName = path.parse(req.file.filename).name;
+        const outputPrefix = path.join(coversDir, baseName);
+        const coverPath = `/uploads/covers/${baseName}-1.png`;
 
-        const book = await Book.create({
-            title,
-            pdfPath,
-            cover: coverPath,
-        });
+        // Generate cover using pdftoppm (first page only)
+        exec(
+            `pdftoppm -f 1 -l 1 -png "${pdfFullPath}" "${outputPrefix}"`,
+            async (error) => {
+                if (error) {
+                    console.warn("⚠️ Cover generation failed:", error.message);
+                }
 
-        res.status(201).json({
-            message: "Upload successful",
-            book: formatBook(book),
-        });
+                const book = await Book.create({
+                    title,
+                    pdfPath,
+                    cover: fs.existsSync(path.join(coversDir, `${baseName}-1.png`))
+                        ? coverPath
+                        : null,
+                });
+
+                res.status(201).json({
+                    message: "Upload successful",
+                    book: formatBook(book),
+                });
+            }
+        );
     } catch (err) {
         console.error("❌ Upload failed:", err);
         res.status(500).json({ error: "Upload failed" });
