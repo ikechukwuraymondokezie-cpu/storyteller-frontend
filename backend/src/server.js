@@ -66,7 +66,8 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 /* -------------------- HELPERS -------------------- */
-const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:5000";
+const BACKEND_URL =
+    process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 10000}`;
 
 const formatBook = (book) => ({
     _id: book._id,
@@ -80,9 +81,9 @@ const formatBook = (book) => ({
 
 /* -------------------- ROUTES -------------------- */
 
-// Health check
+// Health check (Render uses this)
 app.get("/", (_, res) => {
-    res.json({ status: "Backend running 🚀" });
+    res.status(200).json({ status: "Backend running 🚀" });
 });
 
 /* ---------- GET ALL BOOKS ---------- */
@@ -158,7 +159,9 @@ app.patch("/api/books/:id/actions", async (req, res) => {
 });
 
 /* -------------------- START SERVER -------------------- */
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () =>
+// IMPORTANT: Render Docker expects port 10000
+const PORT = process.env.PORT || 10000;
+
+app.listen(PORT, "0.0.0.0", () =>
     console.log(`✅ Server running on port ${PORT}`)
 );
