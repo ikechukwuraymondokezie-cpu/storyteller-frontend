@@ -1,23 +1,21 @@
-#base image
+# Base image
 FROM node:20-bullseye
 
-#install system dependencies
+# Install system dependencies (required for pdf-poppler)
 RUN apt-get update && apt-get install -y poppler-utils
 
-#set working directory
+# Set working directory
 WORKDIR /app
 
-#install Node dependencies
+# Install dependencies
 COPY package*.json ./
 RUN npm install
 
-#copy your app code
+# Copy app source
 COPY . .
 
-#expose port
-EXPOSE 3000
+# Expose backend port
+EXPOSE 5000
 
-#start the app
-CMD ["npm", "start"]
-
-
+# Start server
+CMD ["node", "src/server.js"]

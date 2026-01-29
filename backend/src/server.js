@@ -1,4 +1,3 @@
-// src/server.js
 require("dotenv").config();
 const express = require("express");
 const mongoose = require("mongoose");
@@ -6,32 +5,29 @@ const cors = require("cors");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs-extra");
-const { PDFImage } = require("pdf-poppler");
+const pdf = require("pdf-poppler");
 
 const app = express();
 
 /* -------------------- MIDDLEWARE -------------------- */
-app.use(
-    cors({
-        origin: "*",
-    })
-);
+app.use(cors({ origin: "*" }));
 app.use(express.json());
 
 /* -------------------- UPLOADS FOLDER -------------------- */
-const uploadDir = path.join(__dirname, "uploads");
+// server.js is inside /src → go one level up
+const uploadDir = path.join(__dirname, "../uploads");
 const coversDir = path.join(uploadDir, "covers");
 
 fs.ensureDirSync(uploadDir);
 fs.ensureDirSync(coversDir);
 
-// Serve uploads folder statically
+// Serve uploaded PDFs and covers
 app.use("/uploads", express.static(uploadDir));
 
 /* -------------------- MONGODB -------------------- */
 const MONGO_URI = process.env.MONGO_URI;
 if (!MONGO_URI) {
-    console.error("❌ MONGO_URI is not defined in environment variables!");
+    console.error("❌ MONGO_URI is not defined");
     process.exit(1);
 }
 
@@ -39,7 +35,7 @@ mongoose
     .connect(MONGO_URI)
     .then(() => console.log("✅ MongoDB connected"))
     .catch((err) => {
-        console.error("❌ MongoDB connection error:", err);
+        console.error("❌ MongoDB error:", err);
         process.exit(1);
     });
 
@@ -47,9 +43,8 @@ mongoose
 const bookSchema = new mongoose.Schema(
     {
         title: { type: String, required: true },
-        words: { type: String },
-        cover: { type: String },
-        pdfPath: { type: String },
+        cover: String,
+        pdfPath: String,
         folder: { type: String, default: "default" },
         downloads: { type: Number, default: 0 },
         ttsRequests: { type: Number, default: 0 },
@@ -61,8 +56,8 @@ const Book = mongoose.model("Book", bookSchema);
 
 /* -------------------- MULTER -------------------- */
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
-    filename: (req, file, cb) => {
+    destination: (_, __, cb) => cb(null, uploadDir),
+    filename: (_, file, cb) => {
         const unique = Date.now() + "-" + Math.round(Math.random() * 1e9);
         cb(null, unique + path.extname(file.originalname));
     },
@@ -76,23 +71,22 @@ const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:5000";
 const formatBook = (book) => ({
     _id: book._id,
     title: book.title,
-    words: book.words,
     cover: book.cover ? `${BACKEND_URL}${book.cover}` : null,
+    url: book.pdfPath ? `${BACKEND_URL}${book.pdfPath}` : null,
     folder: book.folder,
     downloads: book.downloads,
     ttsRequests: book.ttsRequests,
-    url: book.pdfPath ? `${BACKEND_URL}${book.pdfPath}` : null,
 });
 
 /* -------------------- ROUTES -------------------- */
 
 // Health check
-app.get("/", (req, res) => {
-    res.json({ message: "Backend is running 🚀" });
+app.get("/", (_, res) => {
+    res.json({ status: "Backend running 🚀" });
 });
 
 /* ---------- GET ALL BOOKS ---------- */
-app.get("/api/books", async (req, res) => {
+app.get("/api/books", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
         res.json(books.map(formatBook));
@@ -102,20 +96,7 @@ app.get("/api/books", async (req, res) => {
     }
 });
 
-/* ---------- GET BOOKS BY FOLDER ---------- */
-app.get("/api/books/folder/:folder", async (req, res) => {
-    try {
-        const books = await Book.find({ folder: req.params.folder }).sort({
-            createdAt: -1,
-        });
-        res.json(books.map(formatBook));
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Failed to fetch books" });
-    }
-});
-
-/* ---------- UPLOAD BOOK WITH PDF COVER ---------- */
+/* ---------- UPLOAD BOOK + PDF COVER ---------- */
 app.post("/api/books/upload", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) {
@@ -126,7 +107,7 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
         const pdfPath = `/uploads/${req.file.filename}`;
         let coverPath = null;
 
-        // Generate thumbnail (first page) using pdf-poppler
+        // Generate cover from first page
         try {
             const opts = {
                 format: "png",
@@ -135,26 +116,25 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
                 page: 1,
             };
 
-            await PDFImage.convert(path.join(uploadDir, req.file.filename), opts);
+            await pdf.convert(path.join(uploadDir, req.file.filename), opts);
 
             coverPath = `/uploads/covers/${opts.out_prefix}-1.png`;
-        } catch (thumbErr) {
-            console.warn("❌ Failed to generate PDF cover:", thumbErr);
+        } catch (err) {
+            console.warn("⚠️ PDF cover generation failed:", err.message);
         }
 
-        const newBook = await Book.create({
+        const book = await Book.create({
             title,
             pdfPath,
             cover: coverPath,
-            folder: "default",
         });
 
         res.status(201).json({
             message: "Upload successful",
-            book: formatBook(newBook),
+            book: formatBook(book),
         });
     } catch (err) {
-        console.error(err);
+        console.error("❌ Upload failed:", err);
         res.status(500).json({ error: "Upload failed" });
     }
 });
@@ -164,17 +144,16 @@ app.patch("/api/books/:id/actions", async (req, res) => {
     try {
         const { action } = req.body;
         const book = await Book.findById(req.params.id);
-
         if (!book) return res.status(404).json({ error: "Book not found" });
 
-        if (action === "download") book.downloads += 1;
-        if (action === "tts") book.ttsRequests += 1;
+        if (action === "download") book.downloads++;
+        if (action === "tts") book.ttsRequests++;
 
         await book.save();
         res.json(formatBook(book));
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: "Failed to update book" });
+        res.status(500).json({ error: "Action failed" });
     }
 });
 
