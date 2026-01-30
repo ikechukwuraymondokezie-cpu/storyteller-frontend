@@ -14,14 +14,13 @@ app.use(cors({ origin: "*" }));
 app.use(express.json());
 
 /* -------------------- UPLOADS -------------------- */
-// server.js is inside /src
 const uploadDir = path.join(__dirname, "../uploads");
 const coversDir = path.join(uploadDir, "covers");
 
 fs.ensureDirSync(uploadDir);
 fs.ensureDirSync(coversDir);
 
-// Serve uploads
+// Serve uploaded PDFs and covers
 app.use("/uploads", express.static(uploadDir));
 
 /* -------------------- MONGODB -------------------- */
@@ -82,12 +81,12 @@ const formatBook = (book) => ({
 /* -------------------- ROUTES -------------------- */
 
 // Health check
-app.get("/", (_, res) => {
+app.get("/api", (_, res) => {
     res.json({ status: "Backend running 🚀" });
 });
 
 /* ---------- GET ALL BOOKS ---------- */
-const getBooksHandler = async (_, res) => {
+app.get("/api/books", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
         res.json(books.map(formatBook));
@@ -95,11 +94,7 @@ const getBooksHandler = async (_, res) => {
         console.error(err);
         res.status(500).json({ error: "Failed to fetch books" });
     }
-};
-
-// ✅ BOTH ROUTES NOW WORK
-app.get("/api/books", getBooksHandler);
-app.get("/library", getBooksHandler);
+});
 
 /* ---------- UPLOAD ---------- */
 app.post("/api/books/upload", upload.single("file"), async (req, res) => {
@@ -139,7 +134,7 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
     }
 });
 
-/* ---------- ACTIONS ---------- */
+/* ---------- PATCH DOWNLOAD / TTS ---------- */
 app.patch("/api/books/:id/actions", async (req, res) => {
     try {
         const { action } = req.body;
@@ -158,6 +153,15 @@ app.patch("/api/books/:id/actions", async (req, res) => {
         console.error(err);
         res.status(500).json({ error: "Action failed" });
     }
+});
+
+/* -------------------- SPA REACT FALLBACK -------------------- */
+const frontendBuildPath = path.join(__dirname, "../frontend/build");
+app.use(express.static(frontendBuildPath));
+
+// Catch-all for React Router
+app.get("*", (_, res) => {
+    res.sendFile(path.join(frontendBuildPath, "index.html"));
 });
 
 /* -------------------- START SERVER -------------------- */
