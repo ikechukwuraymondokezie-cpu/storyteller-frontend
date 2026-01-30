@@ -20,7 +20,7 @@ const coversDir = path.join(uploadDir, "covers");
 fs.ensureDirSync(uploadDir);
 fs.ensureDirSync(coversDir);
 
-// Serve uploaded PDFs and covers
+// Serve uploaded files
 app.use("/uploads", express.static(uploadDir));
 
 /* -------------------- MONGODB -------------------- */
@@ -66,7 +66,7 @@ const upload = multer({ storage });
 
 /* -------------------- HELPERS -------------------- */
 const BACKEND_URL =
-    process.env.BACKEND_URL || `https://storyteller-b1i3.onrender.com`;
+    process.env.BACKEND_URL || "https://storyteller-b1i3.onrender.com";
 
 const formatBook = (book) => ({
     _id: book._id,
@@ -85,7 +85,7 @@ app.get("/api", (_, res) => {
     res.json({ status: "Backend running 🚀" });
 });
 
-/* ---------- GET ALL BOOKS ---------- */
+// Get all books
 app.get("/api/books", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
@@ -96,7 +96,7 @@ app.get("/api/books", async (_, res) => {
     }
 });
 
-/* ---------- UPLOAD ---------- */
+// Upload book
 app.post("/api/books/upload", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) {
@@ -117,7 +117,9 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
                 const book = await Book.create({
                     title,
                     pdfPath,
-                    cover: fs.existsSync(path.join(coversDir, `${baseName}-1.png`))
+                    cover: fs.existsSync(
+                        path.join(coversDir, `${baseName}-1.png`)
+                    )
                         ? coverPath
                         : null,
                 });
@@ -129,12 +131,12 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
             }
         );
     } catch (err) {
-        console.error(err);
+        console.error("❌ Upload failed:", err);
         res.status(500).json({ error: "Upload failed" });
     }
 });
 
-/* ---------- PATCH DOWNLOAD / TTS ---------- */
+// Actions
 app.patch("/api/books/:id/actions", async (req, res) => {
     try {
         const { action } = req.body;
@@ -153,15 +155,6 @@ app.patch("/api/books/:id/actions", async (req, res) => {
         console.error(err);
         res.status(500).json({ error: "Action failed" });
     }
-});
-
-/* -------------------- SPA REACT FALLBACK -------------------- */
-const frontendBuildPath = path.join(__dirname, "../frontend/build");
-app.use(express.static(frontendBuildPath));
-
-// Catch-all for React Router
-app.get("*", (_, res) => {
-    res.sendFile(path.join(frontendBuildPath, "index.html"));
 });
 
 /* -------------------- START SERVER -------------------- */
