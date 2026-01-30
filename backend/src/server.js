@@ -14,13 +14,19 @@ app.use(cors({ origin: "*" }));
 app.use(express.json());
 
 /* -------------------- UPLOADS -------------------- */
-const uploadDir = path.join(__dirname, "../uploads");
+/**
+ * server.js lives in:
+ * storyteller-backend/src/server.js
+ * uploads MUST live in:
+ * storyteller-backend/src/uploads
+ */
+const uploadDir = path.join(__dirname, "uploads");
 const coversDir = path.join(uploadDir, "covers");
 
 fs.ensureDirSync(uploadDir);
 fs.ensureDirSync(coversDir);
 
-// Serve uploaded files
+// Serve uploaded PDFs + covers
 app.use("/uploads", express.static(uploadDir));
 
 /* -------------------- MONGODB -------------------- */
@@ -85,7 +91,7 @@ app.get("/api", (_, res) => {
     res.json({ status: "Backend running 🚀" });
 });
 
-// Get all books
+/* ---------- GET BOOKS ---------- */
 app.get("/api/books", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
@@ -96,7 +102,7 @@ app.get("/api/books", async (_, res) => {
     }
 });
 
-// Upload book
+/* ---------- UPLOAD ---------- */
 app.post("/api/books/upload", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) {
@@ -112,7 +118,7 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
         const coverPath = `/uploads/covers/${baseName}-1.png`;
 
         exec(
-            `/usr/bin/pdftoppm -f 1 -l 1 -png "${pdfFullPath}" "${outputPrefix}"`,
+            `pdftoppm -f 1 -l 1 -png "${pdfFullPath}" "${outputPrefix}"`,
             async () => {
                 const book = await Book.create({
                     title,
@@ -131,12 +137,12 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
             }
         );
     } catch (err) {
-        console.error("❌ Upload failed:", err);
+        console.error(err);
         res.status(500).json({ error: "Upload failed" });
     }
 });
 
-// Actions
+/* ---------- ACTIONS ---------- */
 app.patch("/api/books/:id/actions", async (req, res) => {
     try {
         const { action } = req.body;
@@ -155,6 +161,23 @@ app.patch("/api/books/:id/actions", async (req, res) => {
         console.error(err);
         res.status(500).json({ error: "Action failed" });
     }
+});
+
+/* -------------------- FRONTEND (REACT) -------------------- */
+/**
+ * Frontend build lives in:
+ * storyteller/storyteller-frontend/build
+ */
+const frontendBuildPath = path.join(
+    __dirname,
+    "../../storyteller-frontend/build"
+);
+
+app.use(express.static(frontendBuildPath));
+
+// Express 5 SAFE catch-all
+app.get("/*", (_, res) => {
+    res.sendFile(path.join(frontendBuildPath, "index.html"));
 });
 
 /* -------------------- START SERVER -------------------- */
