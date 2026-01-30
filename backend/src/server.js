@@ -81,7 +81,7 @@ const formatBook = (book) => ({
 
 /* -------------------- ROUTES -------------------- */
 
-// Health check (Render uses this)
+// Health check
 app.get("/", (_, res) => {
     res.status(200).json({ status: "Backend running 🚀" });
 });
@@ -100,7 +100,9 @@ app.get("/api/books", async (_, res) => {
 /* ---------- UPLOAD BOOK + PDF COVER (LINUX SAFE) ---------- */
 app.post("/api/books/upload", upload.single("file"), async (req, res) => {
     try {
-        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+        if (!req.file) {
+            return res.status(400).json({ error: "No file uploaded" });
+        }
 
         const title = req.file.originalname.replace(/\.[^/.]+$/, "");
         const pdfPath = `/uploads/${req.file.filename}`;
@@ -110,20 +112,23 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
         const outputPrefix = path.join(coversDir, baseName);
         const coverPath = `/uploads/covers/${baseName}-1.png`;
 
-        // Generate cover using pdftoppm (first page only)
         exec(
-            `/usr/bin/pdftoppm -f 1 -l 1 -png "${pdfFullPath}" "${outputPrefix}"`,
-            async (error, stdout, stderr) => {
-                if (error) console.warn("⚠️ Cover generation failed:", error.message);
-                if (stdout) console.log("pdftoppm stdout:", stdout);
-                if (stderr) console.log("pdftoppm stderr:", stderr);
+            `pdftoppm -f 1 -l 1 -png "${pdfFullPath}" "${outputPrefix}"`,
+            async (error) => {
+                if (error) {
+                    console.warn("⚠️ Cover generation failed:", error.message);
+                }
+
+                const finalCover = fs.existsSync(
+                    path.join(coversDir, `${baseName}-1.png`)
+                )
+                    ? coverPath
+                    : null;
 
                 const book = await Book.create({
                     title,
                     pdfPath,
-                    cover: fs.existsSync(path.join(coversDir, `${baseName}-1.png`))
-                        ? coverPath
-                        : null,
+                    cover: finalCover,
                 });
 
                 res.status(201).json({
@@ -143,7 +148,10 @@ app.patch("/api/books/:id/actions", async (req, res) => {
     try {
         const { action } = req.body;
         const book = await Book.findById(req.params.id);
-        if (!book) return res.status(404).json({ error: "Book not found" });
+
+        if (!book) {
+            return res.status(404).json({ error: "Book not found" });
+        }
 
         if (action === "download") book.downloads++;
         if (action === "tts") book.ttsRequests++;
@@ -156,8 +164,18 @@ app.patch("/api/books/:id/actions", async (req, res) => {
     }
 });
 
+/* -------------------- SERVE FRONTEND (FIX /library 404) -------------------- */
+if (process.env.NODE_ENV === "production") {
+    const clientPath = path.join(__dirname, "../build");
+
+    app.use(express.static(clientPath));
+
+    app.get("*", (_, res) => {
+        res.sendFile(path.join(clientPath, "index.html"));
+    });
+}
+
 /* -------------------- START SERVER -------------------- */
-// Render + Docker compatible
 const PORT = process.env.PORT || 10000;
 
 app.listen(PORT, "0.0.0.0", () => {
