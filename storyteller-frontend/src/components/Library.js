@@ -4,9 +4,10 @@ import {
     Download,
     Plus,
     FolderPlus,
-    BookOpen,
 } from "lucide-react";
+
 import f3logo from "../assets/f3logo.png";
+import defaultCover from "../assets/cover.jpg"; // ✅ DEFAULT COVER
 
 export default function Library() {
     const API_URL = process.env.REACT_APP_API_URL;
@@ -28,7 +29,6 @@ export default function Library() {
         try {
             setLoading(true);
             const res = await fetch(`${API_URL}/api/books`);
-
             if (!res.ok) {
                 const text = await res.text();
                 throw new Error(`HTTP ${res.status}: ${text}`);
@@ -88,7 +88,7 @@ export default function Library() {
         }
     };
 
-    // ---------------- MOBILE SWIPE TO CLOSE ----------------
+    // ---------------- MOBILE SWIPE ----------------
     useEffect(() => {
         if (!sheetRef.current || !activeBook) return;
 
@@ -124,7 +124,7 @@ export default function Library() {
         };
     }, [activeBook]);
 
-    // ---------------- ACTION HANDLER ----------------
+    // ---------------- ACTIONS ----------------
     const handleAction = async (bookId, action) => {
         if (!API_URL) return;
 
@@ -177,9 +177,11 @@ export default function Library() {
                 </label>
             </div>
 
-            {/* STATES */}
+            {/* CONTENT */}
             {loading ? (
-                <div className="text-center text-zinc-400 mt-20">Loading books…</div>
+                <div className="text-center text-zinc-400 mt-20">
+                    Loading books…
+                </div>
             ) : books.length === 0 ? (
                 <div className="text-center text-zinc-400 mt-20">
                     <p className="text-lg">No books yet</p>
@@ -194,17 +196,11 @@ export default function Library() {
                             key={book._id}
                             className="relative bg-zinc-900 rounded-lg p-2 hover:bg-zinc-800 transition"
                         >
-                            {book.cover ? (
-                                <img
-                                    src={book.cover}
-                                    alt={book.title}
-                                    className="w-full h-36 object-cover rounded-md"
-                                />
-                            ) : (
-                                <div className="w-full h-36 rounded-md bg-zinc-800 flex items-center justify-center">
-                                    <BookOpen className="w-10 h-10 text-zinc-500" />
-                                </div>
-                            )}
+                            <img
+                                src={book.cover || defaultCover}
+                                alt={book.title}
+                                className="w-full h-36 object-cover rounded-md"
+                            />
 
                             <p className="mt-2 text-white text-sm truncate">
                                 {book.title}
@@ -232,21 +228,11 @@ export default function Library() {
                         onClick={(e) => e.stopPropagation()}
                         className="w-full max-w-3xl mx-auto bg-zinc-900 rounded-t-2xl md:rounded-2xl pt-2 px-6 pb-6 animate-slideUp"
                     >
-                        <div className="flex justify-center mb-4 md:hidden">
-                            <div className="w-12 h-1.5 bg-zinc-700 rounded-full" />
-                        </div>
-
                         <div className="flex gap-3 mb-4">
-                            {activeBook.cover ? (
-                                <img
-                                    src={activeBook.cover}
-                                    className="w-12 h-16 rounded-md object-cover"
-                                />
-                            ) : (
-                                <div className="w-12 h-16 bg-zinc-800 rounded-md flex items-center justify-center">
-                                    <BookOpen className="w-6 h-6 text-zinc-500" />
-                                </div>
-                            )}
+                            <img
+                                src={activeBook.cover || defaultCover}
+                                className="w-12 h-16 rounded-md object-cover"
+                            />
 
                             <div>
                                 <p className="text-white font-semibold">
@@ -260,20 +246,21 @@ export default function Library() {
 
                         <div className="space-y-3">
                             <button
-                                onClick={() => handleAction(activeBook._id, "download")}
+                                onClick={() =>
+                                    handleAction(activeBook._id, "download")
+                                }
                                 className="w-full flex flex-col gap-1 bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-4 rounded-xl"
                             >
                                 <div className="flex items-center gap-3">
                                     <Download className="w-6 h-6" />
                                     <span>Download Audio</span>
                                 </div>
-                                <span className="text-zinc-400 text-xs">
-                                    Listen offline
-                                </span>
                             </button>
 
                             <button
-                                onClick={() => handleAction(activeBook._id, "tts")}
+                                onClick={() =>
+                                    handleAction(activeBook._id, "tts")
+                                }
                                 className="w-full flex gap-3 bg-black hover:bg-black/90 text-white py-3 px-4 rounded-xl"
                             >
                                 <img src={f3logo} className="w-6 h-6" />
@@ -291,16 +278,6 @@ export default function Library() {
                     </div>
                 </div>
             )}
-
-            <style>{`
-        @keyframes slideUp {
-          from { transform: translateY(100%); }
-          to { transform: translateY(0); }
-        }
-        .animate-slideUp {
-          animation: slideUp 0.3s ease-out;
-        }
-      `}</style>
         </div>
     );
 }
