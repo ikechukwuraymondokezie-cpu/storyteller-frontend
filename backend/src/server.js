@@ -5,7 +5,7 @@ const cors = require("cors");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs-extra");
-const { exec } = require("child_process"); // <-- added for pdftoppm
+const { exec } = require("child_process");
 
 const app = express();
 
@@ -81,7 +81,7 @@ const formatBook = (book) => ({
 
 /* -------------------- ROUTES -------------------- */
 
-// Health check
+// Health check (Render uses this)
 app.get("/", (_, res) => {
     res.status(200).json({ status: "Backend running 🚀" });
 });
@@ -100,9 +100,7 @@ app.get("/api/books", async (_, res) => {
 /* ---------- UPLOAD BOOK + PDF COVER (LINUX SAFE) ---------- */
 app.post("/api/books/upload", upload.single("file"), async (req, res) => {
     try {
-        if (!req.file) {
-            return res.status(400).json({ error: "No file uploaded" });
-        }
+        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
         const title = req.file.originalname.replace(/\.[^/.]+$/, "");
         const pdfPath = `/uploads/${req.file.filename}`;
@@ -114,11 +112,11 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
 
         // Generate cover using pdftoppm (first page only)
         exec(
-            `pdftoppm -f 1 -l 1 -png "${pdfFullPath}" "${outputPrefix}"`,
-            async (error) => {
-                if (error) {
-                    console.warn("⚠️ Cover generation failed:", error.message);
-                }
+            `/usr/bin/pdftoppm -f 1 -l 1 -png "${pdfFullPath}" "${outputPrefix}"`,
+            async (error, stdout, stderr) => {
+                if (error) console.warn("⚠️ Cover generation failed:", error.message);
+                if (stdout) console.log("pdftoppm stdout:", stdout);
+                if (stderr) console.log("pdftoppm stderr:", stderr);
 
                 const book = await Book.create({
                     title,
