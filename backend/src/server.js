@@ -13,21 +13,21 @@ const app = express();
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
-/* -------------------- UPLOADS FOLDER -------------------- */
-// server.js is inside /src → go one level up
+/* -------------------- UPLOADS -------------------- */
+// server.js is inside /src
 const uploadDir = path.join(__dirname, "../uploads");
 const coversDir = path.join(uploadDir, "covers");
 
 fs.ensureDirSync(uploadDir);
 fs.ensureDirSync(coversDir);
 
-// Serve uploaded PDFs and covers
+// Serve uploads
 app.use("/uploads", express.static(uploadDir));
 
 /* -------------------- MONGODB -------------------- */
 const MONGO_URI = process.env.MONGO_URI;
 if (!MONGO_URI) {
-    console.error("❌ MONGO_URI is not defined");
+    console.error("❌ MONGO_URI missing");
     process.exit(1);
 }
 
@@ -67,7 +67,7 @@ const upload = multer({ storage });
 
 /* -------------------- HELPERS -------------------- */
 const BACKEND_URL =
-    process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 10000}`;
+    process.env.BACKEND_URL || `https://storyteller-b1i3.onrender.com`;
 
 const formatBook = (book) => ({
     _id: book._id,
@@ -83,11 +83,11 @@ const formatBook = (book) => ({
 
 // Health check
 app.get("/", (_, res) => {
-    res.status(200).json({ status: "Backend running 🚀" });
+    res.json({ status: "Backend running 🚀" });
 });
 
 /* ---------- GET ALL BOOKS ---------- */
-app.get("/api/books", async (_, res) => {
+const getBooksHandler = async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
         res.json(books.map(formatBook));
@@ -95,9 +95,13 @@ app.get("/api/books", async (_, res) => {
         console.error(err);
         res.status(500).json({ error: "Failed to fetch books" });
     }
-});
+};
 
-/* ---------- UPLOAD BOOK + PDF COVER (LINUX SAFE) ---------- */
+// ✅ BOTH ROUTES NOW WORK
+app.get("/api/books", getBooksHandler);
+app.get("/library", getBooksHandler);
+
+/* ---------- UPLOAD ---------- */
 app.post("/api/books/upload", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) {
@@ -113,22 +117,14 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
         const coverPath = `/uploads/covers/${baseName}-1.png`;
 
         exec(
-            `pdftoppm -f 1 -l 1 -png "${pdfFullPath}" "${outputPrefix}"`,
-            async (error) => {
-                if (error) {
-                    console.warn("⚠️ Cover generation failed:", error.message);
-                }
-
-                const finalCover = fs.existsSync(
-                    path.join(coversDir, `${baseName}-1.png`)
-                )
-                    ? coverPath
-                    : null;
-
+            `/usr/bin/pdftoppm -f 1 -l 1 -png "${pdfFullPath}" "${outputPrefix}"`,
+            async () => {
                 const book = await Book.create({
                     title,
                     pdfPath,
-                    cover: finalCover,
+                    cover: fs.existsSync(path.join(coversDir, `${baseName}-1.png`))
+                        ? coverPath
+                        : null,
                 });
 
                 res.status(201).json({
@@ -138,12 +134,12 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
             }
         );
     } catch (err) {
-        console.error("❌ Upload failed:", err);
+        console.error(err);
         res.status(500).json({ error: "Upload failed" });
     }
 });
 
-/* ---------- PATCH DOWNLOAD / TTS ---------- */
+/* ---------- ACTIONS ---------- */
 app.patch("/api/books/:id/actions", async (req, res) => {
     try {
         const { action } = req.body;
@@ -164,20 +160,8 @@ app.patch("/api/books/:id/actions", async (req, res) => {
     }
 });
 
-/* -------------------- SERVE FRONTEND (FIX /library 404) -------------------- */
-if (process.env.NODE_ENV === "production") {
-    const clientPath = path.join(__dirname, "../build");
-
-    app.use(express.static(clientPath));
-
-    app.get("*", (_, res) => {
-        res.sendFile(path.join(clientPath, "index.html"));
-    });
-}
-
 /* -------------------- START SERVER -------------------- */
 const PORT = process.env.PORT || 10000;
-
 app.listen(PORT, "0.0.0.0", () => {
     console.log(`✅ Server running on port ${PORT}`);
 });
