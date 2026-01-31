@@ -72,7 +72,7 @@ const upload = multer({ storage });
 
 /* -------------------- HELPERS -------------------- */
 const BACKEND_URL =
-    process.env.BACKEND_URL || "https://storyteller-b1i3.onrender.com";
+    process.env.BACKEND_URL || "https://storyteller-frontend-x65b.onrender.com";
 
 const formatBook = (book) => ({
     _id: book._id,
