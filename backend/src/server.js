@@ -150,24 +150,30 @@ app.patch("/api/books/:id/actions", async (req, res) => {
     }
 });
 
-/* -------------------- REACT SPA SERVE -------------------- */
-const frontendBuildPath = path.join(__dirname, "../../../storyteller-frontend/build");
+/* -------------------- OPTIONAL FRONTEND SERVE -------------------- */
+const frontendBuildPath = path.join(
+    __dirname,
+    "../../storyteller-frontend/build"
+);
 
 if (fs.existsSync(frontendBuildPath)) {
     app.use(express.static(frontendBuildPath));
 
-    // Catch-all route for SPA
+    // Serve React SPA for any route NOT starting with /api
     app.get(/^(?!\/api).*/, (_, res) => {
-        res.sendFile(path.join(frontendBuildPath, "index.html"));
+        const indexPath = path.join(frontendBuildPath, "index.html");
+        if (fs.existsSync(indexPath)) {
+            res.sendFile(indexPath);
+        } else {
+            res.status(404).send("React build not found");
+        }
     });
 
-    console.log("✅ Serving React frontend");
+    console.log("✅ Serving React frontend from", frontendBuildPath);
 } else {
-    console.log("ℹ️ Frontend build not found — API only mode");
+    console.log(
+        "ℹ️ Frontend build not found at",
+        frontendBuildPath,
+        "— API only mode"
+    );
 }
-
-/* -------------------- START SERVER -------------------- */
-const PORT = process.env.PORT || 10000;
-app.listen(PORT, "0.0.0.0", () => {
-    console.log(`✅ Server running on port ${PORT}`);
-});
