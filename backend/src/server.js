@@ -67,8 +67,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 /* -------------------- HELPERS -------------------- */
-const BACKEND_URL =
-    process.env.BACKEND_URL || "https://storyteller-b1i3.onrender.com";
+const BACKEND_URL = process.env.BACKEND_URL || "https://storyteller-frontend-x65b.onrender.co";
 
 const formatBook = (book) => ({
     _id: book._id,
@@ -117,9 +116,7 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
                 const book = await Book.create({
                     title,
                     pdfPath,
-                    cover: fs.existsSync(
-                        path.join(coversDir, `${baseName}-1.png`)
-                    )
+                    cover: fs.existsSync(path.join(coversDir, `${baseName}-1.png`))
                         ? coverPath
                         : null,
                 });
@@ -153,15 +150,13 @@ app.patch("/api/books/:id/actions", async (req, res) => {
     }
 });
 
-/* -------------------- OPTIONAL FRONTEND SERVE -------------------- */
-const frontendBuildPath = path.join(
-    __dirname,
-    "../../../storyteller-frontend/build"
-);
+/* -------------------- REACT SPA SERVE -------------------- */
+const frontendBuildPath = path.join(__dirname, "../../../storyteller-frontend/build");
 
 if (fs.existsSync(frontendBuildPath)) {
     app.use(express.static(frontendBuildPath));
 
+    // Catch-all route for SPA
     app.get(/^(?!\/api).*/, (_, res) => {
         res.sendFile(path.join(frontendBuildPath, "index.html"));
     });
