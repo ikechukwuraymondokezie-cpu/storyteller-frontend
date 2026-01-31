@@ -67,7 +67,9 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 /* -------------------- HELPERS -------------------- */
-const BACKEND_URL = process.env.BACKEND_URL || "https://storyteller-frontend-x65b.onrender.com";
+// IMPORTANT: this must be your BACKEND url, not frontend
+const BACKEND_URL =
+    process.env.BACKEND_URL || "http://localhost:10000";
 
 const formatBook = (book) => ({
     _id: book._id,
@@ -111,12 +113,16 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
         exec(
             `pdftoppm -f 1 -l 1 -png "${pdfFullPath}" "${outputPrefix}"`,
             async (error) => {
-                if (error) console.error("❌ pdftoppm error:", error);
+                if (error) {
+                    console.error("❌ pdftoppm error:", error);
+                }
 
                 const book = await Book.create({
                     title,
                     pdfPath,
-                    cover: fs.existsSync(path.join(coversDir, `${baseName}-1.png`))
+                    cover: fs.existsSync(
+                        path.join(coversDir, `${baseName}-1.png`)
+                    )
                         ? coverPath
                         : null,
                 });
@@ -151,13 +157,25 @@ app.patch("/api/books/:id/actions", async (req, res) => {
 });
 
 /* -------------------- REACT SPA SERVE -------------------- */
-const frontendBuildPath = path.join(__dirname, "../../../storyteller-frontend/build");
+/**
+ * FINAL PATH ASSUMPTION:
+ * repo-root/
+ * ├── storyteller-backend/
+ * │   └── src/server.js  (THIS FILE)
+ * ├── storyteller-frontend/
+ * │   └── build/
+ */
+const frontendBuildPath = path.join(
+    __dirname,
+    "../../storyteller-frontend/build"
+);
 
 if (fs.existsSync(frontendBuildPath)) {
     app.use(express.static(frontendBuildPath));
 
-    // Catch-all route for SPA
-    app.get(/^(?!\/api).*/, (_, res) => {
+    // Catch-all (exclude /api)
+    app.get("*", (req, res) => {
+        if (req.path.startsWith("/api")) return res.sendStatus(404);
         res.sendFile(path.join(frontendBuildPath, "index.html"));
     });
 
