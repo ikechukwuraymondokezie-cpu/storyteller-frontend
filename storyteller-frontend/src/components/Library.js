@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { MoreHorizontal, Download, Plus, FolderPlus } from "lucide-react";
 
 import f3logo from "../assets/f3logo.png";
-import defaultCover from "../assets/cover.jpg"; // ✅ DEFAULT COVER
+import defaultCover from "../assets/cover.jpg"; // DEFAULT COVER
 
 export default function Library() {
     const API_URL = process.env.REACT_APP_API_URL;
@@ -13,7 +13,7 @@ export default function Library() {
     const [uploading, setUploading] = useState(false);
     const sheetRef = useRef(null);
 
-    // ---------------- FETCH BOOKS ----------------
+    /* ---------------- FETCH BOOKS ---------------- */
     const fetchBooks = async () => {
         if (!API_URL) {
             console.error("❌ REACT_APP_API_URL is undefined");
@@ -34,7 +34,7 @@ export default function Library() {
             const mapped = data.map((b) => ({
                 _id: b._id,
                 title: b.title || "Untitled",
-                cover: b.cover || null,
+                cover: b.cover || null, // relative path
                 url: b.url,
                 folder: b.folder || "default",
                 downloads: b.downloads || 0,
@@ -54,7 +54,7 @@ export default function Library() {
         fetchBooks();
     }, [API_URL]);
 
-    // ---------------- UPLOAD BOOK ----------------
+    /* ---------------- UPLOAD BOOK ---------------- */
     const handleUpload = async (file) => {
         if (!API_URL || !file) return;
 
@@ -73,8 +73,9 @@ export default function Library() {
                 throw new Error(`HTTP ${res.status}: ${text}`);
             }
 
+            // 🔥 backend returns the book directly
             const data = await res.json();
-            setBooks((prev) => [data.book, ...prev]);
+            setBooks((prev) => [data, ...prev]);
         } catch (err) {
             console.error("❌ Upload failed:", err);
         } finally {
@@ -82,7 +83,7 @@ export default function Library() {
         }
     };
 
-    // ---------------- MOBILE SWIPE ----------------
+    /* ---------------- MOBILE SWIPE ---------------- */
     useEffect(() => {
         if (!sheetRef.current || !activeBook) return;
 
@@ -118,7 +119,7 @@ export default function Library() {
         };
     }, [activeBook]);
 
-    // ---------------- ACTIONS ----------------
+    /* ---------------- ACTIONS ---------------- */
     const handleAction = async (bookId, action) => {
         if (!API_URL) return;
 
@@ -142,7 +143,7 @@ export default function Library() {
 
             if (action === "download" && updatedBook.url) {
                 const link = document.createElement("a");
-                link.href = updatedBook.url;
+                link.href = `${API_URL}${updatedBook.url}`;
                 link.download = `${updatedBook.title}.pdf`;
                 link.click();
             }
@@ -189,12 +190,18 @@ export default function Library() {
                             className="relative bg-zinc-900 rounded-lg p-2 hover:bg-zinc-800 transition"
                         >
                             <img
-                                src={book.cover || defaultCover}
+                                src={
+                                    book.cover
+                                        ? `${API_URL}${book.cover}`
+                                        : defaultCover
+                                }
                                 alt={book.title}
                                 className="w-full h-36 object-cover rounded-md"
                             />
 
-                            <p className="mt-2 text-white text-sm truncate">{book.title}</p>
+                            <p className="mt-2 text-white text-sm truncate">
+                                {book.title}
+                            </p>
 
                             <button
                                 onClick={() => setActiveBook(book)}
@@ -220,29 +227,39 @@ export default function Library() {
                     >
                         <div className="flex gap-3 mb-4">
                             <img
-                                src={activeBook.cover || defaultCover}
+                                src={
+                                    activeBook.cover
+                                        ? `${API_URL}${activeBook.cover}`
+                                        : defaultCover
+                                }
                                 className="w-12 h-16 rounded-md object-cover"
                             />
 
                             <div>
-                                <p className="text-white font-semibold">{activeBook.title}</p>
-                                <p className="text-zinc-500 text-xs">Folder: {activeBook.folder}</p>
+                                <p className="text-white font-semibold">
+                                    {activeBook.title}
+                                </p>
+                                <p className="text-zinc-500 text-xs">
+                                    Folder: {activeBook.folder}
+                                </p>
                             </div>
                         </div>
 
                         <div className="space-y-3">
                             <button
-                                onClick={() => handleAction(activeBook._id, "download")}
-                                className="w-full flex flex-col gap-1 bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-4 rounded-xl"
+                                onClick={() =>
+                                    handleAction(activeBook._id, "download")
+                                }
+                                className="w-full flex gap-3 bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-4 rounded-xl"
                             >
-                                <div className="flex items-center gap-3">
-                                    <Download className="w-6 h-6" />
-                                    <span>Download PDF</span>
-                                </div>
+                                <Download className="w-6 h-6" />
+                                <span>Download PDF</span>
                             </button>
 
                             <button
-                                onClick={() => handleAction(activeBook._id, "tts")}
+                                onClick={() =>
+                                    handleAction(activeBook._id, "tts")
+                                }
                                 className="w-full flex gap-3 bg-black hover:bg-black/90 text-white py-3 px-4 rounded-xl"
                             >
                                 <img src={f3logo} className="w-6 h-6" />
