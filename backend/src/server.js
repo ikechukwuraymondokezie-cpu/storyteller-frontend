@@ -17,17 +17,18 @@ app.use(express.json());
 /**
  * server.js lives in:
  * storyteller-backend/src/server.js
- * uploads MUST live in:
- * storyteller-backend/src/uploads
+ * uploads live in: storyteller-backend/uploads
  */
-const uploadDir = path.join(__dirname, "uploads");
-const coversDir = path.join(uploadDir, "covers");
+const uploadDir = path.join(__dirname, "../uploads/pdf");      // PDFs go here
+const coversDir = path.join(__dirname, "../uploads/covers");   // Covers go here
+const audioDir = path.join(__dirname, "../uploads/audio");     // TTS audio
 
 fs.ensureDirSync(uploadDir);
 fs.ensureDirSync(coversDir);
+fs.ensureDirSync(audioDir);
 
-// Serve uploaded PDFs + covers
-app.use("/uploads", express.static(uploadDir));
+// Serve uploaded files
+app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 /* -------------------- MONGODB -------------------- */
 const MONGO_URI = process.env.MONGO_URI;
@@ -72,7 +73,7 @@ const upload = multer({ storage });
 
 /* -------------------- HELPERS -------------------- */
 const BACKEND_URL =
-    process.env.BACKEND_URL || "https://storyteller-frontend-x65b.onrender.com";
+    process.env.BACKEND_URL || "https://storyteller-b1i3.onrender.com";
 
 const formatBook = (book) => ({
     _id: book._id,
@@ -85,7 +86,6 @@ const formatBook = (book) => ({
 });
 
 /* -------------------- ROUTES -------------------- */
-
 // Health check
 app.get("/api", (_, res) => {
     res.json({ status: "Backend running 🚀" });
@@ -110,22 +110,26 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
         }
 
         const title = req.file.originalname.replace(/\.[^/.]+$/, "");
-        const pdfPath = `/uploads/${req.file.filename}`;
+        const pdfPath = `/uploads/pdf/${req.file.filename}`;
         const pdfFullPath = path.join(uploadDir, req.file.filename);
 
         const baseName = path.parse(req.file.filename).name;
         const outputPrefix = path.join(coversDir, baseName);
         const coverPath = `/uploads/covers/${baseName}-1.png`;
 
+        // Generate cover from first page
         exec(
             `pdftoppm -f 1 -l 1 -png "${pdfFullPath}" "${outputPrefix}"`,
-            async () => {
+            async (error, stdout, stderr) => {
+                if (error) {
+                    console.error("❌ pdftoppm error:", error);
+                    console.error(stderr);
+                }
+
                 const book = await Book.create({
                     title,
                     pdfPath,
-                    cover: fs.existsSync(
-                        path.join(coversDir, `${baseName}-1.png`)
-                    )
+                    cover: fs.existsSync(path.join(coversDir, `${baseName}-1.png`))
                         ? coverPath
                         : null,
                 });
@@ -164,18 +168,12 @@ app.patch("/api/books/:id/actions", async (req, res) => {
 });
 
 /* -------------------- FRONTEND (REACT) -------------------- */
-/**
- * Frontend build lives in:
- * storyteller/storyteller-frontend/build
- */
 const frontendBuildPath = path.join(
     __dirname,
     "../../storyteller-frontend/build"
 );
 
 app.use(express.static(frontendBuildPath));
-
-// Express 5 SAFE catch-all
 app.get("/*", (_, res) => {
     res.sendFile(path.join(frontendBuildPath, "index.html"));
 });

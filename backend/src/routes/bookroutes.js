@@ -1,5 +1,3 @@
-// storyteller-backend/src/routes/books.routes.js
-
 const express = require("express");
 const multer = require("multer");
 const path = require("path");
@@ -9,12 +7,20 @@ const Book = require("../models/Book");
 
 const router = express.Router();
 
-/* =========================
-   MULTER CONFIG
-========================= */
+/* ---------------- MULTER CONFIG ---------------- */
+const uploadsRoot = path.join(__dirname, "../uploads");        // backend uploads folder
+const pdfDir = path.join(uploadsRoot, "pdf");
+const coversDir = path.join(uploadsRoot, "covers");
+const audioDir = path.join(uploadsRoot, "audio");
+
+// Ensure folders exist
+fs.ensureDirSync(pdfDir);
+fs.ensureDirSync(coversDir);
+fs.ensureDirSync(audioDir);
+
 const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, "uploads/"),
-    filename: (req, file, cb) => {
+    destination: (_, __, cb) => cb(null, pdfDir),
+    filename: (_, file, cb) => {
         const unique = Date.now() + "-" + Math.round(Math.random() * 1e9);
         cb(null, unique + path.extname(file.originalname));
     },
@@ -22,13 +28,10 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-/* =========================
-   GET ALL BOOKS
-========================= */
+/* ---------------- GET ALL BOOKS ---------------- */
 router.get("/", async (req, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
-
         const mapped = books.map((b) => ({
             _id: b._id,
             title: b.title,
@@ -38,7 +41,6 @@ router.get("/", async (req, res) => {
             downloads: b.downloads,
             ttsRequests: b.ttsRequests,
         }));
-
         res.json(mapped);
     } catch (err) {
         console.error(err);
@@ -46,15 +48,10 @@ router.get("/", async (req, res) => {
     }
 });
 
-/* =========================
-   GET BOOKS BY FOLDER
-========================= */
+/* ---------------- GET BOOKS BY FOLDER ---------------- */
 router.get("/folder/:folder", async (req, res) => {
     try {
-        const books = await Book.find({ folder: req.params.folder }).sort({
-            createdAt: -1,
-        });
-
+        const books = await Book.find({ folder: req.params.folder }).sort({ createdAt: -1 });
         const mapped = books.map((b) => ({
             _id: b._id,
             title: b.title,
@@ -64,7 +61,6 @@ router.get("/folder/:folder", async (req, res) => {
             downloads: b.downloads,
             ttsRequests: b.ttsRequests,
         }));
-
         res.json(mapped);
     } catch (err) {
         console.error(err);
@@ -72,47 +68,32 @@ router.get("/folder/:folder", async (req, res) => {
     }
 });
 
-/* =========================
-   UPLOAD BOOK + PDF COVER (LINUX SAFE)
-========================= */
+/* ---------------- UPLOAD BOOK + GENERATE COVER ---------------- */
 router.post("/", upload.single("file"), async (req, res) => {
     try {
-        if (!req.file) {
-            return res.status(400).json({ error: "No file uploaded" });
-        }
+        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-        const uploadsDir = "uploads";
-        const coversDir = path.join(uploadsDir, "covers");
-        await fs.ensureDir(coversDir);
-
-        const pdfPath = path.join(uploadsDir, req.file.filename);
         const baseName = path.parse(req.file.filename).name;
+        const pdfPublicPath = `/uploads/pdf/${req.file.filename}`;
         const coverDiskPath = path.join(coversDir, `${baseName}-1.png`);
         const coverPublicPath = `/uploads/covers/${baseName}-1.png`;
 
-        // Generate first-page cover using pdftoppm
+        // Generate cover (first page)
         exec(
-            `pdftoppm -f 1 -l 1 -png "${pdfPath}" "${path.join(
-                coversDir,
-                baseName
-            )}"`,
+            `pdftoppm -f 1 -l 1 -png "${path.join(pdfDir, req.file.filename)}" "${path.join(coversDir, baseName)}"`,
             async (error) => {
-                if (error) {
-                    console.warn("⚠️ Cover generation failed:", error.message);
-                }
+                if (error) console.warn("⚠️ Cover generation failed:", error.message);
 
                 const book = await Book.create({
                     title: req.file.originalname.replace(/\.[^/.]+$/, ""),
-                    pdfPath: `/${pdfPath}`,
-                    cover: fs.existsSync(coverDiskPath)
-                        ? coverPublicPath
-                        : null,
+                    pdfPath: pdfPublicPath,
+                    cover: fs.existsSync(coverDiskPath) ? coverPublicPath : null,
                     folder: "default",
                     downloads: 0,
                     ttsRequests: 0,
                 });
 
-                const mapped = {
+                res.status(201).json({
                     _id: book._id,
                     title: book.title,
                     cover: book.cover || null,
@@ -120,9 +101,7 @@ router.post("/", upload.single("file"), async (req, res) => {
                     folder: book.folder,
                     downloads: book.downloads,
                     ttsRequests: book.ttsRequests,
-                };
-
-                res.status(201).json(mapped);
+                });
             }
         );
     } catch (err) {
@@ -131,14 +110,11 @@ router.post("/", upload.single("file"), async (req, res) => {
     }
 });
 
-/* =========================
-   PATCH ACTIONS
-========================= */
+/* ---------------- PATCH ACTIONS ---------------- */
 router.patch("/:id/actions", async (req, res) => {
     try {
         const { action } = req.body;
         const book = await Book.findById(req.params.id);
-
         if (!book) return res.status(404).json({ error: "Book not found" });
 
         if (action === "download") book.downloads += 1;
@@ -146,7 +122,7 @@ router.patch("/:id/actions", async (req, res) => {
 
         await book.save();
 
-        const mapped = {
+        res.json({
             _id: book._id,
             title: book.title,
             cover: book.cover || null,
@@ -154,9 +130,7 @@ router.patch("/:id/actions", async (req, res) => {
             folder: book.folder,
             downloads: book.downloads,
             ttsRequests: book.ttsRequests,
-        };
-
-        res.json(mapped);
+        });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Action failed" });

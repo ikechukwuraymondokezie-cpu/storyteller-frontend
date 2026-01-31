@@ -1,10 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import {
-    MoreHorizontal,
-    Download,
-    Plus,
-    FolderPlus,
-} from "lucide-react";
+import { MoreHorizontal, Download, Plus, FolderPlus } from "lucide-react";
 
 import f3logo from "../assets/f3logo.png";
 import defaultCover from "../assets/cover.jpg"; // ✅ DEFAULT COVER
@@ -41,10 +36,9 @@ export default function Library() {
                 title: b.title || "Untitled",
                 cover: b.cover || null,
                 url: b.url,
-                folder: b.folder || null,
+                folder: b.folder || "default",
                 downloads: b.downloads || 0,
                 ttsRequests: b.ttsRequests || 0,
-                words: b.words || null,
             }));
 
             setBooks(mapped);
@@ -170,7 +164,7 @@ export default function Library() {
                     {uploading ? "Uploading…" : "Upload"}
                     <input
                         type="file"
-                        accept=".pdf,.txt"
+                        accept=".pdf"
                         className="hidden"
                         onChange={(e) => handleUpload(e.target.files[0])}
                     />
@@ -179,9 +173,7 @@ export default function Library() {
 
             {/* CONTENT */}
             {loading ? (
-                <div className="text-center text-zinc-400 mt-20">
-                    Loading books…
-                </div>
+                <div className="text-center text-zinc-400 mt-20">Loading books…</div>
             ) : books.length === 0 ? (
                 <div className="text-center text-zinc-400 mt-20">
                     <p className="text-lg">No books yet</p>
@@ -202,9 +194,7 @@ export default function Library() {
                                 className="w-full h-36 object-cover rounded-md"
                             />
 
-                            <p className="mt-2 text-white text-sm truncate">
-                                {book.title}
-                            </p>
+                            <p className="mt-2 text-white text-sm truncate">{book.title}</p>
 
                             <button
                                 onClick={() => setActiveBook(book)}
@@ -235,32 +225,24 @@ export default function Library() {
                             />
 
                             <div>
-                                <p className="text-white font-semibold">
-                                    {activeBook.title}
-                                </p>
-                                <p className="text-zinc-500 text-xs">
-                                    {activeBook.words || "—"} words
-                                </p>
+                                <p className="text-white font-semibold">{activeBook.title}</p>
+                                <p className="text-zinc-500 text-xs">Folder: {activeBook.folder}</p>
                             </div>
                         </div>
 
                         <div className="space-y-3">
                             <button
-                                onClick={() =>
-                                    handleAction(activeBook._id, "download")
-                                }
+                                onClick={() => handleAction(activeBook._id, "download")}
                                 className="w-full flex flex-col gap-1 bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-4 rounded-xl"
                             >
                                 <div className="flex items-center gap-3">
                                     <Download className="w-6 h-6" />
-                                    <span>Download Audio</span>
+                                    <span>Download PDF</span>
                                 </div>
                             </button>
 
                             <button
-                                onClick={() =>
-                                    handleAction(activeBook._id, "tts")
-                                }
+                                onClick={() => handleAction(activeBook._id, "tts")}
                                 className="w-full flex gap-3 bg-black hover:bg-black/90 text-white py-3 px-4 rounded-xl"
                             >
                                 <img src={f3logo} className="w-6 h-6" />
