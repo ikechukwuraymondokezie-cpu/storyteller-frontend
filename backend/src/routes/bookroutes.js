@@ -2,13 +2,13 @@ const express = require("express");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs-extra");
-const { exec } = require("child_process");
+const { spawn } = require("child_process");
 const Book = require("../models/Book");
 
 const router = express.Router();
 
 /* ---------------- MULTER CONFIG ---------------- */
-const uploadsRoot = path.join(__dirname, "../uploads");        // backend uploads folder
+const uploadsRoot = path.join(__dirname, "../uploads");
 const pdfDir = path.join(uploadsRoot, "pdf");
 const coversDir = path.join(uploadsRoot, "covers");
 const audioDir = path.join(uploadsRoot, "audio");
@@ -29,19 +29,20 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 /* ---------------- GET ALL BOOKS ---------------- */
-router.get("/", async (req, res) => {
+router.get("/", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
-        const mapped = books.map((b) => ({
-            _id: b._id,
-            title: b.title,
-            cover: b.cover || null,
-            url: b.pdfPath,
-            folder: b.folder || "default",
-            downloads: b.downloads,
-            ttsRequests: b.ttsRequests,
-        }));
-        res.json(mapped);
+        res.json(
+            books.map((b) => ({
+                _id: b._id,
+                title: b.title,
+                cover: b.cover || null,
+                url: b.pdfPath,
+                folder: b.folder || "default",
+                downloads: b.downloads,
+                ttsRequests: b.ttsRequests,
+            }))
+        );
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Failed to fetch books" });
@@ -51,17 +52,21 @@ router.get("/", async (req, res) => {
 /* ---------------- GET BOOKS BY FOLDER ---------------- */
 router.get("/folder/:folder", async (req, res) => {
     try {
-        const books = await Book.find({ folder: req.params.folder }).sort({ createdAt: -1 });
-        const mapped = books.map((b) => ({
-            _id: b._id,
-            title: b.title,
-            cover: b.cover || null,
-            url: b.pdfPath,
-            folder: b.folder,
-            downloads: b.downloads,
-            ttsRequests: b.ttsRequests,
-        }));
-        res.json(mapped);
+        const books = await Book.find({ folder: req.params.folder }).sort({
+            createdAt: -1,
+        });
+
+        res.json(
+            books.map((b) => ({
+                _id: b._id,
+                title: b.title,
+                cover: b.cover || null,
+                url: b.pdfPath,
+                folder: b.folder,
+                downloads: b.downloads,
+                ttsRequests: b.ttsRequests,
+            }))
+        );
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Failed to fetch folder books" });
@@ -71,39 +76,61 @@ router.get("/folder/:folder", async (req, res) => {
 /* ---------------- UPLOAD BOOK + GENERATE COVER ---------------- */
 router.post("/", upload.single("file"), async (req, res) => {
     try {
-        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+        if (!req.file) {
+            return res.status(400).json({ error: "No file uploaded" });
+        }
 
         const baseName = path.parse(req.file.filename).name;
+        const pdfDiskPath = path.join(pdfDir, req.file.filename);
         const pdfPublicPath = `/uploads/pdf/${req.file.filename}`;
-        const coverDiskPath = path.join(coversDir, `${baseName}-1.png`);
-        const coverPublicPath = `/uploads/covers/${baseName}-1.png`;
 
-        // Generate cover (first page)
-        exec(
-            `pdftoppm -f 1 -l 1 -png "${path.join(pdfDir, req.file.filename)}" "${path.join(coversDir, baseName)}"`,
-            async (error) => {
-                if (error) console.warn("⚠️ Cover generation failed:", error.message);
+        const coverFileName = `${baseName}-1.png`;
+        const coverDiskPath = path.join(coversDir, coverFileName);
+        const coverPublicPath = `/uploads/covers/${coverFileName}`;
 
-                const book = await Book.create({
-                    title: req.file.originalname.replace(/\.[^/.]+$/, ""),
-                    pdfPath: pdfPublicPath,
-                    cover: fs.existsSync(coverDiskPath) ? coverPublicPath : null,
-                    folder: "default",
-                    downloads: 0,
-                    ttsRequests: 0,
-                });
+        // 🔥 Spawn pdftoppm safely
+        const proc = spawn("pdftoppm", [
+            "-f",
+            "1",
+            "-l",
+            "1",
+            "-png",
+            pdfDiskPath,
+            path.join(coversDir, baseName),
+        ]);
 
-                res.status(201).json({
-                    _id: book._id,
-                    title: book.title,
-                    cover: book.cover || null,
-                    url: book.pdfPath,
-                    folder: book.folder,
-                    downloads: book.downloads,
-                    ttsRequests: book.ttsRequests,
-                });
+        proc.on("error", (err) => {
+            console.error("❌ pdftoppm spawn error:", err);
+        });
+
+        proc.on("close", async (code) => {
+            let cover = null;
+
+            if (code === 0 && fs.existsSync(coverDiskPath)) {
+                cover = coverPublicPath;
+            } else {
+                console.warn("⚠️ Cover generation failed — using fallback");
             }
-        );
+
+            const book = await Book.create({
+                title: req.file.originalname.replace(/\.[^/.]+$/, ""),
+                pdfPath: pdfPublicPath,
+                cover,
+                folder: "default",
+                downloads: 0,
+                ttsRequests: 0,
+            });
+
+            res.status(201).json({
+                _id: book._id,
+                title: book.title,
+                cover: book.cover || null,
+                url: book.pdfPath,
+                folder: book.folder,
+                downloads: book.downloads,
+                ttsRequests: book.ttsRequests,
+            });
+        });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Upload failed" });
