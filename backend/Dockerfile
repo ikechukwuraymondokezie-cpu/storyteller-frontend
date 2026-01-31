@@ -24,7 +24,7 @@ RUN npm install
 COPY backend/src ./src
 COPY backend/uploads ./uploads
 
-# Copy frontend build into backend
+# Copy frontend build into backend public folder
 COPY --from=frontend-build /app/storyteller-frontend/build ./public
 
 EXPOSE 10000
