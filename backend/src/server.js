@@ -146,7 +146,12 @@ app.use(express.static(frontendBuildPath));
 
 // Fix for PathError: use regex instead of "*"
 app.get(/.*/, (_, res) => {
-    res.sendFile(path.join(frontendBuildPath, "index.html"));
+    const indexPath = path.join(frontendBuildPath, "index.html");
+    if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+    } else {
+        res.status(404).send("React build not found");
+    }
 });
 
 /* -------------------- START SERVER -------------------- */
