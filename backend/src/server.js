@@ -67,7 +67,8 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 /* -------------------- HELPERS -------------------- */
-const BACKEND_URL = process.env.BACKEND_URL || "https://storyteller-b1i3.onrender.com";
+const BACKEND_URL =
+    process.env.BACKEND_URL || "https://storyteller-b1i3.onrender.com";
 
 const formatBook = (book) => ({
     _id: book._id,
@@ -79,7 +80,7 @@ const formatBook = (book) => ({
     ttsRequests: book.ttsRequests,
 });
 
-/* -------------------- ROUTES -------------------- */
+/* -------------------- API ROUTES -------------------- */
 app.get("/api", (_, res) => {
     res.json({ status: "Backend running 🚀" });
 });
@@ -96,7 +97,9 @@ app.get("/api/books", async (_, res) => {
 
 app.post("/api/books/upload", upload.single("file"), async (req, res) => {
     try {
-        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+        if (!req.file) {
+            return res.status(400).json({ error: "No file uploaded" });
+        }
 
         const title = req.file.originalname.replace(/\.[^/.]+$/, "");
         const pdfPath = `/uploads/pdf/${req.file.filename}`;
@@ -106,17 +109,27 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
         const coverPath = `/uploads/covers/${baseName}-1.png`;
         const outputPrefix = path.join(coversDir, baseName);
 
-        exec(`pdftoppm -f 1 -l 1 -png "${pdfFullPath}" "${outputPrefix}"`, async (error, stdout, stderr) => {
-            if (error) console.error("❌ pdftoppm error:", error, stderr);
+        exec(
+            `pdftoppm -f 1 -l 1 -png "${pdfFullPath}" "${outputPrefix}"`,
+            async (error) => {
+                if (error) console.error("❌ pdftoppm error:", error);
 
-            const book = await Book.create({
-                title,
-                pdfPath,
-                cover: fs.existsSync(path.join(coversDir, `${baseName}-1.png`)) ? coverPath : null,
-            });
+                const book = await Book.create({
+                    title,
+                    pdfPath,
+                    cover: fs.existsSync(
+                        path.join(coversDir, `${baseName}-1.png`)
+                    )
+                        ? coverPath
+                        : null,
+                });
 
-            res.status(201).json({ message: "Upload successful", book: formatBook(book) });
-        });
+                res.status(201).json({
+                    message: "Upload successful",
+                    book: formatBook(book),
+                });
+            }
+        );
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Upload failed" });
@@ -140,19 +153,23 @@ app.patch("/api/books/:id/actions", async (req, res) => {
     }
 });
 
-/* -------------------- FRONTEND (REACT SPA) -------------------- */
-const frontendBuildPath = path.join(__dirname, "../../storyteller-frontend/build");
-app.use(express.static(frontendBuildPath));
+/* -------------------- OPTIONAL FRONTEND SERVE -------------------- */
+const frontendBuildPath = path.join(
+    __dirname,
+    "../../../storyteller-frontend/build"
+);
 
-// Fix for PathError: use regex instead of "*"
-app.get(/.*/, (_, res) => {
-    const indexPath = path.join(frontendBuildPath, "index.html");
-    if (fs.existsSync(indexPath)) {
-        res.sendFile(indexPath);
-    } else {
-        res.status(404).send("React build not found");
-    }
-});
+if (fs.existsSync(frontendBuildPath)) {
+    app.use(express.static(frontendBuildPath));
+
+    app.get(/^(?!\/api).*/, (_, res) => {
+        res.sendFile(path.join(frontendBuildPath, "index.html"));
+    });
+
+    console.log("✅ Serving React frontend");
+} else {
+    console.log("ℹ️ Frontend build not found — API only mode");
+}
 
 /* -------------------- START SERVER -------------------- */
 const PORT = process.env.PORT || 10000;
