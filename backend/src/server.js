@@ -80,12 +80,10 @@ const formatBook = (book) => ({
 });
 
 /* -------------------- ROUTES -------------------- */
-// Health check
 app.get("/api", (_, res) => {
     res.json({ status: "Backend running 🚀" });
 });
 
-// Get all books
 app.get("/api/books", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
@@ -96,7 +94,6 @@ app.get("/api/books", async (_, res) => {
     }
 });
 
-// Upload PDF + generate cover
 app.post("/api/books/upload", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -109,7 +106,6 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
         const coverPath = `/uploads/covers/${baseName}-1.png`;
         const outputPrefix = path.join(coversDir, baseName);
 
-        // Generate cover from first page
         exec(`pdftoppm -f 1 -l 1 -png "${pdfFullPath}" "${outputPrefix}"`, async (error, stdout, stderr) => {
             if (error) console.error("❌ pdftoppm error:", error, stderr);
 
@@ -127,7 +123,6 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
     }
 });
 
-// Actions (download / tts)
 app.patch("/api/books/:id/actions", async (req, res) => {
     try {
         const { action } = req.body;
@@ -145,14 +140,12 @@ app.patch("/api/books/:id/actions", async (req, res) => {
     }
 });
 
-/* -------------------- FRONTEND (REACT) -------------------- */
+/* -------------------- FRONTEND (REACT SPA) -------------------- */
 const frontendBuildPath = path.join(__dirname, "../../storyteller-frontend/build");
-
-// Serve static React build
 app.use(express.static(frontendBuildPath));
 
-// Catch-all route for React SPA
-app.get("*", (_, res) => {
+// Fix for PathError: use regex instead of "*"
+app.get(/.*/, (_, res) => {
     res.sendFile(path.join(frontendBuildPath, "index.html"));
 });
 
