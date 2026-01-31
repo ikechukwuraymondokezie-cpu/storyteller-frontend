@@ -3,19 +3,14 @@
 # ---------------------------
 FROM node:20-bullseye AS frontend-build
 
-# Set working directory for frontend
 WORKDIR /app/storyteller-frontend
 
-# Copy frontend package.json and package-lock.json
+# Copy frontend package.json and install
 COPY storyteller-frontend/package*.json ./
-
-# Install frontend dependencies
 RUN npm install
 
-# Copy frontend source code
+# Copy frontend source and build
 COPY storyteller-frontend/ ./
-
-# Build frontend
 RUN npm run build
 
 # ---------------------------
@@ -23,27 +18,25 @@ RUN npm run build
 # ---------------------------
 FROM node:20-bullseye
 
-# Install system dependencies (required for pdf-poppler)
+# Install system dependencies
 RUN apt-get update && apt-get install -y poppler-utils
 
-# Set working directory for backend
 WORKDIR /app/backend
 
-# Copy backend package.json and package-lock.json
+# Copy backend package.json and install
 COPY backend/package*.json ./
-
-# Install backend dependencies
 RUN npm install
 
-# Copy backend source code
+# Copy backend source and uploads
 COPY backend/src ./src
 COPY backend/uploads ./uploads
 
-# Copy built frontend from previous stage
-COPY --from=frontend-build /app/storyteller-frontend/build ../../storyteller-frontend/build
+# Copy built frontend into backend public folder (or wherever you serve it)
+COPY --from=frontend-build /app/storyteller-frontend/build ./public
 
-# Expose backend port
+# Expose port
 EXPOSE 10000
 
 # Start server
 CMD ["node", "src/server.js"]
+
