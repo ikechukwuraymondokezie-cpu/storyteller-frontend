@@ -67,7 +67,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 /* -------------------- HELPERS -------------------- */
-const BACKEND_URL = process.env.BACKEND_URL || "https://storyteller-frontend-x65b.onrender.co";
+const BACKEND_URL = process.env.BACKEND_URL || "https://storyteller-frontend-x65b.onrender.com";
 
 const formatBook = (book) => ({
     _id: book._id,
@@ -150,30 +150,24 @@ app.patch("/api/books/:id/actions", async (req, res) => {
     }
 });
 
-/* -------------------- OPTIONAL FRONTEND SERVE -------------------- */
-const frontendBuildPath = path.join(
-    __dirname,
-    "../../storyteller-frontend/build"
-);
+/* -------------------- REACT SPA SERVE -------------------- */
+const frontendBuildPath = path.join(__dirname, "../../../storyteller-frontend/build");
 
 if (fs.existsSync(frontendBuildPath)) {
     app.use(express.static(frontendBuildPath));
 
-    // Serve React SPA for any route NOT starting with /api
+    // Catch-all route for SPA
     app.get(/^(?!\/api).*/, (_, res) => {
-        const indexPath = path.join(frontendBuildPath, "index.html");
-        if (fs.existsSync(indexPath)) {
-            res.sendFile(indexPath);
-        } else {
-            res.status(404).send("React build not found");
-        }
+        res.sendFile(path.join(frontendBuildPath, "index.html"));
     });
 
-    console.log("✅ Serving React frontend from", frontendBuildPath);
+    console.log("✅ Serving React frontend");
 } else {
-    console.log(
-        "ℹ️ Frontend build not found at",
-        frontendBuildPath,
-        "— API only mode"
-    );
+    console.log("ℹ️ Frontend build not found — API only mode");
 }
+
+/* -------------------- START SERVER -------------------- */
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, "0.0.0.0", () => {
+    console.log(`✅ Server running on port ${PORT}`);
+});
