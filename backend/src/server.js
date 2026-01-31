@@ -109,6 +109,7 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
         const coverPath = `/uploads/covers/${baseName}-1.png`;
         const outputPrefix = path.join(coversDir, baseName);
 
+        // Generate cover from first page
         exec(`pdftoppm -f 1 -l 1 -png "${pdfFullPath}" "${outputPrefix}"`, async (error, stdout, stderr) => {
             if (error) console.error("❌ pdftoppm error:", error, stderr);
 
@@ -147,7 +148,10 @@ app.patch("/api/books/:id/actions", async (req, res) => {
 /* -------------------- FRONTEND (REACT) -------------------- */
 const frontendBuildPath = path.join(__dirname, "../../storyteller-frontend/build");
 
+// Serve static React build
 app.use(express.static(frontendBuildPath));
+
+// Catch-all route for React SPA
 app.get("*", (_, res) => {
     res.sendFile(path.join(frontendBuildPath, "index.html"));
 });
