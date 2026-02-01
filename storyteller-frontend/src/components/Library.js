@@ -47,11 +47,13 @@ export default function Library() {
     const [uploading, setUploading] = useState(false);
     const sheetRef = useRef(null);
 
+    // --- STATE FOR SEARCH AND FOLDERS ---
     const [searchQuery, setSearchQuery] = useState("");
-    const [folders, setFolders] = useState(["All"]);
+    const [folders, setFolders] = useState(["All"]); // Start with "All" as default
     const [activeFolder, setActiveFolder] = useState("All");
     const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
 
+    // --- SELECTION MODE STATE ---
     const [isSelectMode, setIsSelectMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState([]);
 
@@ -61,9 +63,11 @@ export default function Library() {
             setIsSelectMode((prev) => !prev);
             setSelectedIds([]);
         };
+
         const handleSearch = (e) => {
             setSearchQuery(e.detail.toLowerCase());
         };
+
         const handleOpenFolderModal = () => {
             setIsFolderModalOpen(true);
         };
@@ -79,18 +83,22 @@ export default function Library() {
         };
     }, []);
 
+    /* ---------------- FETCH BOOKS & FOLDERS ---------------- */
     const fetchData = async () => {
         if (!API_URL) return;
         try {
             setLoading(true);
-            const [booksRes, foldersRes] = await Promise.all([
-                fetch(`${API_URL}/api/books`),
-                fetch(`${API_URL}/api/books/folders`)
-            ]);
-            const booksData = await booksRes.json();
-            const foldersData = await foldersRes.json();
-            setBooks(booksData);
-            setFolders(["All", ...foldersData.map(f => f.name)]);
+            // Fetch Books
+            const bookRes = await fetch(`${API_URL}/api/books`);
+            const bookData = await bookRes.json();
+            setBooks(bookData);
+
+            // Fetch Folders
+            const folderRes = await fetch(`${API_URL}/api/books/folders`);
+            const folderData = await folderRes.json();
+            // Map folder names and prepend "All"
+            const folderNames = ["All", ...folderData.map(f => f.name)];
+            setFolders(folderNames);
         } catch (err) {
             console.error("❌ Failed to fetch library data:", err);
         } finally {
@@ -100,6 +108,7 @@ export default function Library() {
 
     useEffect(() => { fetchData(); }, [API_URL]);
 
+    /* ---------------- FOLDER ACTIONS ---------------- */
     const createNewFolder = async (name) => {
         if (!API_URL || folders.includes(name)) return;
         try {
@@ -113,54 +122,104 @@ export default function Library() {
                 setFolders((prev) => [...prev, data.name]);
                 setActiveFolder(data.name);
             }
-        } catch (err) { console.error("❌ Folder creation failed:", err); }
+        } catch (err) {
+            console.error("❌ Folder creation failed:", err);
+        }
     };
 
+    /* ---------------- FILTERING LOGIC ---------------- */
+    const filteredBooks = books.filter((book) => {
+        const matchesSearch = book.title.toLowerCase().includes(searchQuery);
+        const matchesFolder = activeFolder === "All" || book.folder === activeFolder;
+        return matchesSearch && matchesFolder;
+    });
+
+    /* ---------------- UPLOAD BOOK ---------------- */
     const handleUpload = async (file) => {
         if (!API_URL || !file) return;
         const formData = new FormData();
         formData.append("file", file);
-        if (activeFolder !== "All") formData.append("folder", activeFolder);
+        formData.append("folder", activeFolder); // Pass current folder to upload
 
         try {
             setUploading(true);
-            const res = await fetch(`${API_URL}/api/books/upload`, { method: "POST", body: formData });
+            const res = await fetch(`${API_URL}/api/books`, { // Changed from /upload to match your bookroutes.js
+                method: "POST",
+                body: formData,
+            });
             const data = await res.json();
-            if (data.book) setBooks((prev) => [data.book, ...prev]);
-        } catch (err) { console.error("❌ Upload failed:", err); } finally { setUploading(false); }
+            if (data) setBooks((prev) => [data, ...prev]);
+        } catch (err) {
+            console.error("❌ Upload failed:", err);
+        } finally {
+            setUploading(false);
+        }
     };
 
+    /* ---------------- DELETE ACTIONS ---------------- */
     const handleBulkDelete = async () => {
-        if (!window.confirm(`Delete ${selectedIds.length} books?`)) return;
+        if (!window.confirm(`Delete ${selectedIds.length} books permanently?`)) return;
         try {
             const res = await fetch(`${API_URL}/api/books/bulk-delete`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ ids: selectedIds }),
             });
-            if (res.ok) {
-                setBooks((prev) => prev.filter((b) => !selectedIds.includes(b._id)));
-                setSelectedIds([]);
-                setIsSelectMode(false);
-            }
-        } catch (err) { console.error("❌ Bulk delete failed:", err); }
+            if (!res.ok) throw new Error("Bulk delete failed");
+            setBooks((prev) => prev.filter((b) => !selectedIds.includes(b._id)));
+            setSelectedIds([]);
+            setIsSelectMode(false);
+        } catch (err) {
+            console.error("❌ Bulk delete failed:", err);
+            alert("Delete failed. Please try again.");
+        }
     };
 
     const handleDeleteSingle = async (id) => {
-        if (!window.confirm("Delete this book?")) return;
+        if (!window.confirm("Delete this book permanently?")) return;
         try {
             const res = await fetch(`${API_URL}/api/books/${id}`, { method: "DELETE" });
-            if (res.ok) {
-                setBooks((prev) => prev.filter((b) => b._id !== id));
-                setActiveBook(null);
-            }
-        } catch (err) { console.error("❌ Delete failed:", err); }
+            if (!res.ok) throw new Error("Delete failed");
+            setBooks((prev) => prev.filter((b) => b._id !== id));
+            setActiveBook(null);
+        } catch (err) {
+            console.error("❌ Delete failed:", err);
+        }
     };
 
     const toggleBookSelection = (id) => {
-        setSelectedIds((prev) => prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]);
+        setSelectedIds((prev) =>
+            prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]
+        );
     };
 
+    /* ---------------- MOBILE SWIPE ---------------- */
+    useEffect(() => {
+        if (!sheetRef.current || !activeBook) return;
+        const sheet = sheetRef.current;
+        let startY = 0, currentY = 0;
+        const start = (e) => { startY = e.touches[0].clientY; sheet.style.transition = "none"; };
+        const move = (e) => {
+            currentY = e.touches[0].clientY;
+            const diff = currentY - startY;
+            if (diff > 0) sheet.style.transform = `translateY(${diff}px)`;
+        };
+        const end = () => {
+            sheet.style.transition = "transform 0.25s ease";
+            if (currentY - startY > 90) setActiveBook(null);
+            else sheet.style.transform = "translateY(0)";
+        };
+        sheet.addEventListener("touchstart", start);
+        sheet.addEventListener("touchmove", move);
+        sheet.addEventListener("touchend", end);
+        return () => {
+            sheet.removeEventListener("touchstart", start);
+            sheet.removeEventListener("touchmove", move);
+            sheet.removeEventListener("touchend", end);
+        };
+    }, [activeBook]);
+
+    /* ---------------- SINGLE ACTIONS ---------------- */
     const handleAction = async (bookId, action) => {
         if (!API_URL) return;
         try {
@@ -180,26 +239,33 @@ export default function Library() {
         } catch (err) { console.error("❌ Action failed:", err); }
     };
 
-    const filteredBooks = books.filter((book) => {
-        const matchesSearch = book.title.toLowerCase().includes(searchQuery);
-        const matchesFolder = activeFolder === "All" || book.folder === activeFolder;
-        return matchesSearch && matchesFolder;
-    });
-
     return (
         <div className={`min-h-screen bg-bg px-6 py-8 md:ml-32 ${isSelectMode ? "pb-32" : ""}`}>
+
             {/* HEADER */}
+
             <div className="flex justify-between items-center mb-2">
+
                 <h1 className="text-3xl md:text-5xl font-extrabold text-yellow-400 uppercase tracking-tighter">Your Collection</h1>
+
                 {!isSelectMode && (
+
                     <label className="flex items-center gap-2 cursor-pointer bg-yellow-600 hover:bg-yellow-500 text-white py-2 px-4 rounded-xl transition-colors">
+
                         <Plus className="w-5 h-5" />
+
                         <span className="hidden sm:inline">{uploading ? "Uploading…" : "Upload"}</span>
+
                         <input type="file" accept=".pdf" className="hidden" disabled={uploading}
+
                             onChange={(e) => { if (e.target.files?.[0]) { handleUpload(e.target.files[0]); e.target.value = null; } }}
+
                         />
+
                     </label>
+
                 )}
+
             </div>
 
             {/* FOLDER TABS */}
@@ -218,11 +284,13 @@ export default function Library() {
                 ))}
             </div>
 
-            {/* CONTENT GRID */}
+            {/* CONTENT */}
             {loading ? (
                 <div className="text-center text-zinc-400 mt-20 italic">Loading library...</div>
             ) : filteredBooks.length === 0 ? (
-                <div className="text-center text-zinc-400 mt-20">No books found.</div>
+                <div className="text-center text-zinc-400 mt-20">
+                    {searchQuery ? `No results for "${searchQuery}"` : "No books found in this folder."}
+                </div>
             ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
                     {filteredBooks.map((book) => (
@@ -237,11 +305,16 @@ export default function Library() {
                                 </div>
                             )}
                             <div className="aspect-[2/3] w-full overflow-hidden rounded-md bg-zinc-800">
-                                <img src={book.cover ? `${API_URL}${book.cover}` : defaultCover} alt={book.title} className="w-full h-full object-cover" />
+                                <img src={book.cover ? `${API_URL}${book.cover}` : defaultCover} alt={book.title}
+                                    className="w-full h-full object-cover"
+                                    onError={(e) => { e.target.src = defaultCover; }}
+                                />
                             </div>
                             <p className="mt-2 text-white text-sm font-medium truncate px-1">{book.title}</p>
                             {!isSelectMode && (
-                                <button onClick={(e) => { e.stopPropagation(); setActiveBook(book); }} className="absolute top-2 right-2 p-1 rounded-full bg-black/40 hover:bg-zinc-700 transition">
+                                <button onClick={(e) => { e.stopPropagation(); setActiveBook(book); }}
+                                    className="absolute top-2 right-2 p-1 rounded-full bg-black/40 hover:bg-zinc-700 transition"
+                                >
                                     <MoreHorizontal className="w-5 h-5 text-white" />
                                 </button>
                             )}
@@ -252,40 +325,62 @@ export default function Library() {
 
             {/* FLOATING SELECTION BAR */}
             {isSelectMode && (
-                <div className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[92%] max-w-md bg-zinc-900 border border-white/10 shadow-2xl rounded-2xl p-4 flex items-center justify-between z-[60]">
+                <div className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[92%] max-w-md bg-zinc-900 border border-white/10 shadow-2xl rounded-2xl p-4 flex items-center justify-between z-[60] animate-in slide-in-from-bottom-10">
                     <div className="flex items-center gap-3">
-                        <button onClick={() => { setIsSelectMode(false); setSelectedIds([]); }} className="p-2 hover:bg-white/10 rounded-full text-zinc-400"><X size={20} /></button>
+                        <button onClick={() => { setIsSelectMode(false); setSelectedIds([]); }} className="p-2 hover:bg-white/10 rounded-full text-zinc-400">
+                            <X size={20} />
+                        </button>
                         <span className="text-white font-semibold">{selectedIds.length} selected</span>
                     </div>
-                    <button onClick={handleBulkDelete} disabled={selectedIds.length === 0} className={`flex items-center gap-2 px-6 py-2 rounded-xl font-bold transition-all ${selectedIds.length > 0 ? "bg-red-500 text-white" : "bg-zinc-800 text-zinc-500"}`}><Trash2 size={18} /> Delete</button>
+                    <button onClick={handleBulkDelete} disabled={selectedIds.length === 0}
+                        className={`flex items-center gap-2 px-6 py-2 rounded-xl font-bold transition-all ${selectedIds.length > 0 ? "bg-red-500 text-white" : "bg-zinc-800 text-zinc-500"}`}
+                    >
+                        <Trash2 size={18} /> Delete
+                    </button>
                 </div>
             )}
 
             {/* ACTION SHEET */}
             {activeBook && !isSelectMode && (
                 <div className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center justify-center" onClick={() => setActiveBook(null)}>
-                    <div ref={sheetRef} onClick={(e) => e.stopPropagation()} className="w-full max-w-lg bg-zinc-900 rounded-t-3xl md:rounded-2xl pt-2 px-6 pb-8 md:pb-6 shadow-2xl">
+                    <div ref={sheetRef} onClick={(e) => e.stopPropagation()}
+                        className="w-full max-w-lg bg-zinc-900 rounded-t-3xl md:rounded-2xl pt-2 px-6 pb-8 md:pb-6 shadow-2xl"
+                    >
                         <div className="w-12 h-1 bg-zinc-700 rounded-full mx-auto my-3 md:hidden" />
                         <div className="flex gap-4 mb-6 mt-2">
                             <img src={activeBook.cover ? `${API_URL}${activeBook.cover}` : defaultCover} className="w-16 h-24 rounded-md object-cover" alt="cover" />
                             <div className="flex flex-col justify-center">
                                 <p className="text-white font-bold text-lg leading-tight">{activeBook.title}</p>
-                                <p className="text-zinc-500 text-sm mt-1 flex items-center gap-1"><Folder size={14} /> {activeBook.folder || "Uncategorized"}</p>
+                                <p className="text-zinc-500 text-sm mt-1 flex items-center gap-1">
+                                    <Folder size={14} /> {activeBook.folder || "Uncategorized"}
+                                </p>
                             </div>
                         </div>
                         <div className="space-y-3">
-                            <button onClick={() => handleAction(activeBook._id, "download")} className="w-full flex items-center justify-center gap-3 bg-yellow-600 text-white py-3 rounded-xl font-semibold hover:bg-yellow-500 transition-colors"><Download className="w-5 h-5" /> Download Audio</button>
-                            <button onClick={() => handleAction(activeBook._id, "tts")} className="w-full flex items-center justify-center gap-3 bg-white text-black py-3 rounded-xl font-semibold hover:bg-zinc-200 transition-colors"><img src={f3logo} className="w-8 h-8" alt="f3" /> Read with Funfiction</button>
+                            <button onClick={() => handleAction(activeBook._id, "download")} className="w-full flex items-center justify-center gap-3 bg-yellow-600 text-white py-3 rounded-xl font-semibold hover:bg-yellow-500 transition-colors">
+                                <Download className="w-5 h-5" /> Download Audio
+                            </button>
+                            <button onClick={() => handleAction(activeBook._id, "tts")} className="w-full flex items-center justify-center gap-3 bg-white text-black py-3 rounded-xl font-semibold hover:bg-zinc-200 transition-colors">
+                                <img src={f3logo} className="w-8 h-8" alt="f3" /> Read with Funfiction&falacies
+                            </button>
                             <div className="grid grid-cols-2 gap-3">
-                                <button className="flex items-center justify-center gap-2 bg-zinc-800 text-white py-3 rounded-xl font-semibold hover:bg-zinc-700 transition-colors"><FolderPlus className="w-5 h-5" /> Move</button>
-                                <button onClick={() => handleDeleteSingle(activeBook._id)} className="flex items-center justify-center gap-2 bg-zinc-800 text-red-400 py-3 rounded-xl font-semibold hover:bg-red-950/30 transition-colors"><Trash2 className="w-5 h-5" /> Delete</button>
+                                <button onClick={() => alert("Move logic coming soon")} className="flex items-center justify-center gap-2 bg-zinc-800 text-white py-3 rounded-xl font-semibold hover:bg-zinc-700 transition-colors">
+                                    <FolderPlus className="w-5 h-5" /> Move
+                                </button>
+                                <button onClick={() => handleDeleteSingle(activeBook._id)} className="flex items-center justify-center gap-2 bg-zinc-800 text-red-400 py-3 rounded-xl font-semibold hover:bg-red-950/30 transition-colors">
+                                    <Trash2 className="w-5 h-5" /> Delete
+                                </button>
                             </div>
                         </div>
                     </div>
                 </div>
             )}
 
-            <FolderModal isOpen={isFolderModalOpen} onClose={() => setIsFolderModalOpen(false)} onCreate={createNewFolder} />
+            <FolderModal
+                isOpen={isFolderModalOpen}
+                onClose={() => setIsFolderModalOpen(false)}
+                onCreate={createNewFolder}
+            />
         </div>
     );
 }
