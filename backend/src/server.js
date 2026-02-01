@@ -14,6 +14,7 @@ app.use(cors({ origin: "*" }));
 app.use(express.json());
 
 /* -------------------- UPLOADS -------------------- */
+// Using absolute paths to ensure reliability across environments
 const uploadDir = path.join(__dirname, "../uploads/pdf");
 const coversDir = path.join(__dirname, "../uploads/covers");
 const audioDir = path.join(__dirname, "../uploads/audio");
@@ -22,7 +23,7 @@ fs.ensureDirSync(uploadDir);
 fs.ensureDirSync(coversDir);
 fs.ensureDirSync(audioDir);
 
-// Serve uploaded files
+// Serve uploaded files statically
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 /* -------------------- MONGODB -------------------- */
@@ -67,15 +68,15 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 /* -------------------- HELPERS -------------------- */
-// IMPORTANT: this must be your BACKEND url, not frontend
-const BACKEND_URL =
-    process.env.BACKEND_URL || "http://localhost:10000";
+// This should be your backend URL (e.g., https://your-app-backend.onrender.com)
+const BACKEND_URL = process.env.BACKEND_URL || "";
 
 const formatBook = (book) => ({
     _id: book._id,
     title: book.title,
-    cover: book.cover ? `${BACKEND_URL}${book.cover}` : null,
-    url: book.pdfPath ? `${BACKEND_URL}${book.pdfPath}` : null,
+    // We keep these as relative paths so the frontend can prepend the API_URL
+    cover: book.cover || null,
+    url: book.pdfPath || null,
     folder: book.folder,
     downloads: book.downloads,
     ttsRequests: book.ttsRequests,
@@ -104,37 +105,53 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
 
         const title = req.file.originalname.replace(/\.[^/.]+$/, "");
         const pdfPath = `/uploads/pdf/${req.file.filename}`;
-        const pdfFullPath = path.join(uploadDir, req.file.filename);
+        const pdfFullPath = req.file.path;
 
         const baseName = path.parse(req.file.filename).name;
-        const coverPath = `/uploads/covers/${baseName}-1.png`;
         const outputPrefix = path.join(coversDir, baseName);
 
-        exec(
-            `pdftoppm -f 1 -l 1 -png "${pdfFullPath}" "${outputPrefix}"`,
-            async (error) => {
-                if (error) {
-                    console.error("❌ pdftoppm error:", error);
-                }
+        // 1. Wrap the exec in a Promise to ensure we wait for completion
+        const generateThumbnail = () => {
+            return new Promise((resolve) => {
+                // -singlefile ensures output is exactly "baseName.png"
+                exec(
+                    `pdftoppm -f 1 -l 1 -png -singlefile "${pdfFullPath}" "${outputPrefix}"`,
+                    (error) => {
+                        if (error) {
+                            console.error("❌ pdftoppm error:", error);
+                            return resolve(null);
+                        }
 
-                const book = await Book.create({
-                    title,
-                    pdfPath,
-                    cover: fs.existsSync(
-                        path.join(coversDir, `${baseName}-1.png`)
-                    )
-                        ? coverPath
-                        : null,
-                });
+                        const expectedFileName = `${baseName}.png`;
+                        const finalDiskPath = path.join(coversDir, expectedFileName);
 
-                res.status(201).json({
-                    message: "Upload successful",
-                    book: formatBook(book),
-                });
-            }
-        );
+                        if (fs.existsSync(finalDiskPath)) {
+                            resolve(`/uploads/covers/${expectedFileName}`);
+                        } else {
+                            console.warn("⚠️ Thumbnail file not found after generation");
+                            resolve(null);
+                        }
+                    }
+                );
+            });
+        };
+
+        // 2. Await the thumbnail generation
+        const savedCoverPath = await generateThumbnail();
+
+        // 3. Save to Database with the confirmed path
+        const book = await Book.create({
+            title,
+            pdfPath,
+            cover: savedCoverPath,
+        });
+
+        res.status(201).json({
+            message: "Upload successful",
+            book: formatBook(book),
+        });
     } catch (err) {
-        console.error(err);
+        console.error("Upload Error:", err);
         res.status(500).json({ error: "Upload failed" });
     }
 });
@@ -157,31 +174,16 @@ app.patch("/api/books/:id/actions", async (req, res) => {
 });
 
 /* -------------------- REACT SPA SERVE -------------------- */
-/**
- * FINAL PATH ASSUMPTION:
- * repo-root/
- * ├── storyteller-backend/
- * │   └── src/server.js  (THIS FILE)
- * ├── storyteller-frontend/
- * │   └── build/
- */
-const frontendBuildPath = path.join(
-    __dirname,
-    "../../storyteller-frontend/build"
-);
+const frontendBuildPath = path.join(__dirname, "../../storyteller-frontend/build");
 
 if (fs.existsSync(frontendBuildPath)) {
     app.use(express.static(frontendBuildPath));
-
-    // Catch-all (exclude /api)
     app.get("*", (req, res) => {
-        if (req.path.startsWith("/api")) return res.sendStatus(404);
+        // Don't intercept API or Uploads requests
+        if (req.path.startsWith("/api") || req.path.startsWith("/uploads")) return;
         res.sendFile(path.join(frontendBuildPath, "index.html"));
     });
-
     console.log("✅ Serving React frontend");
-} else {
-    console.log("ℹ️ Frontend build not found — API only mode");
 }
 
 /* -------------------- START SERVER -------------------- */

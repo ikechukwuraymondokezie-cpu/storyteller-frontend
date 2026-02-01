@@ -49,30 +49,6 @@ router.get("/", async (_, res) => {
     }
 });
 
-/* ---------------- GET BOOKS BY FOLDER ---------------- */
-router.get("/folder/:folder", async (req, res) => {
-    try {
-        const books = await Book.find({ folder: req.params.folder }).sort({
-            createdAt: -1,
-        });
-
-        res.json(
-            books.map((b) => ({
-                _id: b._id,
-                title: b.title,
-                cover: b.cover || null,
-                url: b.pdfPath,
-                folder: b.folder,
-                downloads: b.downloads,
-                ttsRequests: b.ttsRequests,
-            }))
-        );
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: "Failed to fetch folder books" });
-    }
-});
-
 /* ---------------- UPLOAD BOOK + GENERATE COVER ---------------- */
 router.post("/", upload.single("file"), async (req, res) => {
     try {
@@ -84,55 +60,62 @@ router.post("/", upload.single("file"), async (req, res) => {
         const pdfDiskPath = path.join(pdfDir, req.file.filename);
         const pdfPublicPath = `/uploads/pdf/${req.file.filename}`;
 
+        // pdftoppm adds "-1.png" to the end of the prefix we provide
         const coverFileName = `${baseName}-1.png`;
         const coverDiskPath = path.join(coversDir, coverFileName);
         const coverPublicPath = `/uploads/covers/${coverFileName}`;
 
-        // 🔥 Spawn pdftoppm safely
-        const proc = spawn("pdftoppm", [
-            "-f",
-            "1",
-            "-l",
-            "1",
-            "-png",
-            pdfDiskPath,
-            path.join(coversDir, baseName),
-        ]);
+        // Helper function to handle the process spawning as a Promise
+        const generateCover = () => {
+            return new Promise((resolve) => {
+                const proc = spawn("pdftoppm", [
+                    "-f", "1",
+                    "-l", "1",
+                    "-png",
+                    "-singlefile", // Forces output to be exactly the name we provide
+                    pdfDiskPath,
+                    path.join(coversDir, baseName)
+                ]);
 
-        proc.on("error", (err) => {
-            console.error("❌ pdftoppm spawn error:", err);
+                proc.on("close", (code) => {
+                    // pdftoppm with -singlefile will save as baseName.png
+                    // Without -singlefile, it saves as baseName-1.png
+                    // We check if either the exact filename or the -1 version exists
+                    const finalPath = path.join(coversDir, `${baseName}.png`);
+                    const altPath = path.join(coversDir, `${baseName}-1.png`);
+
+                    if (code === 0 && (fs.existsSync(finalPath) || fs.existsSync(altPath))) {
+                        // Return the public path of whichever one was created
+                        resolve(fs.existsSync(finalPath) ? `/uploads/covers/${baseName}.png` : coverPublicPath);
+                    } else {
+                        console.warn("⚠️ pdftoppm failed or file not found");
+                        resolve(null);
+                    }
+                });
+
+                proc.on("error", (err) => {
+                    console.error("❌ pdftoppm spawn error:", err);
+                    resolve(null);
+                });
+            });
+        };
+
+        // Wait for the cover to be generated BEFORE creating the DB record
+        const coverPath = await generateCover();
+
+        const book = await Book.create({
+            title: req.file.originalname.replace(/\.[^/.]+$/, ""),
+            pdfPath: pdfPublicPath,
+            cover: coverPath, // This will now contain the path or null
+            folder: "default",
+            downloads: 0,
+            ttsRequests: 0,
         });
 
-        proc.on("close", async (code) => {
-            let cover = null;
+        res.status(201).json(book);
 
-            if (code === 0 && fs.existsSync(coverDiskPath)) {
-                cover = coverPublicPath;
-            } else {
-                console.warn("⚠️ Cover generation failed — using fallback");
-            }
-
-            const book = await Book.create({
-                title: req.file.originalname.replace(/\.[^/.]+$/, ""),
-                pdfPath: pdfPublicPath,
-                cover,
-                folder: "default",
-                downloads: 0,
-                ttsRequests: 0,
-            });
-
-            res.status(201).json({
-                _id: book._id,
-                title: book.title,
-                cover: book.cover || null,
-                url: book.pdfPath,
-                folder: book.folder,
-                downloads: book.downloads,
-                ttsRequests: book.ttsRequests,
-            });
-        });
     } catch (err) {
-        console.error(err);
+        console.error("Upload Error:", err);
         res.status(500).json({ error: "Upload failed" });
     }
 });
@@ -148,16 +131,7 @@ router.patch("/:id/actions", async (req, res) => {
         if (action === "tts") book.ttsRequests += 1;
 
         await book.save();
-
-        res.json({
-            _id: book._id,
-            title: book.title,
-            cover: book.cover || null,
-            url: book.pdfPath,
-            folder: book.folder,
-            downloads: book.downloads,
-            ttsRequests: book.ttsRequests,
-        });
+        res.json(book);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: "Action failed" });

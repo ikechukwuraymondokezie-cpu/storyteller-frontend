@@ -31,17 +31,8 @@ export default function Library() {
 
             const data = await res.json();
 
-            const mapped = data.map((b) => ({
-                _id: b._id,
-                title: b.title || "Untitled",
-                cover: b.cover || null, // relative path
-                url: b.url,
-                folder: b.folder || "default",
-                downloads: b.downloads || 0,
-                ttsRequests: b.ttsRequests || 0,
-            }));
-
-            setBooks(mapped);
+            // The backend formatBook helper already returns clean objects
+            setBooks(data);
         } catch (err) {
             console.error("❌ Failed to fetch books:", err);
             setBooks([]);
@@ -73,11 +64,16 @@ export default function Library() {
                 throw new Error(`HTTP ${res.status}: ${text}`);
             }
 
-            // 🔥 backend returns the book directly
             const data = await res.json();
-            setBooks((prev) => [data, ...prev]);
+
+            // Your backend returns { message, book: {...} }
+            // We append the 'book' property to our state
+            if (data.book) {
+                setBooks((prev) => [data.book, ...prev]);
+            }
         } catch (err) {
             console.error("❌ Upload failed:", err);
+            alert("Upload failed. Check console for details.");
         } finally {
             setUploading(false);
         }
@@ -143,6 +139,7 @@ export default function Library() {
 
             if (action === "download" && updatedBook.url) {
                 const link = document.createElement("a");
+                // Ensure the download link uses the full API URL
                 link.href = `${API_URL}${updatedBook.url}`;
                 link.download = `${updatedBook.title}.pdf`;
                 link.click();
@@ -160,14 +157,20 @@ export default function Library() {
                     Your Collection
                 </h1>
 
-                <label className="flex items-center gap-2 cursor-pointer bg-yellow-600 hover:bg-yellow-500 text-white py-2 px-4 rounded-xl">
+                <label className="flex items-center gap-2 cursor-pointer bg-yellow-600 hover:bg-yellow-500 text-white py-2 px-4 rounded-xl transition-colors">
                     <Plus className="w-5 h-5" />
                     {uploading ? "Uploading…" : "Upload"}
                     <input
                         type="file"
                         accept=".pdf"
                         className="hidden"
-                        onChange={(e) => handleUpload(e.target.files[0])}
+                        disabled={uploading}
+                        onChange={(e) => {
+                            if (e.target.files?.[0]) {
+                                handleUpload(e.target.files[0]);
+                                e.target.value = null; // Reset input
+                            }
+                        }}
                     />
                 </label>
             </div>
@@ -187,25 +190,22 @@ export default function Library() {
                     {books.map((book) => (
                         <div
                             key={book._id}
-                            className="relative bg-zinc-900 rounded-lg p-2 hover:bg-zinc-800 transition"
+                            className="relative bg-zinc-900 rounded-lg p-2 hover:bg-zinc-800 transition group"
                         >
                             <img
-                                src={
-                                    book.cover
-                                        ? `${API_URL}${book.cover}`
-                                        : defaultCover
-                                }
+                                src={book.cover ? `${API_URL}${book.cover}` : defaultCover}
                                 alt={book.title}
                                 className="w-full h-36 object-cover rounded-md"
+                                onError={(e) => { e.target.src = defaultCover; }}
                             />
 
-                            <p className="mt-2 text-white text-sm truncate">
+                            <p className="mt-2 text-white text-sm truncate px-1">
                                 {book.title}
                             </p>
 
                             <button
                                 onClick={() => setActiveBook(book)}
-                                className="absolute top-2 right-2 p-1 rounded-full hover:bg-zinc-700"
+                                className="absolute top-2 right-2 p-1 rounded-full bg-black/40 hover:bg-zinc-700 transition"
                             >
                                 <MoreHorizontal className="w-5 h-5 text-white" />
                             </button>
@@ -217,29 +217,29 @@ export default function Library() {
             {/* ACTION SHEET */}
             {activeBook && (
                 <div
-                    className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center"
+                    className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center justify-center"
                     onClick={() => setActiveBook(null)}
                 >
                     <div
                         ref={sheetRef}
                         onClick={(e) => e.stopPropagation()}
-                        className="w-full max-w-3xl mx-auto bg-zinc-900 rounded-t-2xl md:rounded-2xl pt-2 px-6 pb-6 animate-slideUp"
+                        className="w-full max-w-lg bg-zinc-900 rounded-t-2xl md:rounded-2xl pt-2 px-6 pb-6 animate-slideUp"
                     >
-                        <div className="flex gap-3 mb-4">
+                        {/* Drag Handle for Mobile */}
+                        <div className="w-12 h-1 bg-zinc-700 rounded-full mx-auto my-3 md:hidden" />
+
+                        <div className="flex gap-4 mb-6 mt-2">
                             <img
-                                src={
-                                    activeBook.cover
-                                        ? `${API_URL}${activeBook.cover}`
-                                        : defaultCover
-                                }
-                                className="w-12 h-16 rounded-md object-cover"
+                                src={activeBook.cover ? `${API_URL}${activeBook.cover}` : defaultCover}
+                                className="w-16 h-20 rounded-md object-cover shadow-lg"
+                                onError={(e) => { e.target.src = defaultCover; }}
                             />
 
-                            <div>
-                                <p className="text-white font-semibold">
+                            <div className="flex flex-col justify-center">
+                                <p className="text-white font-bold text-lg leading-tight">
                                     {activeBook.title}
                                 </p>
-                                <p className="text-zinc-500 text-xs">
+                                <p className="text-zinc-500 text-sm mt-1">
                                     Folder: {activeBook.folder}
                                 </p>
                             </div>
@@ -247,30 +247,26 @@ export default function Library() {
 
                         <div className="space-y-3">
                             <button
-                                onClick={() =>
-                                    handleAction(activeBook._id, "download")
-                                }
-                                className="w-full flex gap-3 bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-4 rounded-xl"
+                                onClick={() => handleAction(activeBook._id, "download")}
+                                className="w-full flex items-center justify-center gap-3 bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-4 rounded-xl font-semibold transition-colors"
                             >
-                                <Download className="w-6 h-6" />
+                                <Download className="w-5 h-5" />
                                 <span>Download PDF</span>
                             </button>
 
                             <button
-                                onClick={() =>
-                                    handleAction(activeBook._id, "tts")
-                                }
-                                className="w-full flex gap-3 bg-black hover:bg-black/90 text-white py-3 px-4 rounded-xl"
+                                onClick={() => handleAction(activeBook._id, "tts")}
+                                className="w-full flex items-center justify-center gap-3 bg-white text-black hover:bg-zinc-200 py-3 px-4 rounded-xl font-semibold transition-colors"
                             >
-                                <img src={f3logo} className="w-6 h-6" />
+                                <img src={f3logo} className="w-5 h-5" alt="f3" />
                                 <span>Read with Funfiction & Fallacies</span>
                             </button>
 
                             <button
                                 onClick={() => alert("Folders coming soon 👀")}
-                                className="w-full flex gap-3 bg-black hover:bg-zinc-800 text-white py-3 px-4 rounded-xl"
+                                className="w-full flex items-center justify-center gap-3 bg-zinc-800 hover:bg-zinc-700 text-white py-3 px-4 rounded-xl font-semibold transition-colors"
                             >
-                                <FolderPlus className="w-6 h-6" />
+                                <FolderPlus className="w-5 h-5" />
                                 <span>Move to Folder</span>
                             </button>
                         </div>
