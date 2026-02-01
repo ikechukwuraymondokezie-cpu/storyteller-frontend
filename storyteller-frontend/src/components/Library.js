@@ -49,7 +49,7 @@ export default function Library() {
 
     // --- STATE FOR SEARCH AND FOLDERS ---
     const [searchQuery, setSearchQuery] = useState("");
-    const [folders, setFolders] = useState(["All", "Favorites", "Unread"]);
+    const [folders, setFolders] = useState(["All"]); // Start with "All" as default
     const [activeFolder, setActiveFolder] = useState("All");
     const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
 
@@ -83,28 +83,47 @@ export default function Library() {
         };
     }, []);
 
-    /* ---------------- FETCH BOOKS ---------------- */
-    const fetchBooks = async () => {
+    /* ---------------- FETCH BOOKS & FOLDERS ---------------- */
+    const fetchData = async () => {
         if (!API_URL) return;
         try {
             setLoading(true);
-            const res = await fetch(`${API_URL}/api/books`);
-            const data = await res.json();
-            setBooks(data);
+            // Fetch Books
+            const bookRes = await fetch(`${API_URL}/api/books`);
+            const bookData = await bookRes.json();
+            setBooks(bookData);
+
+            // Fetch Folders
+            const folderRes = await fetch(`${API_URL}/api/books/folders`);
+            const folderData = await folderRes.json();
+            // Map folder names and prepend "All"
+            const folderNames = ["All", ...folderData.map(f => f.name)];
+            setFolders(folderNames);
         } catch (err) {
-            console.error("❌ Failed to fetch books:", err);
+            console.error("❌ Failed to fetch library data:", err);
         } finally {
             setLoading(false);
         }
     };
 
-    useEffect(() => { fetchBooks(); }, [API_URL]);
+    useEffect(() => { fetchData(); }, [API_URL]);
 
     /* ---------------- FOLDER ACTIONS ---------------- */
-    const createNewFolder = (name) => {
-        if (!folders.includes(name)) {
-            setFolders((prev) => [...prev, name]);
-            setActiveFolder(name);
+    const createNewFolder = async (name) => {
+        if (!API_URL || folders.includes(name)) return;
+        try {
+            const res = await fetch(`${API_URL}/api/books/folders`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ name }),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setFolders((prev) => [...prev, data.name]);
+                setActiveFolder(data.name);
+            }
+        } catch (err) {
+            console.error("❌ Folder creation failed:", err);
         }
     };
 
@@ -120,15 +139,16 @@ export default function Library() {
         if (!API_URL || !file) return;
         const formData = new FormData();
         formData.append("file", file);
+        formData.append("folder", activeFolder); // Pass current folder to upload
 
         try {
             setUploading(true);
-            const res = await fetch(`${API_URL}/api/books/upload`, {
+            const res = await fetch(`${API_URL}/api/books`, { // Changed from /upload to match your bookroutes.js
                 method: "POST",
                 body: formData,
             });
             const data = await res.json();
-            if (data.book) setBooks((prev) => [data.book, ...prev]);
+            if (data) setBooks((prev) => [data, ...prev]);
         } catch (err) {
             console.error("❌ Upload failed:", err);
         } finally {
@@ -242,8 +262,8 @@ export default function Library() {
                         key={folder}
                         onClick={() => setActiveFolder(folder)}
                         className={`px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest transition-all whitespace-nowrap border ${activeFolder === folder
-                                ? "bg-yellow-400 border-yellow-400 text-black"
-                                : "bg-transparent border-white/10 text-zinc-500 hover:text-white"
+                            ? "bg-yellow-400 border-yellow-400 text-black"
+                            : "bg-transparent border-white/10 text-zinc-500 hover:text-white"
                             }`}
                     >
                         {folder}
