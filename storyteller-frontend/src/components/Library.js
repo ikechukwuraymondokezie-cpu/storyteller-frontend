@@ -49,7 +49,8 @@ export default function Library() {
 
     // --- STATE FOR SEARCH AND FOLDERS ---
     const [searchQuery, setSearchQuery] = useState("");
-    const [folders, setFolders] = useState(["All"]); // Start with "All" as default
+    // Changed initial state to just "All" - others will load from DB
+    const [folders, setFolders] = useState(["All"]);
     const [activeFolder, setActiveFolder] = useState("All");
     const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
 
@@ -93,12 +94,13 @@ export default function Library() {
             const bookData = await bookRes.json();
             setBooks(bookData);
 
-            // Fetch Folders
+            // Fetch Folders from Backend
             const folderRes = await fetch(`${API_URL}/api/books/folders`);
             const folderData = await folderRes.json();
-            // Map folder names and prepend "All"
-            const folderNames = ["All", ...folderData.map(f => f.name)];
-            setFolders(folderNames);
+            const dbFolderNames = folderData.map(f => f.name);
+
+            // Merge with "All" and ensure no duplicates
+            setFolders(["All", ...dbFolderNames]);
         } catch (err) {
             console.error("❌ Failed to fetch library data:", err);
         } finally {
@@ -139,16 +141,17 @@ export default function Library() {
         if (!API_URL || !file) return;
         const formData = new FormData();
         formData.append("file", file);
-        formData.append("folder", activeFolder); // Pass current folder to upload
+        // Automatically put new uploads into the current active folder
+        formData.append("folder", activeFolder === "All" ? "All" : activeFolder);
 
         try {
             setUploading(true);
-            const res = await fetch(`${API_URL}/api/books`, { // Changed from /upload to match your bookroutes.js
+            const res = await fetch(`${API_URL}/api/books/upload`, {
                 method: "POST",
                 body: formData,
             });
             const data = await res.json();
-            if (data) setBooks((prev) => [data, ...prev]);
+            if (data.book) setBooks((prev) => [data.book, ...prev]);
         } catch (err) {
             console.error("❌ Upload failed:", err);
         } finally {
@@ -255,7 +258,7 @@ export default function Library() {
                 )}
             </div>
 
-            {/* FOLDER TABS */}
+            {/* FOLDER TABS - Visual Layout maintained */}
             <div className="flex items-center gap-2 overflow-x-auto pb-6 no-scrollbar">
                 {folders.map((folder) => (
                     <button
