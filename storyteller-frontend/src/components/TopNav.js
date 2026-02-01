@@ -9,7 +9,7 @@ import {
     CheckSquare,
     ArrowDownAZ,
     Clock,
-    Trash2, // Added Trash icon
+    Trash2,
     User
 } from "lucide-react";
 
@@ -38,6 +38,12 @@ export default function TopNav() {
             ? "text-yellow-400 font-semibold"
             : "text-white hover:text-yellow-400"
         }`;
+
+    // Helper to communicate with Library.js
+    const triggerSelectionMode = () => {
+        window.dispatchEvent(new CustomEvent("toggle-selection-mode"));
+        setShowOptions(false);
+    };
 
     return (
         <>
@@ -126,7 +132,7 @@ export default function TopNav() {
                                             setShowSearch(false);
                                         }}
                                     />
-                                    {showOptions && <OptionsMenu />}
+                                    {showOptions && <OptionsMenu onSelectMode={triggerSelectionMode} />}
                                 </div>
                             </div>
                         )}
@@ -151,7 +157,7 @@ export default function TopNav() {
                                         setShowSearch(false);
                                     }}
                                 />
-                                {showOptions && <OptionsMenu />}
+                                {showOptions && <OptionsMenu onSelectMode={triggerSelectionMode} />}
                             </div>
                         </div>
                     )}
@@ -189,7 +195,7 @@ export default function TopNav() {
 
 /* ================= OPTIONS MENU ================= */
 
-function OptionsMenu() {
+function OptionsMenu({ onSelectMode }) {
     return (
         <div
             className="
@@ -203,7 +209,13 @@ function OptionsMenu() {
             "
         >
             <MenuItem icon={<FolderPlus size={16} />} text="Create folder" />
-            <MenuItem icon={<CheckSquare size={16} />} text="Select files" />
+
+            {/* Both Select and Delete will now trigger the Selection Mode in Library.js */}
+            <MenuItem
+                icon={<CheckSquare size={16} />}
+                text="Select files"
+                onClick={onSelectMode}
+            />
 
             <div className="border-t border-white/10" />
 
@@ -212,12 +224,11 @@ function OptionsMenu() {
 
             <div className="border-t border-white/10" />
 
-            {/* DELETE OPTION */}
             <MenuItem
                 icon={<Trash2 size={16} />}
                 text="Delete books"
                 danger={true}
-                onClick={() => alert("Select books to delete")}
+                onClick={onSelectMode}
             />
         </div>
     );
