@@ -76,7 +76,6 @@ const formatBook = (book) => ({
     ttsRequests: book.ttsRequests,
 });
 
-// Helper to delete physical files
 const deleteBookFiles = async (book) => {
     try {
         if (book.pdfPath) {
@@ -88,20 +87,44 @@ const deleteBookFiles = async (book) => {
             if (await fs.pathExists(fullCoverPath)) await fs.remove(fullCoverPath);
         }
     } catch (err) {
-        console.error("⚠️ Error deleting files for book:", book._id, err);
+        console.error("⚠️ Error deleting files:", err);
     }
 };
 
 /* -------------------- API ROUTES -------------------- */
+
+// GET ALL BOOKS
 app.get("/api/books", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
         res.json(books.map(formatBook));
-    } catch (err) {
+    } catch {
         res.status(500).json({ error: "Failed to fetch books" });
     }
 });
 
+// GET ALL FOLDERS (derived)
+app.get("/api/books/folders", async (_, res) => {
+    try {
+        const folders = await Book.distinct("folder");
+        res.json(folders);
+    } catch {
+        res.status(500).json({ error: "Failed to fetch folders" });
+    }
+});
+
+// CREATE NEW FOLDER (logical only)
+app.post("/api/books/folders", async (req, res) => {
+    try {
+        const { name } = req.body;
+        if (!name) return res.status(400).json({ error: "Folder name required" });
+        res.status(201).json({ name });
+    } catch {
+        res.status(500).json({ error: "Folder creation failed" });
+    }
+});
+
+// UPLOAD BOOK
 app.post("/api/books/upload", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -112,66 +135,58 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
         const baseName = path.parse(req.file.filename).name;
         const outputPrefix = path.join(coversDir, baseName);
 
-        const generateThumbnail = () => {
-            return new Promise((resolve) => {
+        const generateThumbnail = () =>
+            new Promise((resolve) => {
                 exec(
                     `pdftoppm -f 1 -l 1 -png -singlefile "${pdfFullPath}" "${outputPrefix}"`,
                     (error) => {
-                        if (error) {
-                            console.error("❌ pdftoppm error:", error);
-                            return resolve(null);
-                        }
-                        const expectedFileName = `${baseName}.png`;
-                        resolve(`/uploads/covers/${expectedFileName}`);
+                        if (error) return resolve(null);
+                        resolve(`/uploads/covers/${baseName}.png`);
                     }
                 );
             });
-        };
 
-        const savedCoverPath = await generateThumbnail();
-        const book = await Book.create({ title, pdfPath, cover: savedCoverPath });
+        const cover = await generateThumbnail();
+        const book = await Book.create({ title, pdfPath, cover });
 
         res.status(201).json({ message: "Upload successful", book: formatBook(book) });
-    } catch (err) {
+    } catch {
         res.status(500).json({ error: "Upload failed" });
     }
 });
 
-// 1. DELETE SINGLE BOOK
+// DELETE SINGLE BOOK
 app.delete("/api/books/:id", async (req, res) => {
     try {
         const book = await Book.findById(req.params.id);
         if (!book) return res.status(404).json({ error: "Book not found" });
 
-        await deleteBookFiles(book); // Remove PDF and Cover from disk
-        await Book.findByIdAndDelete(req.params.id); // Remove from DB
+        await deleteBookFiles(book);
+        await Book.findByIdAndDelete(req.params.id);
 
         res.json({ message: "Book deleted successfully" });
-    } catch (err) {
+    } catch {
         res.status(500).json({ error: "Delete failed" });
     }
 });
 
-// 2. BULK DELETE (More efficient for selection mode)
+// BULK DELETE
 app.post("/api/books/bulk-delete", async (req, res) => {
     try {
         const { ids } = req.body;
-        if (!ids || !Array.isArray(ids)) return res.status(400).json({ error: "No IDs provided" });
+        if (!Array.isArray(ids)) return res.status(400).json({ error: "No IDs provided" });
 
-        const booksToDelete = await Book.find({ _id: { $in: ids } });
-
-        // Delete all files in parallel
-        await Promise.all(booksToDelete.map(book => deleteBookFiles(book)));
-
-        // Delete all from DB
+        const books = await Book.find({ _id: { $in: ids } });
+        await Promise.all(books.map(deleteBookFiles));
         await Book.deleteMany({ _id: { $in: ids } });
 
-        res.json({ message: `${booksToDelete.length} books deleted` });
-    } catch (err) {
+        res.json({ message: `${books.length} books deleted` });
+    } catch {
         res.status(500).json({ error: "Bulk delete failed" });
     }
 });
 
+// ACTIONS
 app.patch("/api/books/:id/actions", async (req, res) => {
     try {
         const { action } = req.body;
@@ -183,7 +198,7 @@ app.patch("/api/books/:id/actions", async (req, res) => {
 
         await book.save();
         res.json(formatBook(book));
-    } catch (err) {
+    } catch {
         res.status(500).json({ error: "Action failed" });
     }
 });
