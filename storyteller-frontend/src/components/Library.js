@@ -47,11 +47,13 @@ export default function Library() {
     const [uploading, setUploading] = useState(false);
     const sheetRef = useRef(null);
 
+    // --- STATE FOR SEARCH AND FOLDERS ---
     const [searchQuery, setSearchQuery] = useState("");
-    const [folders, setFolders] = useState(["All"]);
+    const [folders, setFolders] = useState(["All"]); // Start with "All" as default
     const [activeFolder, setActiveFolder] = useState("All");
     const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
 
+    // --- SELECTION MODE STATE ---
     const [isSelectMode, setIsSelectMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState([]);
 
@@ -86,15 +88,16 @@ export default function Library() {
         if (!API_URL) return;
         try {
             setLoading(true);
+            // Fetch Books
             const bookRes = await fetch(`${API_URL}/api/books`);
             const bookData = await bookRes.json();
             setBooks(bookData);
 
+            // Fetch Folders
             const folderRes = await fetch(`${API_URL}/api/books/folders`);
             const folderData = await folderRes.json();
-
-            // folderData is now an array of strings like ["Fiction", "Work"]
-            const folderNames = ["All", ...folderData];
+            // Map folder names and prepend "All"
+            const folderNames = ["All", ...folderData.map(f => f.name)];
             setFolders(folderNames);
         } catch (err) {
             console.error("❌ Failed to fetch library data:", err);
@@ -136,21 +139,16 @@ export default function Library() {
         if (!API_URL || !file) return;
         const formData = new FormData();
         formData.append("file", file);
-        // If "All" is selected, we send "default", otherwise we send the specific folder name
-        formData.append("folder", activeFolder === "All" ? "default" : activeFolder);
+        formData.append("folder", activeFolder); // Pass current folder to upload
 
         try {
             setUploading(true);
-            const res = await fetch(`${API_URL}/api/books`, {
+            const res = await fetch(`${API_URL}/api/books`, { // Changed from /upload to match your bookroutes.js
                 method: "POST",
                 body: formData,
             });
             const data = await res.json();
-
-            // Your server returns { message, book }, so we take data.book
-            if (data?.book) {
-                setBooks((prev) => [data.book, ...prev]);
-            }
+            if (data) setBooks((prev) => [data, ...prev]);
         } catch (err) {
             console.error("❌ Upload failed:", err);
         } finally {
@@ -232,7 +230,6 @@ export default function Library() {
             });
             const updatedBook = await res.json();
             setBooks((prev) => prev.map((b) => (b._id === bookId ? updatedBook : b)));
-
             if (action === "download" && updatedBook.url) {
                 const link = document.createElement("a");
                 link.href = `${API_URL}${updatedBook.url}`;
@@ -350,6 +347,7 @@ export default function Library() {
                     >
                         <div className="w-12 h-1 bg-zinc-700 rounded-full mx-auto my-1 md:hidden" />
 
+                        {/* COMPACT HEADER WITH SMALLER COVER */}
                         <div className="flex items-center gap-4 mb-6 mt-2">
                             <img
                                 src={activeBook.cover ? `${API_URL}${activeBook.cover}` : defaultCover}
@@ -375,11 +373,6 @@ export default function Library() {
 
                             <button onClick={() => alert("Move logic coming soon")} className="w-full flex items-center justify-center gap-2 bg-zinc-800 text-white py-3 rounded-xl font-semibold hover:bg-zinc-700 transition-colors">
                                 <FolderPlus className="w-5 h-5" /> Move to Folder
-                            </button>
-
-                            {/* ADDED: Single Delete button inside Action Sheet for convenience */}
-                            <button onClick={() => handleDeleteSingle(activeBook._id)} className="w-full flex items-center justify-center gap-2 bg-red-900/20 text-red-500 py-3 rounded-xl font-semibold hover:bg-red-900/40 transition-colors">
-                                <Trash2 className="w-5 h-5" /> Delete Permanently
                             </button>
                         </div>
                     </div>
