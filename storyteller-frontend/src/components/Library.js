@@ -1,8 +1,42 @@
 import { useState, useRef, useEffect } from "react";
-import { MoreHorizontal, Download, Plus, FolderPlus, Trash2, X } from "lucide-react";
+import { MoreHorizontal, Download, Plus, FolderPlus, Trash2, X, Folder } from "lucide-react";
 
 import f3logo from "../assets/blacklogo.png";
 import defaultCover from "../assets/cover.jpg";
+
+/* ---------------- FOLDER MODAL COMPONENT ---------------- */
+function FolderModal({ isOpen, onClose, onCreate }) {
+    const [name, setName] = useState("");
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+            <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+                <h2 className="text-xl font-bold text-white mb-1">New Folder</h2>
+                <p className="text-zinc-500 text-sm mb-4">Organize your collection by genre or mood.</p>
+                <input
+                    autoFocus
+                    type="text"
+                    placeholder="e.g. Sci-Fi Favorites"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white outline-none focus:border-yellow-400/50 transition-all mb-6"
+                />
+                <div className="flex gap-3">
+                    <button onClick={onClose} className="flex-1 px-4 py-3 rounded-xl font-semibold text-zinc-400 hover:bg-white/5 transition">
+                        Cancel
+                    </button>
+                    <button
+                        onClick={() => { if (name) { onCreate(name); setName(""); onClose(); } }}
+                        className="flex-1 px-4 py-3 rounded-xl font-bold bg-yellow-400 text-black hover:bg-yellow-300 transition"
+                    >
+                        Create
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+}
 
 export default function Library() {
     const API_URL = process.env.REACT_APP_API_URL;
@@ -13,18 +47,40 @@ export default function Library() {
     const [uploading, setUploading] = useState(false);
     const sheetRef = useRef(null);
 
+    // --- STATE FOR SEARCH AND FOLDERS ---
+    const [searchQuery, setSearchQuery] = useState("");
+    const [folders, setFolders] = useState(["All", "Favorites", "Unread"]);
+    const [activeFolder, setActiveFolder] = useState("All");
+    const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
+
     // --- SELECTION MODE STATE ---
     const [isSelectMode, setIsSelectMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState([]);
 
-    /* ---------------- SELECTION EVENT LISTENER ---------------- */
+    /* ---------------- TOP NAV EVENT LISTENERS ---------------- */
     useEffect(() => {
         const handleToggle = () => {
             setIsSelectMode((prev) => !prev);
             setSelectedIds([]);
         };
+
+        const handleSearch = (e) => {
+            setSearchQuery(e.detail.toLowerCase());
+        };
+
+        const handleOpenFolderModal = () => {
+            setIsFolderModalOpen(true);
+        };
+
         window.addEventListener("toggle-selection-mode", handleToggle);
-        return () => window.removeEventListener("toggle-selection-mode", handleToggle);
+        window.addEventListener("search-books", handleSearch);
+        window.addEventListener("open-folder-modal", handleOpenFolderModal);
+
+        return () => {
+            window.removeEventListener("toggle-selection-mode", handleToggle);
+            window.removeEventListener("search-books", handleSearch);
+            window.removeEventListener("open-folder-modal", handleOpenFolderModal);
+        };
     }, []);
 
     /* ---------------- FETCH BOOKS ---------------- */
@@ -43,6 +99,21 @@ export default function Library() {
     };
 
     useEffect(() => { fetchBooks(); }, [API_URL]);
+
+    /* ---------------- FOLDER ACTIONS ---------------- */
+    const createNewFolder = (name) => {
+        if (!folders.includes(name)) {
+            setFolders((prev) => [...prev, name]);
+            setActiveFolder(name);
+        }
+    };
+
+    /* ---------------- FILTERING LOGIC ---------------- */
+    const filteredBooks = books.filter((book) => {
+        const matchesSearch = book.title.toLowerCase().includes(searchQuery);
+        const matchesFolder = activeFolder === "All" || book.folder === activeFolder;
+        return matchesSearch && matchesFolder;
+    });
 
     /* ---------------- UPLOAD BOOK ---------------- */
     const handleUpload = async (file) => {
@@ -66,20 +137,15 @@ export default function Library() {
     };
 
     /* ---------------- DELETE ACTIONS ---------------- */
-
-    // NEW: Bulk Delete using the specialized endpoint
     const handleBulkDelete = async () => {
         if (!window.confirm(`Delete ${selectedIds.length} books permanently?`)) return;
-
         try {
             const res = await fetch(`${API_URL}/api/books/bulk-delete`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ ids: selectedIds }),
             });
-
             if (!res.ok) throw new Error("Bulk delete failed");
-
             setBooks((prev) => prev.filter((b) => !selectedIds.includes(b._id)));
             setSelectedIds([]);
             setIsSelectMode(false);
@@ -89,14 +155,11 @@ export default function Library() {
         }
     };
 
-    // NEW: Single Delete for the Action Sheet
     const handleDeleteSingle = async (id) => {
         if (!window.confirm("Delete this book permanently?")) return;
-
         try {
             const res = await fetch(`${API_URL}/api/books/${id}`, { method: "DELETE" });
             if (!res.ok) throw new Error("Delete failed");
-
             setBooks((prev) => prev.filter((b) => b._id !== id));
             setActiveBook(null);
         } catch (err) {
@@ -114,9 +177,7 @@ export default function Library() {
     useEffect(() => {
         if (!sheetRef.current || !activeBook) return;
         const sheet = sheetRef.current;
-        let startY = 0;
-        let currentY = 0;
-
+        let startY = 0, currentY = 0;
         const start = (e) => { startY = e.touches[0].clientY; sheet.style.transition = "none"; };
         const move = (e) => {
             currentY = e.touches[0].clientY;
@@ -128,7 +189,6 @@ export default function Library() {
             if (currentY - startY > 90) setActiveBook(null);
             else sheet.style.transform = "translateY(0)";
         };
-
         sheet.addEventListener("touchstart", start);
         sheet.addEventListener("touchmove", move);
         sheet.addEventListener("touchend", end);
@@ -150,7 +210,6 @@ export default function Library() {
             });
             const updatedBook = await res.json();
             setBooks((prev) => prev.map((b) => (b._id === bookId ? updatedBook : b)));
-
             if (action === "download" && updatedBook.url) {
                 const link = document.createElement("a");
                 link.href = `${API_URL}${updatedBook.url}`;
@@ -161,14 +220,14 @@ export default function Library() {
     };
 
     return (
-        <div className={`min-h-screen bg-bg px-6 py-8 ${isSelectMode ? "pb-32" : ""}`}>
+        <div className={`min-h-screen bg-bg px-6 py-8 md:ml-32 ${isSelectMode ? "pb-32" : ""}`}>
             {/* HEADER */}
-            <div className="flex justify-between items-center mb-6">
-                <h1 className="text-3xl md:text-5xl font-extrabold text-yellow-400">Your Collection</h1>
+            <div className="flex justify-between items-center mb-2">
+                <h1 className="text-3xl md:text-5xl font-extrabold text-yellow-400 uppercase tracking-tighter">Your Collection</h1>
                 {!isSelectMode && (
                     <label className="flex items-center gap-2 cursor-pointer bg-yellow-600 hover:bg-yellow-500 text-white py-2 px-4 rounded-xl transition-colors">
                         <Plus className="w-5 h-5" />
-                        {uploading ? "Uploading…" : "Upload"}
+                        <span className="hidden sm:inline">{uploading ? "Uploading…" : "Upload"}</span>
                         <input type="file" accept=".pdf" className="hidden" disabled={uploading}
                             onChange={(e) => { if (e.target.files?.[0]) { handleUpload(e.target.files[0]); e.target.value = null; } }}
                         />
@@ -176,14 +235,32 @@ export default function Library() {
                 )}
             </div>
 
+            {/* FOLDER TABS */}
+            <div className="flex items-center gap-2 overflow-x-auto pb-6 no-scrollbar">
+                {folders.map((folder) => (
+                    <button
+                        key={folder}
+                        onClick={() => setActiveFolder(folder)}
+                        className={`px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest transition-all whitespace-nowrap border ${activeFolder === folder
+                                ? "bg-yellow-400 border-yellow-400 text-black"
+                                : "bg-transparent border-white/10 text-zinc-500 hover:text-white"
+                            }`}
+                    >
+                        {folder}
+                    </button>
+                ))}
+            </div>
+
             {/* CONTENT */}
             {loading ? (
                 <div className="text-center text-zinc-400 mt-20 italic">Loading library...</div>
-            ) : books.length === 0 ? (
-                <div className="text-center text-zinc-400 mt-20">No books found.</div>
+            ) : filteredBooks.length === 0 ? (
+                <div className="text-center text-zinc-400 mt-20">
+                    {searchQuery ? `No results for "${searchQuery}"` : "No books found in this folder."}
+                </div>
             ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-                    {books.map((book) => (
+                    {filteredBooks.map((book) => (
                         <div key={book._id} onClick={() => isSelectMode && toggleBookSelection(book._id)}
                             className={`relative bg-zinc-900 rounded-lg p-2 transition group cursor-pointer ${selectedIds.includes(book._id) ? "ring-2 ring-yellow-400 bg-zinc-800" : "hover:bg-zinc-800"}`}
                         >
@@ -194,16 +271,13 @@ export default function Library() {
                                     </div>
                                 </div>
                             )}
-
                             <div className="aspect-[2/3] w-full overflow-hidden rounded-md bg-zinc-800">
                                 <img src={book.cover ? `${API_URL}${book.cover}` : defaultCover} alt={book.title}
                                     className="w-full h-full object-cover"
                                     onError={(e) => { e.target.src = defaultCover; }}
                                 />
                             </div>
-
                             <p className="mt-2 text-white text-sm font-medium truncate px-1">{book.title}</p>
-
                             {!isSelectMode && (
                                 <button onClick={(e) => { e.stopPropagation(); setActiveBook(book); }}
                                     className="absolute top-2 right-2 p-1 rounded-full bg-black/40 hover:bg-zinc-700 transition"
@@ -244,10 +318,11 @@ export default function Library() {
                             <img src={activeBook.cover ? `${API_URL}${activeBook.cover}` : defaultCover} className="w-16 h-24 rounded-md object-cover" alt="cover" />
                             <div className="flex flex-col justify-center">
                                 <p className="text-white font-bold text-lg leading-tight">{activeBook.title}</p>
-                                <p className="text-zinc-500 text-sm mt-1">Folder: {activeBook.folder}</p>
+                                <p className="text-zinc-500 text-sm mt-1 flex items-center gap-1">
+                                    <Folder size={14} /> {activeBook.folder || "Uncategorized"}
+                                </p>
                             </div>
                         </div>
-
                         <div className="space-y-3">
                             <button onClick={() => handleAction(activeBook._id, "download")} className="w-full flex items-center justify-center gap-3 bg-yellow-600 text-white py-3 rounded-xl font-semibold hover:bg-yellow-500 transition-colors">
                                 <Download className="w-5 h-5" /> Download Audio
@@ -256,7 +331,7 @@ export default function Library() {
                                 <img src={f3logo} className="w-8 h-8" alt="f3" /> Read with Funfiction&falacies
                             </button>
                             <div className="grid grid-cols-2 gap-3">
-                                <button onClick={() => alert("Coming soon")} className="flex items-center justify-center gap-2 bg-zinc-800 text-white py-3 rounded-xl font-semibold hover:bg-zinc-700 transition-colors">
+                                <button onClick={() => alert("Move logic coming soon")} className="flex items-center justify-center gap-2 bg-zinc-800 text-white py-3 rounded-xl font-semibold hover:bg-zinc-700 transition-colors">
                                     <FolderPlus className="w-5 h-5" /> Move
                                 </button>
                                 <button onClick={() => handleDeleteSingle(activeBook._id)} className="flex items-center justify-center gap-2 bg-zinc-800 text-red-400 py-3 rounded-xl font-semibold hover:bg-red-950/30 transition-colors">
@@ -267,6 +342,12 @@ export default function Library() {
                     </div>
                 </div>
             )}
+
+            <FolderModal
+                isOpen={isFolderModalOpen}
+                onClose={() => setIsFolderModalOpen(false)}
+                onCreate={createNewFolder}
+            />
         </div>
     );
 }
