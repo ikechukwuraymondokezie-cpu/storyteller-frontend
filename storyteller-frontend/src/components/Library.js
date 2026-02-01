@@ -240,16 +240,28 @@ export default function Library() {
     };
 
     return (
-        <div className={`min-h-screen bg-bg px-6 py-8 md:ml-32 ${isSelectMode ? "pb-32" : ""}`}>
+        <div className={`min-h-screen bg-bg px-6 py-8 ${isSelectMode ? "pb-32" : ""}`}>
             {/* HEADER */}
-            <div className="flex justify-between items-center mb-2">
-                <h1 className="text-3xl md:text-5xl font-extrabold text-yellow-400 uppercase tracking-tighter">Your Collection</h1>
+            <div className="flex justify-between items-center mb-6">
+                <h1 className="text-3xl md:text-5xl font-extrabold text-yellow-400">
+                    Your Collection
+                </h1>
+
                 {!isSelectMode && (
                     <label className="flex items-center gap-2 cursor-pointer bg-yellow-600 hover:bg-yellow-500 text-white py-2 px-4 rounded-xl transition-colors">
                         <Plus className="w-5 h-5" />
-                        <span className="hidden sm:inline">{uploading ? "Uploading…" : "Upload"}</span>
-                        <input type="file" accept=".pdf" className="hidden" disabled={uploading}
-                            onChange={(e) => { if (e.target.files?.[0]) { handleUpload(e.target.files[0]); e.target.value = null; } }}
+                        {uploading ? "Uploading…" : "Upload"}
+                        <input
+                            type="file"
+                            accept=".pdf"
+                            className="hidden"
+                            disabled={uploading}
+                            onChange={(e) => {
+                                if (e.target.files?.[0]) {
+                                    handleUpload(e.target.files[0]);
+                                    e.target.value = null;
+                                }
+                            }}
                         />
                     </label>
                 )}
