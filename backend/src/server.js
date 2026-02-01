@@ -14,6 +14,7 @@ app.use(cors({ origin: "*" }));
 app.use(express.json());
 
 /* -------------------- UPLOADS -------------------- */
+// Using absolute paths to prevent "file not found" issues during deletion
 const uploadDir = path.join(__dirname, "../uploads/pdf");
 const coversDir = path.join(__dirname, "../uploads/covers");
 const audioDir = path.join(__dirname, "../uploads/audio");
@@ -22,6 +23,7 @@ fs.ensureDirSync(uploadDir);
 fs.ensureDirSync(coversDir);
 fs.ensureDirSync(audioDir);
 
+// Serve the entire uploads folder
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 /* -------------------- MONGODB -------------------- */
@@ -78,6 +80,7 @@ const formatBook = (book) => ({
 
 const deleteBookFiles = async (book) => {
     try {
+        // pdfPath usually looks like "/uploads/pdf/filename.pdf"
         if (book.pdfPath) {
             const fullPdfPath = path.join(__dirname, "..", book.pdfPath);
             if (await fs.pathExists(fullPdfPath)) await fs.remove(fullPdfPath);
@@ -103,17 +106,19 @@ app.get("/api/books", async (_, res) => {
     }
 });
 
-// GET ALL FOLDERS (derived)
+// GET ALL UNIQUE FOLDERS
 app.get("/api/books/folders", async (_, res) => {
     try {
+        // Returns an array of strings: ["default", "Sci-Fi", "Work"]
         const folders = await Book.distinct("folder");
-        res.json(folders);
+        // Filter out "default" if you don't want it in the tab bar
+        res.json(folders.filter(f => f !== "default"));
     } catch {
         res.status(500).json({ error: "Failed to fetch folders" });
     }
 });
 
-// CREATE NEW FOLDER (logical only)
+// CREATE NEW FOLDER (Placeholder to keep Frontend happy)
 app.post("/api/books/folders", async (req, res) => {
     try {
         const { name } = req.body;
@@ -124,12 +129,13 @@ app.post("/api/books/folders", async (req, res) => {
     }
 });
 
-// UPLOAD BOOK
-app.post("/api/books/upload", upload.single("file"), async (req, res) => {
+// UPLOAD BOOK (Updated to handle folders)
+app.post("/api/books", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
         const title = req.file.originalname.replace(/\.[^/.]+$/, "");
+        const folder = req.body.folder || "default"; // Get folder from frontend
         const pdfPath = `/uploads/pdf/${req.file.filename}`;
         const pdfFullPath = req.file.path;
         const baseName = path.parse(req.file.filename).name;
@@ -137,20 +143,33 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
 
         const generateThumbnail = () =>
             new Promise((resolve) => {
+                // Requires 'poppler-utils' installed on the server/system
                 exec(
                     `pdftoppm -f 1 -l 1 -png -singlefile "${pdfFullPath}" "${outputPrefix}"`,
                     (error) => {
-                        if (error) return resolve(null);
+                        if (error) {
+                            console.error("Thumbnail error:", error);
+                            return resolve(null);
+                        }
                         resolve(`/uploads/covers/${baseName}.png`);
                     }
                 );
             });
 
         const cover = await generateThumbnail();
-        const book = await Book.create({ title, pdfPath, cover });
+        const book = await Book.create({
+            title,
+            pdfPath,
+            cover,
+            folder
+        });
 
-        res.status(201).json({ message: "Upload successful", book: formatBook(book) });
-    } catch {
+        res.status(201).json({
+            message: "Upload successful",
+            book: formatBook(book)
+        });
+    } catch (err) {
+        console.error("Upload error:", err);
         res.status(500).json({ error: "Upload failed" });
     }
 });
@@ -186,7 +205,7 @@ app.post("/api/books/bulk-delete", async (req, res) => {
     }
 });
 
-// ACTIONS
+// ACTIONS (Download/TTS Counter)
 app.patch("/api/books/:id/actions", async (req, res) => {
     try {
         const { action } = req.body;
