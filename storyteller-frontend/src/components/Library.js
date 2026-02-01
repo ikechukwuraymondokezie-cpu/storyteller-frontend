@@ -88,17 +88,24 @@ export default function Library() {
         if (!API_URL) return;
         try {
             setLoading(true);
-            // Fetch Books
-            const bookRes = await fetch(`${API_URL}/api/books`);
-            const bookData = await bookRes.json();
-            setBooks(bookData);
 
-            // Fetch Folders
-            const folderRes = await fetch(`${API_URL}/api/books/folders`);
+            // Fetch both concurrently for better performance
+            const [bookRes, folderRes] = await Promise.all([
+                fetch(`${API_URL}/api/books`),
+                fetch(`${API_URL}/api/books/folders`)
+            ]);
+
+            const bookData = await bookRes.json();
             const folderData = await folderRes.json();
-            // Map folder names and prepend "All"
-            const folderNames = ["All", ...folderData.map(f => f.name)];
-            setFolders(folderNames);
+
+            // Safety check: ensure we received arrays
+            setBooks(Array.isArray(bookData) ? bookData : []);
+
+            // Map folder objects to names and prepend "All"
+            if (Array.isArray(folderData)) {
+                const folderNames = ["All", ...folderData.map(f => f.name)];
+                setFolders(folderNames);
+            }
         } catch (err) {
             console.error("❌ Failed to fetch library data:", err);
         } finally {
@@ -106,21 +113,30 @@ export default function Library() {
         }
     };
 
-    useEffect(() => { fetchData(); }, [API_URL]);
+    useEffect(() => {
+        fetchData();
+    }, [API_URL]);
 
     /* ---------------- FOLDER ACTIONS ---------------- */
     const createNewFolder = async (name) => {
-        if (!API_URL || folders.includes(name)) return;
+        // Basic validation
+        if (!API_URL || !name.trim() || folders.includes(name)) return;
+
         try {
             const res = await fetch(`${API_URL}/api/books/folders`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ name }),
+                body: JSON.stringify({ name: name.trim() }),
             });
+
             const data = await res.json();
+
             if (res.ok) {
+                // Update state with the new folder name and switch to it
                 setFolders((prev) => [...prev, data.name]);
                 setActiveFolder(data.name);
+            } else {
+                console.error("❌ Server error:", data.error);
             }
         } catch (err) {
             console.error("❌ Folder creation failed:", err);
@@ -129,7 +145,7 @@ export default function Library() {
 
     /* ---------------- FILTERING LOGIC ---------------- */
     const filteredBooks = books.filter((book) => {
-        const matchesSearch = book.title.toLowerCase().includes(searchQuery);
+        const matchesSearch = (book.title || "").toLowerCase().includes(searchQuery.toLowerCase());
         const matchesFolder = activeFolder === "All" || book.folder === activeFolder;
         return matchesSearch && matchesFolder;
     });
@@ -137,18 +153,28 @@ export default function Library() {
     /* ---------------- UPLOAD BOOK ---------------- */
     const handleUpload = async (file) => {
         if (!API_URL || !file) return;
+
         const formData = new FormData();
         formData.append("file", file);
-        formData.append("folder", activeFolder); // Pass current folder to upload
+        // If you're in a specific folder (other than "All"), 
+        // the new book will automatically be categorized there.
+        formData.append("folder", activeFolder === "All" ? "default" : activeFolder);
 
         try {
             setUploading(true);
-            const res = await fetch(`${API_URL}/api/books`, { // Changed from /upload to match your bookroutes.js
+            const res = await fetch(`${API_URL}/api/books`, {
                 method: "POST",
                 body: formData,
             });
+
             const data = await res.json();
-            if (data) setBooks((prev) => [data, ...prev]);
+
+            if (res.ok) {
+                // Prepend the new book so it appears first in the list
+                setBooks((prev) => [data, ...prev]);
+            } else {
+                alert(data.error || "Upload failed");
+            }
         } catch (err) {
             console.error("❌ Upload failed:", err);
         } finally {
