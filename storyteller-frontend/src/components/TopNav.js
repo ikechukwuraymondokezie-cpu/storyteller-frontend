@@ -9,6 +9,7 @@ import {
     CheckSquare,
     ArrowDownAZ,
     Clock,
+    Trash2, // Added Trash icon
     User
 } from "lucide-react";
 
@@ -92,7 +93,6 @@ export default function TopNav() {
                             Library
                         </Link>
 
-                        {/* 🔁 Upload replaced with Profile */}
                         <Link
                             to="/profile"
                             className={linkClass(isProfile)}
@@ -194,9 +194,9 @@ function OptionsMenu() {
         <div
             className="
                 absolute right-0 mt-2 w-52
-                bg-black/90 backdrop-blur
+                bg-zinc-900 backdrop-blur
                 border border-white/10
-                rounded-xl shadow-xl
+                rounded-xl shadow-2xl
                 text-sm text-white
                 overflow-hidden
                 z-50
@@ -209,19 +209,31 @@ function OptionsMenu() {
 
             <MenuItem icon={<ArrowDownAZ size={16} />} text="Alphabetical" />
             <MenuItem icon={<Clock size={16} />} text="Recently added" />
+
+            <div className="border-t border-white/10" />
+
+            {/* DELETE OPTION */}
+            <MenuItem
+                icon={<Trash2 size={16} />}
+                text="Delete books"
+                danger={true}
+                onClick={() => alert("Select books to delete")}
+            />
         </div>
     );
 }
 
-function MenuItem({ icon, text }) {
+function MenuItem({ icon, text, danger, onClick }) {
     return (
         <button
-            className="
+            onClick={onClick}
+            className={`
                 flex items-center gap-3
                 w-full px-4 py-3
                 hover:bg-white/10
                 transition text-left
-            "
+                ${danger ? "text-red-500 hover:text-red-400" : "text-white"}
+            `}
         >
             {icon}
             {text}
