@@ -4,7 +4,7 @@ const path = require("path");
 const fs = require("fs-extra");
 const { spawn } = require("child_process");
 const Book = require("../models/Book");
-const Folder = require("../models/Folder"); // Added Folder model
+const Folder = require("../models/Folder"); // Folder model
 
 const router = express.Router();
 
@@ -35,7 +35,6 @@ const upload = multer({ storage });
 router.get("/folders", async (_, res) => {
     try {
         const folders = await Folder.find().sort({ name: 1 });
-        // Always include "All" as the default
         res.json(["All", ...folders.map(f => f.name)]);
     } catch (err) {
         res.status(500).json({ error: "Failed to fetch folders" });
@@ -83,6 +82,12 @@ router.post("/", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
+        let folderName = req.body.folder || "All";
+        if (folderName !== "All") {
+            let folder = await Folder.findOne({ name: folderName });
+            if (!folder) folder = await Folder.create({ name: folderName });
+        }
+
         const baseName = path.parse(req.file.filename).name;
         const pdfDiskPath = path.join(pdfDir, req.file.filename);
         const pdfPublicPath = `/uploads/pdf/${req.file.filename}`;
@@ -98,12 +103,15 @@ router.post("/", upload.single("file"), async (req, res) => {
                     path.join(coversDir, baseName)
                 ]);
 
-                proc.on("close", () => {
+                proc.on("close", (code) => {
                     const coverPath = path.join(coversDir, `${baseName}.png`);
                     resolve(fs.existsSync(coverPath) ? `/uploads/covers/${baseName}.png` : null);
                 });
 
-                proc.on("error", () => resolve(null));
+                proc.on("error", (err) => {
+                    console.error("❌ pdftoppm error:", err);
+                    resolve(null);
+                });
             });
 
         const coverPath = await generateCover();
@@ -112,7 +120,7 @@ router.post("/", upload.single("file"), async (req, res) => {
             title: req.file.originalname.replace(/\.[^/.]+$/, ""),
             pdfPath: pdfPublicPath,
             cover: coverPath,
-            folder: req.body.folder || "All",
+            folder: folderName,
             downloads: 0,
             ttsRequests: 0,
         });
@@ -120,6 +128,7 @@ router.post("/", upload.single("file"), async (req, res) => {
         res.status(201).json(book);
 
     } catch (err) {
+        console.error("Upload Error:", err);
         res.status(500).json({ error: "Upload failed" });
     }
 });
@@ -130,10 +139,10 @@ router.post("/", upload.single("file"), async (req, res) => {
 router.patch("/:id/move", async (req, res) => {
     try {
         const { folderName } = req.body;
-
-        // Ensure folder exists
-        const folder = folderName === "All" ? null : await Folder.findOne({ name: folderName });
-        if (folderName !== "All" && !folder) return res.status(400).json({ error: "Folder does not exist" });
+        if (folderName !== "All") {
+            const folder = await Folder.findOne({ name: folderName });
+            if (!folder) return res.status(400).json({ error: "Folder does not exist" });
+        }
 
         const book = await Book.findByIdAndUpdate(
             req.params.id,
