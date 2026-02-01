@@ -14,7 +14,6 @@ app.use(cors({ origin: "*" }));
 app.use(express.json());
 
 /* -------------------- UPLOADS -------------------- */
-// Using absolute paths to ensure reliability across environments
 const uploadDir = path.join(__dirname, "../uploads/pdf");
 const coversDir = path.join(__dirname, "../uploads/covers");
 const audioDir = path.join(__dirname, "../uploads/audio");
@@ -23,7 +22,6 @@ fs.ensureDirSync(uploadDir);
 fs.ensureDirSync(coversDir);
 fs.ensureDirSync(audioDir);
 
-// Serve uploaded files statically
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 /* -------------------- MONGODB -------------------- */
@@ -68,13 +66,9 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 /* -------------------- HELPERS -------------------- */
-// This should be your backend URL (e.g., https://your-app-backend.onrender.com)
-const BACKEND_URL = process.env.BACKEND_URL || "";
-
 const formatBook = (book) => ({
     _id: book._id,
     title: book.title,
-    // We keep these as relative paths so the frontend can prepend the API_URL
     cover: book.cover || null,
     url: book.pdfPath || null,
     folder: book.folder,
@@ -82,38 +76,44 @@ const formatBook = (book) => ({
     ttsRequests: book.ttsRequests,
 });
 
-/* -------------------- API ROUTES -------------------- */
-app.get("/api", (_, res) => {
-    res.json({ status: "Backend running 🚀" });
-});
+// Helper to delete physical files
+const deleteBookFiles = async (book) => {
+    try {
+        if (book.pdfPath) {
+            const fullPdfPath = path.join(__dirname, "..", book.pdfPath);
+            if (await fs.pathExists(fullPdfPath)) await fs.remove(fullPdfPath);
+        }
+        if (book.cover) {
+            const fullCoverPath = path.join(__dirname, "..", book.cover);
+            if (await fs.pathExists(fullCoverPath)) await fs.remove(fullCoverPath);
+        }
+    } catch (err) {
+        console.error("⚠️ Error deleting files for book:", book._id, err);
+    }
+};
 
+/* -------------------- API ROUTES -------------------- */
 app.get("/api/books", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
         res.json(books.map(formatBook));
     } catch (err) {
-        console.error(err);
         res.status(500).json({ error: "Failed to fetch books" });
     }
 });
 
 app.post("/api/books/upload", upload.single("file"), async (req, res) => {
     try {
-        if (!req.file) {
-            return res.status(400).json({ error: "No file uploaded" });
-        }
+        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
         const title = req.file.originalname.replace(/\.[^/.]+$/, "");
         const pdfPath = `/uploads/pdf/${req.file.filename}`;
         const pdfFullPath = req.file.path;
-
         const baseName = path.parse(req.file.filename).name;
         const outputPrefix = path.join(coversDir, baseName);
 
-        // 1. Wrap the exec in a Promise to ensure we wait for completion
         const generateThumbnail = () => {
             return new Promise((resolve) => {
-                // -singlefile ensures output is exactly "baseName.png"
                 exec(
                     `pdftoppm -f 1 -l 1 -png -singlefile "${pdfFullPath}" "${outputPrefix}"`,
                     (error) => {
@@ -121,38 +121,54 @@ app.post("/api/books/upload", upload.single("file"), async (req, res) => {
                             console.error("❌ pdftoppm error:", error);
                             return resolve(null);
                         }
-
                         const expectedFileName = `${baseName}.png`;
-                        const finalDiskPath = path.join(coversDir, expectedFileName);
-
-                        if (fs.existsSync(finalDiskPath)) {
-                            resolve(`/uploads/covers/${expectedFileName}`);
-                        } else {
-                            console.warn("⚠️ Thumbnail file not found after generation");
-                            resolve(null);
-                        }
+                        resolve(`/uploads/covers/${expectedFileName}`);
                     }
                 );
             });
         };
 
-        // 2. Await the thumbnail generation
         const savedCoverPath = await generateThumbnail();
+        const book = await Book.create({ title, pdfPath, cover: savedCoverPath });
 
-        // 3. Save to Database with the confirmed path
-        const book = await Book.create({
-            title,
-            pdfPath,
-            cover: savedCoverPath,
-        });
-
-        res.status(201).json({
-            message: "Upload successful",
-            book: formatBook(book),
-        });
+        res.status(201).json({ message: "Upload successful", book: formatBook(book) });
     } catch (err) {
-        console.error("Upload Error:", err);
         res.status(500).json({ error: "Upload failed" });
+    }
+});
+
+// 1. DELETE SINGLE BOOK
+app.delete("/api/books/:id", async (req, res) => {
+    try {
+        const book = await Book.findById(req.params.id);
+        if (!book) return res.status(404).json({ error: "Book not found" });
+
+        await deleteBookFiles(book); // Remove PDF and Cover from disk
+        await Book.findByIdAndDelete(req.params.id); // Remove from DB
+
+        res.json({ message: "Book deleted successfully" });
+    } catch (err) {
+        res.status(500).json({ error: "Delete failed" });
+    }
+});
+
+// 2. BULK DELETE (More efficient for selection mode)
+app.post("/api/books/bulk-delete", async (req, res) => {
+    try {
+        const { ids } = req.body;
+        if (!ids || !Array.isArray(ids)) return res.status(400).json({ error: "No IDs provided" });
+
+        const booksToDelete = await Book.find({ _id: { $in: ids } });
+
+        // Delete all files in parallel
+        await Promise.all(booksToDelete.map(book => deleteBookFiles(book)));
+
+        // Delete all from DB
+        await Book.deleteMany({ _id: { $in: ids } });
+
+        res.json({ message: `${booksToDelete.length} books deleted` });
+    } catch (err) {
+        res.status(500).json({ error: "Bulk delete failed" });
     }
 });
 
@@ -168,23 +184,9 @@ app.patch("/api/books/:id/actions", async (req, res) => {
         await book.save();
         res.json(formatBook(book));
     } catch (err) {
-        console.error(err);
         res.status(500).json({ error: "Action failed" });
     }
 });
-
-/* -------------------- REACT SPA SERVE -------------------- */
-const frontendBuildPath = path.join(__dirname, "../../storyteller-frontend/build");
-
-if (fs.existsSync(frontendBuildPath)) {
-    app.use(express.static(frontendBuildPath));
-    app.get("*", (req, res) => {
-        // Don't intercept API or Uploads requests
-        if (req.path.startsWith("/api") || req.path.startsWith("/uploads")) return;
-        res.sendFile(path.join(frontendBuildPath, "index.html"));
-    });
-    console.log("✅ Serving React frontend");
-}
 
 /* -------------------- START SERVER -------------------- */
 const PORT = process.env.PORT || 10000;
