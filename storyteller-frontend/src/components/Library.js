@@ -345,7 +345,7 @@ export default function Library() {
                     <div ref={sheetRef} onClick={(e) => e.stopPropagation()}
                         className="w-full max-w-lg bg-zinc-900 rounded-t-3xl md:rounded-2xl pt-2 px-6 pb-8 md:pb-6 shadow-2xl"
                     >
-                        <div className="w-12 h-1 bg-zinc-700 rounded-full mx-auto my-3 md:hidden" />
+                        <div className="w-12 h-1 bg-zinc-700 rounded-full mx-auto my-1 md:hidden" />
 
                         {/* COMPACT HEADER WITH SMALLER COVER */}
                         <div className="flex items-center gap-4 mb-6 mt-2">
