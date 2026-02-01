@@ -189,17 +189,16 @@ export default function Library() {
     return (
         <div className={`min-h-screen bg-bg px-6 py-8 md:ml-32 ${isSelectMode ? "pb-32" : ""}`}>
 
-            {/* STACKED HEADER AND LARGE PILL BUTTON */}
-            <div className="flex justify-between items-start mb-10">
-                <div>
-                    <h1 className="text-4xl md:text-5xl font-black text-yellow-400 uppercase tracking-tighter leading-[0.85]">Your</h1>
-                    <h1 className="text-4xl md:text-5xl font-black text-yellow-400 uppercase tracking-tighter leading-[0.85]">Collection</h1>
+            {/* HEADER - RESTORED TO STACKED STYLE AND LARGE PILL BUTTON */}
+            <div className="flex justify-between items-start mb-6">
+                <div className="flex flex-col">
+                    <h1 className="text-4xl font-extrabold text-yellow-400 uppercase tracking-tighter leading-none">Your</h1>
+                    <h1 className="text-4xl font-extrabold text-yellow-400 uppercase tracking-tighter leading-none">Collection</h1>
                 </div>
-
                 {!isSelectMode && (
-                    <label className="flex items-center justify-center gap-2 cursor-pointer bg-yellow-600 hover:bg-yellow-500 text-white min-w-[120px] py-4 px-8 rounded-full transition-all shadow-xl active:scale-95">
-                        <Plus className="w-6 h-6 stroke-[3px]" />
-                        <span className="font-black text-xl uppercase italic">{uploading ? "..." : "Upload"}</span>
+                    <label className="flex items-center gap-2 cursor-pointer bg-yellow-600 hover:bg-yellow-500 text-white py-3 px-6 rounded-2xl transition-all shadow-lg active:scale-95">
+                        <Plus className="w-5 h-5 stroke-[3px]" />
+                        <span className="font-bold text-lg">{uploading ? "..." : "Upload"}</span>
                         <input type="file" accept=".pdf" className="hidden" disabled={uploading}
                             onChange={(e) => { if (e.target.files?.[0]) { handleUpload(e.target.files[0]); e.target.value = null; } }}
                         />
