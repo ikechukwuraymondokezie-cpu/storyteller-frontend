@@ -346,35 +346,38 @@ export default function Library() {
                         className="w-full max-w-lg bg-zinc-900 rounded-t-3xl md:rounded-2xl pt-2 px-6 pb-8 md:pb-6 shadow-2xl"
                     >
                         <div className="w-12 h-1 bg-zinc-700 rounded-full mx-auto my-3 md:hidden" />
-                        <div className="flex gap-4 mb-6 mt-2">
-                            <img src={activeBook.cover ? `${API_URL}${activeBook.cover}` : defaultCover} className="w-16 h-24 rounded-md object-cover" alt="cover" />
-                            <div className="flex flex-col justify-center">
-                                <p className="text-white font-bold text-lg leading-tight">{activeBook.title}</p>
+
+                        {/* COMPACT HEADER WITH SMALLER COVER */}
+                        <div className="flex items-center gap-4 mb-6 mt-2">
+                            <img
+                                src={activeBook.cover ? `${API_URL}${activeBook.cover}` : defaultCover}
+                                className="w-12 h-16 rounded-lg object-cover shadow-lg border border-white/5"
+                                alt="cover"
+                            />
+                            <div className="flex flex-col justify-center overflow-hidden">
+                                <p className="text-white font-bold text-lg leading-tight truncate">{activeBook.title}</p>
                                 <p className="text-zinc-500 text-sm mt-1 flex items-center gap-1">
                                     <Folder size={14} /> {activeBook.folder || "Uncategorized"}
                                 </p>
                             </div>
                         </div>
+
                         <div className="space-y-3">
                             <button onClick={() => handleAction(activeBook._id, "download")} className="w-full flex items-center justify-center gap-3 bg-yellow-600 text-white py-3 rounded-xl font-semibold hover:bg-yellow-500 transition-colors">
                                 <Download className="w-5 h-5" /> Download Audio
                             </button>
+
                             <button onClick={() => handleAction(activeBook._id, "tts")} className="w-full flex items-center justify-center gap-3 bg-white text-black py-3 rounded-xl font-semibold hover:bg-zinc-200 transition-colors">
                                 <img src={f3logo} className="w-8 h-8" alt="f3" /> Read with Funfiction&falacies
                             </button>
-                            <div className="grid grid-cols-2 gap-3">
-                                <button onClick={() => alert("Move logic coming soon")} className="flex items-center justify-center gap-2 bg-zinc-800 text-white py-3 rounded-xl font-semibold hover:bg-zinc-700 transition-colors">
-                                    <FolderPlus className="w-5 h-5" /> Move
-                                </button>
-                                <button onClick={() => handleDeleteSingle(activeBook._id)} className="flex items-center justify-center gap-2 bg-zinc-800 text-red-400 py-3 rounded-xl font-semibold hover:bg-red-950/30 transition-colors">
-                                    <Trash2 className="w-5 h-5" /> Delete
-                                </button>
-                            </div>
+
+                            <button onClick={() => alert("Move logic coming soon")} className="w-full flex items-center justify-center gap-2 bg-zinc-800 text-white py-3 rounded-xl font-semibold hover:bg-zinc-700 transition-colors">
+                                <FolderPlus className="w-5 h-5" /> Move to Folder
+                            </button>
                         </div>
                     </div>
                 </div>
             )}
-
             <FolderModal
                 isOpen={isFolderModalOpen}
                 onClose={() => setIsFolderModalOpen(false)}
