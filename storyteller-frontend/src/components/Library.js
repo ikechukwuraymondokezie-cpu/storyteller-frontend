@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { MoreHorizontal, Download, Plus, FolderPlus } from "lucide-react";
 
-import f3logo from "../assets/f3logo.png";
+import f3logo from "../assets/blacklogo.png";
 import defaultCover from "../assets/cover.jpg"; // DEFAULT COVER
 
 export default function Library() {
