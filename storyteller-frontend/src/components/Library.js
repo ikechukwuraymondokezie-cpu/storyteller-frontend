@@ -11,7 +11,7 @@ function FolderModal({ isOpen, onClose, onCreate }) {
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-            <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="bg-zinc-900 border border-white/10 w-full max-sm rounded-2xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
                 <h2 className="text-xl font-bold text-white mb-1">New Folder</h2>
                 <p className="text-zinc-500 text-sm mb-4">Organize your collection by genre or mood.</p>
                 <input
@@ -49,7 +49,7 @@ export default function Library() {
 
     // --- STATE FOR SEARCH AND FOLDERS ---
     const [searchQuery, setSearchQuery] = useState("");
-    // Changed initial state to just "All" - others will load from DB
+    // Defaulting to "All" - the rest will be fetched from API
     const [folders, setFolders] = useState(["All"]);
     const [activeFolder, setActiveFolder] = useState("All");
     const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
@@ -84,23 +84,22 @@ export default function Library() {
         };
     }, []);
 
-    /* ---------------- FETCH BOOKS & FOLDERS ---------------- */
+    /* ---------------- FETCH DATA (BOOKS & FOLDERS) ---------------- */
     const fetchData = async () => {
         if (!API_URL) return;
         try {
             setLoading(true);
-            // Fetch Books
-            const bookRes = await fetch(`${API_URL}/api/books`);
-            const bookData = await bookRes.json();
-            setBooks(bookData);
+            const [booksRes, foldersRes] = await Promise.all([
+                fetch(`${API_URL}/api/books`),
+                fetch(`${API_URL}/api/books/folders`)
+            ]);
 
-            // Fetch Folders from Backend
-            const folderRes = await fetch(`${API_URL}/api/books/folders`);
-            const folderData = await folderRes.json();
-            const dbFolderNames = folderData.map(f => f.name);
+            const booksData = await booksRes.json();
+            const foldersData = await foldersRes.json();
 
-            // Merge with "All" and ensure no duplicates
-            setFolders(["All", ...dbFolderNames]);
+            setBooks(booksData);
+            // Prepend "All" to the folders from DB
+            setFolders(["All", ...foldersData.map(f => f.name)]);
         } catch (err) {
             console.error("❌ Failed to fetch library data:", err);
         } finally {
@@ -141,8 +140,8 @@ export default function Library() {
         if (!API_URL || !file) return;
         const formData = new FormData();
         formData.append("file", file);
-        // Automatically put new uploads into the current active folder
-        formData.append("folder", activeFolder === "All" ? "All" : activeFolder);
+        // Upload to current folder if one is selected
+        if (activeFolder !== "All") formData.append("folder", activeFolder);
 
         try {
             setUploading(true);
@@ -244,7 +243,7 @@ export default function Library() {
 
     return (
         <div className={`min-h-screen bg-bg px-6 py-8 md:ml-32 ${isSelectMode ? "pb-32" : ""}`}>
-            {/* HEADER */}
+            {/* HEADER - RESTORED TO ORIGINAL UI */}
             <div className="flex justify-between items-center mb-2">
                 <h1 className="text-3xl md:text-5xl font-extrabold text-yellow-400 uppercase tracking-tighter">Your Collection</h1>
                 {!isSelectMode && (
@@ -258,7 +257,7 @@ export default function Library() {
                 )}
             </div>
 
-            {/* FOLDER TABS - Visual Layout maintained */}
+            {/* FOLDER TABS */}
             <div className="flex items-center gap-2 overflow-x-auto pb-6 no-scrollbar">
                 {folders.map((folder) => (
                     <button
