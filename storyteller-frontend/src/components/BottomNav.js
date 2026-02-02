@@ -39,10 +39,8 @@ export default function BottomNav({ onUploadSuccess }) {
   const fileInputRef = useRef(null);
   const navigate = useNavigate();
 
-  // Pointing to your backend URL
   const API_URL = "https://storyteller-frontend-x65b.onrender.com";
 
-  // ---------- UPLOAD ----------
   const handleUploadClick = () => {
     if (fileInputRef.current) fileInputRef.current.click();
   };
@@ -52,12 +50,9 @@ export default function BottomNav({ onUploadSuccess }) {
     if (!file) return;
 
     const formData = new FormData();
-    // CRITICAL: Changed "pdf" to "file" to match your backend upload.single("file")
     formData.append("file", file);
 
     try {
-      console.log("Uploading to:", `${API_URL}/api/books`);
-
       const res = await fetch(`${API_URL}/api/books`, {
         method: "POST",
         body: formData,
@@ -72,17 +67,15 @@ export default function BottomNav({ onUploadSuccess }) {
       setShowSheet(false);
       e.target.value = "";
 
-      // Refresh data and redirect to library so user can see their book
       if (onUploadSuccess) onUploadSuccess();
       navigate("/library");
 
     } catch (err) {
       console.error("UPLOAD ERROR:", err);
-      alert("Upload failed. Check console for details.");
+      alert("Upload failed.");
     }
   };
 
-  // ---------- MOBILE SWIPE DOWN LOGIC ----------
   useEffect(() => {
     if (!sheetRef.current || !showSheet) return;
 
@@ -126,12 +119,10 @@ export default function BottomNav({ onUploadSuccess }) {
 
   return (
     <>
-      {/* BOTTOM NAV BAR */}
       <nav className="fixed bottom-0 left-0 right-0 h-16 bg-black border-t border-gray-800 z-40 flex justify-around items-center md:hidden">
         <NavItem icon={<Home className="w-5 h-5" />} label="Home" to="/" />
         <NavItem icon={<Folder className="w-5 h-5" />} label="Library" to="/library" />
 
-        {/* PLUS BUTTON TO OPEN SHEET */}
         <button
           onClick={() => setShowSheet(true)}
           className="w-10 h-10 bg-yellow-400 rounded-md flex items-center justify-center border border-yellow-500 shadow hover:bg-yellow-300 transition"
@@ -139,11 +130,20 @@ export default function BottomNav({ onUploadSuccess }) {
           <Plus className="w-5 h-5 text-black" />
         </button>
 
-        <NavItem icon={<img src={f3logo} className="w-10 h-10 object-contain" alt="Logo" />} />
+        {/* --- UPDATED LOGO LINK --- */}
+        <a
+          href="https://funficfalls.onrender.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center justify-center hover:scale-110 transition-transform"
+        >
+          <img src={f3logo} className="w-10 h-10 object-contain" alt="F3 Logo" />
+        </a>
+        {/* ------------------------- */}
+
         <NavItem icon={<User className="w-5 h-5" />} label="Profile" to="/profile" />
       </nav>
 
-      {/* ACTION SHEET OVERLAY */}
       {showSheet && (
         <div
           className="fixed inset-0 z-50 bg-black/60 flex items-end md:items-center md:justify-center px-0 md:px-4"
@@ -152,15 +152,8 @@ export default function BottomNav({ onUploadSuccess }) {
           <div
             ref={sheetRef}
             onClick={(e) => e.stopPropagation()}
-            className="
-              w-full md:max-w-[420px]
-              bg-zinc-900
-              rounded-t-2xl md:rounded-2xl
-              px-6 pb-8 pt-3
-              animate-slideUp
-            "
+            className="w-full md:max-w-[420px] bg-zinc-900 rounded-t-2xl md:rounded-2xl px-6 pb-8 pt-3 animate-slideUp"
           >
-            {/* HIDDEN FILE INPUT */}
             <input
               ref={fileInputRef}
               type="file"
@@ -168,14 +161,10 @@ export default function BottomNav({ onUploadSuccess }) {
               onChange={handleFileChange}
               className="hidden"
             />
-
-            {/* DRAG HANDLE FOR MOBILE */}
             <div className="flex justify-center mb-4 md:hidden">
               <div className="w-12 h-1.5 bg-zinc-700 rounded-full" />
             </div>
-
             <h2 className="text-white font-bold text-lg mb-5">Add to Storytime</h2>
-
             <div className="space-y-3">
               <Action icon={<Upload />} text="Upload PDF or Text" onClick={handleUploadClick} />
               <Action icon={<ScanText />} text="Scan Document" />
