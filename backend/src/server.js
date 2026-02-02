@@ -10,11 +10,15 @@ const { exec } = require("child_process");
 const app = express();
 
 /* -------------------- MIDDLEWARE -------------------- */
-app.use(cors({ origin: "*" }));
+// Updated CORS to be more robust for your specific Frontend URL
+app.use(cors({
+    origin: "https://storyteller-b1i3.onrender.com",
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
+    credentials: true
+}));
 app.use(express.json());
 
 /* -------------------- UPLOADS -------------------- */
-// Using absolute paths to prevent "file not found" issues during deletion
 const uploadDir = path.join(__dirname, "../uploads/pdf");
 const coversDir = path.join(__dirname, "../uploads/covers");
 const audioDir = path.join(__dirname, "../uploads/audio");
@@ -23,36 +27,28 @@ fs.ensureDirSync(uploadDir);
 fs.ensureDirSync(coversDir);
 fs.ensureDirSync(audioDir);
 
-// Serve the entire uploads folder
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 /* -------------------- MONGODB -------------------- */
 const MONGO_URI = process.env.MONGO_URI;
-if (!MONGO_URI) {
-    console.error("❌ MONGO_URI missing");
-    process.exit(1);
-}
-
-mongoose
-    .connect(MONGO_URI)
+mongoose.connect(MONGO_URI)
     .then(() => console.log("✅ MongoDB connected"))
-    .catch((err) => {
-        console.error("❌ MongoDB error:", err);
-        process.exit(1);
-    });
+    .catch((err) => console.error("❌ MongoDB error:", err));
 
-/* -------------------- SCHEMA -------------------- */
-const bookSchema = new mongoose.Schema(
-    {
-        title: { type: String, required: true },
-        cover: String,
-        pdfPath: String,
-        folder: { type: String, default: "default" },
-        downloads: { type: Number, default: 0 },
-        ttsRequests: { type: Number, default: 0 },
-    },
-    { timestamps: true }
-);
+/* -------------------- SCHEMAS -------------------- */
+// New Schema for Folders so they don't disappear when empty
+const Folder = mongoose.model("Folder", new mongoose.Schema({
+    name: { type: String, required: true, unique: true }
+}));
+
+const bookSchema = new mongoose.Schema({
+    title: { type: String, required: true },
+    cover: String,
+    pdfPath: String,
+    folder: { type: String, default: "All" }, // Changed "default" to "All" for cleaner UI
+    downloads: { type: Number, default: 0 },
+    ttsRequests: { type: Number, default: 0 },
+}, { timestamps: true });
 
 const Book = mongoose.model("Book", bookSchema);
 
@@ -64,7 +60,6 @@ const storage = multer.diskStorage({
         cb(null, unique + path.extname(file.originalname));
     },
 });
-
 const upload = multer({ storage });
 
 /* -------------------- HELPERS -------------------- */
@@ -80,7 +75,6 @@ const formatBook = (book) => ({
 
 const deleteBookFiles = async (book) => {
     try {
-        // pdfPath usually looks like "/uploads/pdf/filename.pdf"
         if (book.pdfPath) {
             const fullPdfPath = path.join(__dirname, "..", book.pdfPath);
             if (await fs.pathExists(fullPdfPath)) await fs.remove(fullPdfPath);
@@ -96,7 +90,27 @@ const deleteBookFiles = async (book) => {
 
 /* -------------------- API ROUTES -------------------- */
 
-// GET ALL BOOKS
+// GET ALL UNIQUE FOLDERS (From the Folder Model)
+app.get("/api/books/folders", async (_, res) => {
+    try {
+        const folders = await Folder.find().sort({ name: 1 });
+        res.json(["All", ...folders.map(f => f.name)]);
+    } catch {
+        res.status(500).json({ error: "Failed to fetch folders" });
+    }
+});
+
+app.post("/api/books/folders", async (req, res) => {
+    try {
+        const { name } = req.body;
+        if (!name || name === "All") return res.status(400).json({ error: "Invalid name" });
+        const folder = await Folder.findOneAndUpdate({ name }, { name }, { upsert: true, new: true });
+        res.status(201).json(folder);
+    } catch {
+        res.status(500).json({ error: "Folder creation failed" });
+    }
+});
+
 app.get("/api/books", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
@@ -106,123 +120,79 @@ app.get("/api/books", async (_, res) => {
     }
 });
 
-// GET ALL UNIQUE FOLDERS
-app.get("/api/books/folders", async (_, res) => {
-    try {
-        // Returns an array of strings: ["default", "Sci-Fi", "Work"]
-        const folders = await Book.distinct("folder");
-        // Filter out "default" if you don't want it in the tab bar
-        res.json(folders.filter(f => f !== "default"));
-    } catch {
-        res.status(500).json({ error: "Failed to fetch folders" });
-    }
-});
-
-// CREATE NEW FOLDER (Placeholder to keep Frontend happy)
-app.post("/api/books/folders", async (req, res) => {
-    try {
-        const { name } = req.body;
-        if (!name) return res.status(400).json({ error: "Folder name required" });
-        res.status(201).json({ name });
-    } catch {
-        res.status(500).json({ error: "Folder creation failed" });
-    }
-});
-
-// UPLOAD BOOK (Updated to handle folders)
 app.post("/api/books", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
         const title = req.file.originalname.replace(/\.[^/.]+$/, "");
-        const folder = req.body.folder || "default"; // Get folder from frontend
+        const folder = req.body.folder || "All";
         const pdfPath = `/uploads/pdf/${req.file.filename}`;
         const pdfFullPath = req.file.path;
         const baseName = path.parse(req.file.filename).name;
         const outputPrefix = path.join(coversDir, baseName);
 
-        const generateThumbnail = () =>
-            new Promise((resolve) => {
-                // Requires 'poppler-utils' installed on the server/system
-                exec(
-                    `pdftoppm -f 1 -l 1 -png -singlefile "${pdfFullPath}" "${outputPrefix}"`,
-                    (error) => {
-                        if (error) {
-                            console.error("Thumbnail error:", error);
-                            return resolve(null);
-                        }
-                        resolve(`/uploads/covers/${baseName}.png`);
-                    }
-                );
+        const generateThumbnail = () => new Promise((resolve) => {
+            exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfFullPath}" "${outputPrefix}"`, (error) => {
+                if (error) return resolve(null);
+                resolve(`/uploads/covers/${baseName}.png`);
             });
+        });
 
         const cover = await generateThumbnail();
-        const book = await Book.create({
-            title,
-            pdfPath,
-            cover,
-            folder
-        });
-
-        res.status(201).json({
-            message: "Upload successful",
-            book: formatBook(book)
-        });
+        const book = await Book.create({ title, pdfPath, cover, folder });
+        res.status(201).json(formatBook(book));
     } catch (err) {
-        console.error("Upload error:", err);
         res.status(500).json({ error: "Upload failed" });
     }
 });
 
-// DELETE SINGLE BOOK
+// MOVE BOOK TO FOLDER
+app.patch("/api/books/:id/move", async (req, res) => {
+    try {
+        const { folderName } = req.body;
+        const book = await Book.findByIdAndUpdate(req.params.id, { folder: folderName }, { new: true });
+        res.json(formatBook(book));
+    } catch {
+        res.status(500).json({ error: "Move failed" });
+    }
+});
+
 app.delete("/api/books/:id", async (req, res) => {
     try {
         const book = await Book.findById(req.params.id);
-        if (!book) return res.status(404).json({ error: "Book not found" });
-
-        await deleteBookFiles(book);
-        await Book.findByIdAndDelete(req.params.id);
-
-        res.json({ message: "Book deleted successfully" });
+        if (book) {
+            await deleteBookFiles(book);
+            await book.deleteOne();
+        }
+        res.json({ message: "Deleted" });
     } catch {
         res.status(500).json({ error: "Delete failed" });
     }
 });
 
-// BULK DELETE
 app.post("/api/books/bulk-delete", async (req, res) => {
     try {
         const { ids } = req.body;
-        if (!Array.isArray(ids)) return res.status(400).json({ error: "No IDs provided" });
-
         const books = await Book.find({ _id: { $in: ids } });
         await Promise.all(books.map(deleteBookFiles));
         await Book.deleteMany({ _id: { $in: ids } });
-
-        res.json({ message: `${books.length} books deleted` });
+        res.json({ message: "Bulk delete success" });
     } catch {
         res.status(500).json({ error: "Bulk delete failed" });
     }
 });
 
-// ACTIONS (Download/TTS Counter)
 app.patch("/api/books/:id/actions", async (req, res) => {
     try {
         const { action } = req.body;
-        const book = await Book.findById(req.params.id);
-        if (!book) return res.status(404).json({ error: "Book not found" });
-
-        if (action === "download") book.downloads++;
-        if (action === "tts") book.ttsRequests++;
-
-        await book.save();
+        const update = action === "download" ? { $inc: { downloads: 1 } } : { $inc: { ttsRequests: 1 } };
+        const book = await Book.findByIdAndUpdate(req.params.id, update, { new: true });
         res.json(formatBook(book));
     } catch {
         res.status(500).json({ error: "Action failed" });
     }
 });
 
-/* -------------------- START SERVER -------------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
     console.log(`✅ Server running on port ${PORT}`);

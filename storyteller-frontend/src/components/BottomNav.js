@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Link as RouterLink } from "react-router-dom";
+import { Link as RouterLink, useNavigate } from "react-router-dom";
 import {
   Home,
   Folder,
@@ -37,14 +37,10 @@ export default function BottomNav({ onUploadSuccess }) {
   const [showSheet, setShowSheet] = useState(false);
   const sheetRef = useRef(null);
   const fileInputRef = useRef(null);
+  const navigate = useNavigate();
 
-  const API_URL = process.env.REACT_APP_API_URL; // must be backend URL
-
-  if (!API_URL) {
-    console.warn(
-      "REACT_APP_API_URL is not set. Make sure you have .env file with REACT_APP_API_URL=https://your-backend-url"
-    );
-  }
+  // Pointing to your backend URL
+  const API_URL = "https://storyteller-frontend-x65b.onrender.com";
 
   // ---------- UPLOAD ----------
   const handleUploadClick = () => {
@@ -56,7 +52,8 @@ export default function BottomNav({ onUploadSuccess }) {
     if (!file) return;
 
     const formData = new FormData();
-    formData.append("pdf", file); // match backend field name "pdf"
+    // CRITICAL: Changed "pdf" to "file" to match your backend upload.single("file")
+    formData.append("file", file);
 
     try {
       console.log("Uploading to:", `${API_URL}/api/books`);
@@ -67,7 +64,7 @@ export default function BottomNav({ onUploadSuccess }) {
       });
 
       if (!res.ok) {
-        const text = await res.text(); // get error message from server
+        const text = await res.text();
         throw new Error(`Upload failed: ${text}`);
       }
 
@@ -75,16 +72,19 @@ export default function BottomNav({ onUploadSuccess }) {
       setShowSheet(false);
       e.target.value = "";
 
-      if (onUploadSuccess) onUploadSuccess(); // refresh library if callback exists
+      // Refresh data and redirect to library so user can see their book
+      if (onUploadSuccess) onUploadSuccess();
+      navigate("/library");
+
     } catch (err) {
       console.error("UPLOAD ERROR:", err);
       alert("Upload failed. Check console for details.");
     }
   };
 
-  // ---------- MOBILE SWIPE DOWN ----------
+  // ---------- MOBILE SWIPE DOWN LOGIC ----------
   useEffect(() => {
-    if (!sheetRef.current) return;
+    if (!sheetRef.current || !showSheet) return;
 
     const sheet = sheetRef.current;
     let startY = 0;
@@ -106,8 +106,11 @@ export default function BottomNav({ onUploadSuccess }) {
 
     const end = () => {
       sheet.style.transition = "transform 0.25s ease";
-      if (currentY - startY > 100) setShowSheet(false);
-      else sheet.style.transform = "translateY(0)";
+      if (currentY - startY > 100) {
+        setShowSheet(false);
+      } else {
+        sheet.style.transform = "translateY(0)";
+      }
     };
 
     sheet.addEventListener("touchstart", start, { passive: true });
@@ -123,11 +126,12 @@ export default function BottomNav({ onUploadSuccess }) {
 
   return (
     <>
-      {/* BOTTOM NAV */}
+      {/* BOTTOM NAV BAR */}
       <nav className="fixed bottom-0 left-0 right-0 h-16 bg-black border-t border-gray-800 z-40 flex justify-around items-center md:hidden">
         <NavItem icon={<Home className="w-5 h-5" />} label="Home" to="/" />
         <NavItem icon={<Folder className="w-5 h-5" />} label="Library" to="/library" />
 
+        {/* PLUS BUTTON TO OPEN SHEET */}
         <button
           onClick={() => setShowSheet(true)}
           className="w-10 h-10 bg-yellow-400 rounded-md flex items-center justify-center border border-yellow-500 shadow hover:bg-yellow-300 transition"
@@ -135,24 +139,24 @@ export default function BottomNav({ onUploadSuccess }) {
           <Plus className="w-5 h-5 text-black" />
         </button>
 
-        <NavItem icon={<img src={f3logo} className="w-12 h-12 object-contain" />} />
+        <NavItem icon={<img src={f3logo} className="w-10 h-10 object-contain" alt="Logo" />} />
         <NavItem icon={<User className="w-5 h-5" />} label="Profile" to="/profile" />
       </nav>
 
-      {/* OVERLAY */}
+      {/* ACTION SHEET OVERLAY */}
       {showSheet && (
         <div
-          className="fixed inset-0 z-50 bg-black/60 flex items-end md:items-center md:justify-center"
+          className="fixed inset-0 z-50 bg-black/60 flex items-end md:items-center md:justify-center px-0 md:px-4"
           onClick={() => setShowSheet(false)}
         >
           <div
             ref={sheetRef}
             onClick={(e) => e.stopPropagation()}
             className="
-              w-full md:w-[420px]
+              w-full md:max-w-[420px]
               bg-zinc-900
               rounded-t-2xl md:rounded-2xl
-              px-6 pb-6 pt-3
+              px-6 pb-8 pt-3
               animate-slideUp
             "
           >
@@ -165,17 +169,18 @@ export default function BottomNav({ onUploadSuccess }) {
               className="hidden"
             />
 
+            {/* DRAG HANDLE FOR MOBILE */}
             <div className="flex justify-center mb-4 md:hidden">
               <div className="w-12 h-1.5 bg-zinc-700 rounded-full" />
             </div>
 
-            <h2 className="text-white font-bold text-lg mb-5">Storytime</h2>
+            <h2 className="text-white font-bold text-lg mb-5">Add to Storytime</h2>
 
             <div className="space-y-3">
-              <Action icon={<Upload />} text="Upload Files" onClick={handleUploadClick} />
-              <Action icon={<ScanText />} text="Scan Text" />
+              <Action icon={<Upload />} text="Upload PDF or Text" onClick={handleUploadClick} />
+              <Action icon={<ScanText />} text="Scan Document" />
               <Action icon={<Link />} text="Paste Article URL" />
-              <Action icon={<Cloud />} text="Connect to Google Drive" />
+              <Action icon={<Cloud />} text="Import from Cloud" />
             </div>
           </div>
         </div>
@@ -200,8 +205,8 @@ function Action({ icon, text, onClick }) {
       onClick={onClick}
       className="w-full flex items-center gap-3 bg-zinc-800 hover:bg-zinc-700 text-white py-3 px-4 rounded-xl transition"
     >
-      <span className="w-5 h-5">{icon}</span>
-      <span>{text}</span>
+      <span className="w-5 h-5 text-yellow-400">{icon}</span>
+      <span className="font-medium">{text}</span>
     </button>
   );
 }
