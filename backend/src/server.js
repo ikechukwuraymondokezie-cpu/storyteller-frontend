@@ -190,19 +190,17 @@ app.patch("/api/books/:id/actions", async (req, res) => {
 });
 
 /* -------------------- THE REFRESH FIX -------------------- */
-// Pointing specifically to your "storyteller-frontend/build" folder
-const buildPath = path.join(__dirname, "../storyteller-frontend/build");
-
-// Serve static files
+// This must be AFTER all other routes
+const buildPath = path.join(__dirname, "../client/build");
 app.use(express.static(buildPath));
 
-// Catch-all route to handle React Router refreshes
 app.get("*", (req, res) => {
     const indexPath = path.join(buildPath, "index.html");
     if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);
     } else {
-        res.status(404).send("Frontend build not found. Ensure you ran 'npm run build' in storyteller-frontend.");
+        // Fallback if build doesn't exist yet
+        res.status(404).send("API route not found and Frontend build not found.");
     }
 });
 
