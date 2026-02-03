@@ -55,6 +55,9 @@ export default function Library() {
     const [isSelectMode, setIsSelectMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState([]);
 
+    // VIEW MODE STATE (Grid vs List)
+    const [viewMode, setViewMode] = useState("grid");
+
     /* ---------------- TOP NAV EVENT LISTENERS ---------------- */
     useEffect(() => {
         const handleToggle = () => {
@@ -70,14 +73,21 @@ export default function Library() {
             setIsFolderModalOpen(true);
         };
 
+        // Added listener for the view switch
+        const handleViewChange = (e) => {
+            setViewMode(e.detail);
+        };
+
         window.addEventListener("toggle-selection-mode", handleToggle);
         window.addEventListener("search-books", handleSearch);
         window.addEventListener("open-folder-modal", handleOpenFolderModal);
+        window.addEventListener("toggle-view-mode", handleViewChange);
 
         return () => {
             window.removeEventListener("toggle-selection-mode", handleToggle);
             window.removeEventListener("search-books", handleSearch);
             window.removeEventListener("open-folder-modal", handleOpenFolderModal);
+            window.removeEventListener("toggle-view-mode", handleViewChange);
         };
     }, []);
 
@@ -93,7 +103,6 @@ export default function Library() {
             const folderRes = await fetch(`${API_URL}/api/books/folders`);
             const folderData = await folderRes.json();
 
-            // folderData is now an array of strings like ["Fiction", "Work"]
             const folderNames = ["All", ...folderData];
             setFolders(folderNames);
         } catch (err) {
@@ -136,7 +145,6 @@ export default function Library() {
         if (!API_URL || !file) return;
         const formData = new FormData();
         formData.append("file", file);
-        // If "All" is selected, we send "default", otherwise we send the specific folder name
         formData.append("folder", activeFolder === "All" ? "default" : activeFolder);
 
         try {
@@ -146,8 +154,6 @@ export default function Library() {
                 body: formData,
             });
             const data = await res.json();
-
-            // Your server returns { message, book }, so we take data.book
             if (data?.book) {
                 setBooks((prev) => [data.book, ...prev]);
             }
@@ -174,18 +180,6 @@ export default function Library() {
         } catch (err) {
             console.error("❌ Bulk delete failed:", err);
             alert("Delete failed. Please try again.");
-        }
-    };
-
-    const handleDeleteSingle = async (id) => {
-        if (!window.confirm("Delete this book permanently?")) return;
-        try {
-            const res = await fetch(`${API_URL}/api/books/${id}`, { method: "DELETE" });
-            if (!res.ok) throw new Error("Delete failed");
-            setBooks((prev) => prev.filter((b) => b._id !== id));
-            setActiveBook(null);
-        } catch (err) {
-            console.error("❌ Delete failed:", err);
         }
     };
 
@@ -294,28 +288,51 @@ export default function Library() {
                     {searchQuery ? `No results for "${searchQuery}"` : "No books found in this folder."}
                 </div>
             ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+                <div className={
+                    viewMode === "grid"
+                        ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4"
+                        : "flex flex-col gap-2"
+                }>
                     {filteredBooks.map((book) => (
                         <div key={book._id} onClick={() => isSelectMode && toggleBookSelection(book._id)}
-                            className={`relative bg-zinc-900 rounded-lg p-2 transition group cursor-pointer ${selectedIds.includes(book._id) ? "ring-2 ring-yellow-400 bg-zinc-800" : "hover:bg-zinc-800"}`}
+                            className={`relative bg-zinc-900 transition group cursor-pointer overflow-hidden
+                                ${viewMode === "grid" ? "rounded-lg p-2 flex-col" : "rounded-xl p-3 flex items-center gap-4"}
+                                ${selectedIds.includes(book._id) ? "ring-2 ring-yellow-400 bg-zinc-800" : "hover:bg-zinc-800"}`}
                         >
                             {isSelectMode && (
-                                <div className="absolute top-3 left-3 z-10">
+                                <div className={viewMode === "grid" ? "absolute top-3 left-3 z-10" : "mr-2"}>
                                     <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition ${selectedIds.includes(book._id) ? "bg-yellow-400 border-yellow-400" : "bg-black/40 border-white"}`}>
                                         {selectedIds.includes(book._id) && <X size={12} className="text-black stroke-[4px]" />}
                                     </div>
                                 </div>
                             )}
-                            <div className="aspect-[2/3] w-full overflow-hidden rounded-md bg-zinc-800">
+
+                            {/* COVER IMAGE */}
+                            <div className={`overflow-hidden rounded-md bg-zinc-800 flex-shrink-0 
+                                ${viewMode === "grid" ? "aspect-[2/3] w-full" : "w-12 h-16"}`}
+                            >
                                 <img src={book.cover ? `${API_URL}${book.cover}` : defaultCover} alt={book.title}
                                     className="w-full h-full object-cover"
                                     onError={(e) => { e.target.src = defaultCover; }}
                                 />
                             </div>
-                            <p className="mt-2 text-white text-sm font-medium truncate px-1">{book.title}</p>
+
+                            {/* TITLE & DETAILS */}
+                            <div className="flex-1 overflow-hidden">
+                                <p className={`text-white font-medium truncate ${viewMode === "grid" ? "mt-2 text-sm px-1 text-center" : "text-base"}`}>
+                                    {book.title}
+                                </p>
+                                {viewMode === "list" && (
+                                    <p className="text-zinc-500 text-[10px] uppercase tracking-widest mt-0.5">
+                                        Folder: {book.folder || "Default"}
+                                    </p>
+                                )}
+                            </div>
+
                             {!isSelectMode && (
                                 <button onClick={(e) => { e.stopPropagation(); setActiveBook(book); }}
-                                    className="absolute top-2 right-2 p-1 rounded-full bg-black/40 hover:bg-zinc-700 transition"
+                                    className={`p-1 rounded-full bg-black/40 hover:bg-zinc-700 transition flex-shrink-0
+                                        ${viewMode === "grid" ? "absolute top-2 right-2" : "ml-auto"}`}
                                 >
                                     <MoreHorizontal className="w-5 h-5 text-white" />
                                 </button>
@@ -355,7 +372,6 @@ export default function Library() {
                     >
                         <div className="w-12 h-1 bg-zinc-700 rounded-full mx-auto my-1 md:hidden" />
 
-                        {/* HEADER */}
                         <div className="flex items-center gap-4 mb-6 mt-2">
                             <img
                                 src={activeBook.cover ? `${API_URL}${activeBook.cover}` : defaultCover}
@@ -372,7 +388,6 @@ export default function Library() {
                             </div>
                         </div>
 
-                        {/* ACTIONS (MAX 3) */}
                         <div className="space-y-3">
                             <button
                                 onClick={() => handleAction(activeBook._id, "download")}
