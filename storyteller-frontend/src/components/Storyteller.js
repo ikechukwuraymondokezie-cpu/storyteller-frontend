@@ -58,11 +58,12 @@ export default function Storyteller() {
 
     return (
         <div className="w-full bg-bg flex flex-col min-h-screen">
+
             <main className="flex-1 flex flex-col">
-                <div className="flex flex-col space-y-8 py-4">
+                <div className="flex flex-col space-y-6">
 
                     {/* PROMO SLIDER */}
-                    <div className="h-[22vh] w-full px-6">
+                    <div className="h-[20vh] w-full px-6">
                         <PromoSlider />
                     </div>
 
