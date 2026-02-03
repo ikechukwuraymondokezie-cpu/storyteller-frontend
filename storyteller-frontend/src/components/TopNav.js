@@ -103,7 +103,7 @@ export default function TopNav() {
                         ) : isProfile ? (
                             <span className="text-white font-semibold text-lg">Profile</span>
                         ) : (
-                            <img src={logo} alt="Storyteller" className="h-12" />
+                            <img src={logo} alt="Storyteller" className="h-14" />
                         )}
                     </div>
 
