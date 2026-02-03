@@ -55,8 +55,11 @@ export default function Library() {
     const [isSelectMode, setIsSelectMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState([]);
 
-    // VIEW MODE STATE (Grid vs List)
-    const [viewMode, setViewMode] = useState("grid");
+    // NEW: Sort state
+    const [sortType, setSortType] = useState("recent");
+
+    // VIEW MODE STATE
+    const [viewMode, setViewMode] = useState(localStorage.getItem("libraryViewMode") || "grid");
 
     /* ---------------- TOP NAV EVENT LISTENERS ---------------- */
     useEffect(() => {
@@ -73,21 +76,31 @@ export default function Library() {
             setIsFolderModalOpen(true);
         };
 
-        // Added listener for the view switch
         const handleViewChange = (e) => {
-            setViewMode(e.detail);
+            if (e.detail === "grid" || e.detail === "list") {
+                setViewMode(e.detail);
+            } else {
+                setViewMode((prev) => (prev === "grid" ? "list" : "grid"));
+            }
+        };
+
+        // NEW: Sort Listener
+        const handleSort = (e) => {
+            setSortType(e.detail); // "alpha" or "recent"
         };
 
         window.addEventListener("toggle-selection-mode", handleToggle);
         window.addEventListener("search-books", handleSearch);
         window.addEventListener("open-folder-modal", handleOpenFolderModal);
         window.addEventListener("toggle-view-mode", handleViewChange);
+        window.addEventListener("sort-library", handleSort);
 
         return () => {
             window.removeEventListener("toggle-selection-mode", handleToggle);
             window.removeEventListener("search-books", handleSearch);
             window.removeEventListener("open-folder-modal", handleOpenFolderModal);
             window.removeEventListener("toggle-view-mode", handleViewChange);
+            window.removeEventListener("sort-library", handleSort);
         };
     }, []);
 
@@ -133,12 +146,21 @@ export default function Library() {
         }
     };
 
-    /* ---------------- FILTERING LOGIC ---------------- */
-    const filteredBooks = books.filter((book) => {
-        const matchesSearch = book.title.toLowerCase().includes(searchQuery);
-        const matchesFolder = activeFolder === "All" || book.folder === activeFolder;
-        return matchesSearch && matchesFolder;
-    });
+    /* ---------------- FILTERING & SORTING LOGIC ---------------- */
+    const filteredBooks = books
+        .filter((book) => {
+            const matchesSearch = book.title.toLowerCase().includes(searchQuery);
+            const matchesFolder = activeFolder === "All" || book.folder === activeFolder;
+            return matchesSearch && matchesFolder;
+        })
+        .sort((a, b) => {
+            if (sortType === "alpha") {
+                return a.title.localeCompare(b.title);
+            } else {
+                // Sort by "Recently Added" (assuming MongoDB _id or a createdAt field)
+                return new Date(b.createdAt || b._id.getTimestamp?.() || 0) - new Date(a.createdAt || a._id.getTimestamp?.() || 0);
+            }
+        });
 
     /* ---------------- UPLOAD BOOK ---------------- */
     const handleUpload = async (file) => {
