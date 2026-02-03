@@ -1,15 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import {
-    MoreHorizontal,
-    Download,
-    Plus,
-    FolderPlus,
-    Trash2,
-    X,
-    Folder,
-    Play,
-    CheckCircle2
-} from "lucide-react";
+import { MoreHorizontal, Download, Plus, FolderPlus, Trash2, X, Folder } from "lucide-react";
 
 import f3logo from "../assets/blacklogo.png";
 import defaultCover from "../assets/cover.jpg";
@@ -65,12 +55,9 @@ export default function Library() {
     const [isSelectMode, setIsSelectMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState([]);
 
-    // NEW: View Mode State
-    const [viewMode, setViewMode] = useState(localStorage.getItem("libraryViewMode") || "grid");
-
     /* ---------------- TOP NAV EVENT LISTENERS ---------------- */
     useEffect(() => {
-        const handleToggleSelection = () => {
+        const handleToggle = () => {
             setIsSelectMode((prev) => !prev);
             setSelectedIds([]);
         };
@@ -83,20 +70,14 @@ export default function Library() {
             setIsFolderModalOpen(true);
         };
 
-        const handleViewMode = () => {
-            setViewMode(localStorage.getItem("libraryViewMode") || "grid");
-        };
-
-        window.addEventListener("toggle-selection-mode", handleToggleSelection);
+        window.addEventListener("toggle-selection-mode", handleToggle);
         window.addEventListener("search-books", handleSearch);
         window.addEventListener("open-folder-modal", handleOpenFolderModal);
-        window.addEventListener("toggle-view-mode", handleViewMode);
 
         return () => {
-            window.removeEventListener("toggle-selection-mode", handleToggleSelection);
+            window.removeEventListener("toggle-selection-mode", handleToggle);
             window.removeEventListener("search-books", handleSearch);
             window.removeEventListener("open-folder-modal", handleOpenFolderModal);
-            window.removeEventListener("toggle-view-mode", handleViewMode);
         };
     }, []);
 
@@ -111,6 +92,8 @@ export default function Library() {
 
             const folderRes = await fetch(`${API_URL}/api/books/folders`);
             const folderData = await folderRes.json();
+
+            // folderData is now an array of strings like ["Fiction", "Work"]
             const folderNames = ["All", ...folderData];
             setFolders(folderNames);
         } catch (err) {
@@ -153,6 +136,7 @@ export default function Library() {
         if (!API_URL || !file) return;
         const formData = new FormData();
         formData.append("file", file);
+        // If "All" is selected, we send "default", otherwise we send the specific folder name
         formData.append("folder", activeFolder === "All" ? "default" : activeFolder);
 
         try {
@@ -162,6 +146,8 @@ export default function Library() {
                 body: formData,
             });
             const data = await res.json();
+
+            // Your server returns { message, book }, so we take data.book
             if (data?.book) {
                 setBooks((prev) => [data.book, ...prev]);
             }
@@ -257,7 +243,7 @@ export default function Library() {
     };
 
     return (
-        <div className={`min-h-screen bg-bg px-6 py-8 md:pl-40 ${isSelectMode ? "pb-32" : ""}`}>
+        <div className={`min-h-screen bg-bg px-6 py-8 ${isSelectMode ? "pb-32" : ""}`}>
             {/* HEADER */}
             <div className="flex justify-between items-center mb-6">
                 <h1 className="text-3xl md:text-5xl font-extrabold text-yellow-400">
@@ -307,8 +293,7 @@ export default function Library() {
                 <div className="text-center text-zinc-400 mt-20">
                     {searchQuery ? `No results for "${searchQuery}"` : "No books found in this folder."}
                 </div>
-            ) : viewMode === "grid" ? (
-                /* ---------------- GRID VIEW ---------------- */
+            ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
                     {filteredBooks.map((book) => (
                         <div key={book._id} onClick={() => isSelectMode && toggleBookSelection(book._id)}
@@ -338,57 +323,6 @@ export default function Library() {
                         </div>
                     ))}
                 </div>
-            ) : (
-                /* ---------------- LIST VIEW ---------------- */
-                <div className="flex flex-col gap-2 max-w-5xl">
-                    {filteredBooks.map((book) => (
-                        <div
-                            key={book._id}
-                            onClick={() => isSelectMode && toggleBookSelection(book._id)}
-                            className={`flex items-center gap-4 p-3 rounded-xl border transition group cursor-pointer ${selectedIds.includes(book._id)
-                                    ? "bg-yellow-400/10 border-yellow-400/50"
-                                    : "bg-zinc-900/50 border-white/5 hover:bg-zinc-800"
-                                }`}
-                        >
-                            {/* Selection Checkmark */}
-                            {isSelectMode && (
-                                <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition ${selectedIds.includes(book._id) ? "bg-yellow-400 border-yellow-400" : "border-zinc-600"
-                                    }`}>
-                                    {selectedIds.includes(book._id) && <X size={14} className="text-black stroke-[4px]" />}
-                                </div>
-                            )}
-
-                            {/* Mini Cover */}
-                            <div className="w-12 h-16 rounded overflow-hidden flex-shrink-0 bg-zinc-800">
-                                <img
-                                    src={book.cover ? `${API_URL}${book.cover}` : defaultCover}
-                                    className="w-full h-full object-cover"
-                                    alt={book.title}
-                                />
-                            </div>
-
-                            {/* Info */}
-                            <div className="flex-grow min-w-0">
-                                <h3 className="text-white font-semibold truncate">{book.title}</h3>
-                                <p className="text-zinc-500 text-xs flex items-center gap-1 mt-1">
-                                    <Folder size={12} /> {book.folder || "Uncategorized"}
-                                </p>
-                            </div>
-
-                            {/* Actions */}
-                            {!isSelectMode && (
-                                <div className="flex items-center gap-3">
-                                    <button
-                                        onClick={(e) => { e.stopPropagation(); setActiveBook(book); }}
-                                        className="p-2 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white transition"
-                                    >
-                                        <MoreHorizontal size={20} />
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-                    ))}
-                </div>
             )}
 
             {/* FLOATING SELECTION BAR */}
@@ -410,12 +344,18 @@ export default function Library() {
 
             {/* ACTION SHEET */}
             {activeBook && !isSelectMode && (
-                <div className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center justify-center" onClick={() => setActiveBook(null)}>
-                    <div ref={sheetRef} onClick={(e) => e.stopPropagation()}
+                <div
+                    className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center justify-center"
+                    onClick={() => setActiveBook(null)}
+                >
+                    <div
+                        ref={sheetRef}
+                        onClick={(e) => e.stopPropagation()}
                         className="w-full max-w-lg bg-zinc-900 rounded-t-3xl md:rounded-2xl pt-2 px-6 pb-8 md:pb-6 shadow-2xl"
                     >
                         <div className="w-12 h-1 bg-zinc-700 rounded-full mx-auto my-1 md:hidden" />
 
+                        {/* HEADER */}
                         <div className="flex items-center gap-4 mb-6 mt-2">
                             <img
                                 src={activeBook.cover ? `${API_URL}${activeBook.cover}` : defaultCover}
@@ -423,33 +363,45 @@ export default function Library() {
                                 alt="cover"
                             />
                             <div className="flex flex-col justify-center overflow-hidden">
-                                <p className="text-white font-bold text-lg leading-tight truncate">{activeBook.title}</p>
-                                <p className="text-zinc-500 text-sm mt-1 flex items-center gap-1">
-                                    <Folder size={14} /> {activeBook.folder || "Uncategorized"}
+                                <p className="text-white font-bold text-lg leading-tight truncate">
+                                    {activeBook.title}
+                                </p>
+                                <p className="text-zinc-400 text-sm mt-1">
+                                    Listen to your books offline
                                 </p>
                             </div>
                         </div>
 
+                        {/* ACTIONS (MAX 3) */}
                         <div className="space-y-3">
-                            <button onClick={() => handleAction(activeBook._id, "download")} className="w-full flex items-center justify-center gap-3 bg-yellow-600 text-white py-3 rounded-xl font-semibold hover:bg-yellow-500 transition-colors">
-                                <Download className="w-5 h-5" /> Download Audio
+                            <button
+                                onClick={() => handleAction(activeBook._id, "download")}
+                                className="w-full flex items-center justify-center gap-3 bg-yellow-600 text-white py-3 rounded-xl font-semibold hover:bg-yellow-500 transition-colors"
+                            >
+                                <Download className="w-5 h-5" />
+                                Download Audio
                             </button>
 
-                            <button onClick={() => handleAction(activeBook._id, "tts")} className="w-full flex items-center justify-center gap-3 bg-white text-black py-3 rounded-xl font-semibold hover:bg-zinc-200 transition-colors">
-                                <img src={f3logo} className="w-8 h-8" alt="f3" /> Read with Funfiction&falacies
+                            <button
+                                onClick={() => handleAction(activeBook._id, "tts")}
+                                className="w-full flex items-center justify-center gap-3 bg-white text-black py-3 rounded-xl font-semibold hover:bg-zinc-200 transition-colors"
+                            >
+                                <img src={f3logo} className="w-8 h-8" alt="f3" />
+                                Read with Funfiction & Falacies
                             </button>
 
-                            <button onClick={() => alert("Move logic coming soon")} className="w-full flex items-center justify-center gap-2 bg-zinc-800 text-white py-3 rounded-xl font-semibold hover:bg-zinc-700 transition-colors">
-                                <FolderPlus className="w-5 h-5" /> Move to Folder
-                            </button>
-
-                            <button onClick={() => handleDeleteSingle(activeBook._id)} className="w-full flex items-center justify-center gap-2 bg-red-900/20 text-red-500 py-3 rounded-xl font-semibold hover:bg-red-900/40 transition-colors">
-                                <Trash2 className="w-5 h-5" /> Delete Permanently
+                            <button
+                                onClick={() => alert("Move logic coming soon")}
+                                className="w-full flex items-center justify-center gap-2 bg-black text-white py-3 rounded-xl font-semibold hover:bg-zinc-800 transition-colors"
+                            >
+                                <FolderPlus className="w-5 h-5" />
+                                Move to Folder
                             </button>
                         </div>
                     </div>
                 </div>
             )}
+
             <FolderModal
                 isOpen={isFolderModalOpen}
                 onClose={() => setIsFolderModalOpen(false)}
