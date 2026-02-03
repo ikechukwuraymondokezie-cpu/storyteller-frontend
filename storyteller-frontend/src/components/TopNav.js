@@ -73,15 +73,27 @@ export default function TopNav() {
         setShowOptions(false);
     };
 
+    const handleSortAlpha = () => {
+        window.dispatchEvent(new CustomEvent("sort-library", { detail: "alpha" }));
+        setShowOptions(false);
+    };
+
+    const handleSortRecent = () => {
+        window.dispatchEvent(new CustomEvent("sort-library", { detail: "recent" }));
+        setShowOptions(false);
+    };
+
     /* ---------------- UI ---------------- */
     return (
         <>
-            {/* NAV */}
-            <nav className="
-                fixed z-50 top-0 left-0 w-full h-11 md:w-32 md:h-screen
-                bg-black/30 backdrop-blur-xl
-                border-b border-white/5 md:border-b-0 md:border-r md:border-white/10
-            ">
+            {/* NAV — COMPLETELY TRANSPARENT */}
+            <nav
+                className="
+                    fixed z-50 top-0 left-0 w-full h-11
+                    md:w-32 md:h-screen
+                    bg-transparent
+                "
+            >
                 <div className="flex h-full items-center justify-between px-6 md:flex-col md:items-center md:justify-start md:px-0 md:py-10 md:gap-12">
 
                     {/* MOBILE TITLE */}
@@ -125,7 +137,7 @@ export default function TopNav() {
 
                         {/* LIBRARY ACTIONS */}
                         {isLibrary && (
-                            <div className="flex flex-col items-center gap-8 pt-8 border-t border-white/10 w-full">
+                            <div className="flex flex-col items-center gap-8 pt-8 w-full">
                                 <Search
                                     className={`w-6 h-6 cursor-pointer ${showSearch
                                         ? "text-yellow-400"
@@ -154,6 +166,8 @@ export default function TopNav() {
                                             onToggleView={toggleViewMode}
                                             onSelectMode={triggerSelectionMode}
                                             onCreateFolder={triggerCreateFolder}
+                                            onSortAlpha={handleSortAlpha}
+                                            onSortRecent={handleSortRecent}
                                         />
                                     )}
                                 </div>
@@ -170,7 +184,7 @@ export default function TopNav() {
                             <img
                                 src={f3logo}
                                 alt="F3"
-                                className="w-10 opacity-50 hover:opacity-100 transition cursor-pointer hover:scale-110"
+                                className="w-10 opacity-50 hover:opacity-100 transition hover:scale-110"
                             />
                         </a>
                     </div>
@@ -199,6 +213,8 @@ export default function TopNav() {
                                         onToggleView={toggleViewMode}
                                         onSelectMode={triggerSelectionMode}
                                         onCreateFolder={triggerCreateFolder}
+                                        onSortAlpha={handleSortAlpha}
+                                        onSortRecent={handleSortRecent}
                                     />
                                 )}
                             </div>
@@ -207,9 +223,9 @@ export default function TopNav() {
                 </div>
             </nav>
 
-            {/* SEARCH BAR */}
+            {/* SEARCH BAR (unchanged) */}
             {showSearch && (
-                <div className="fixed z-40 top-11 left-0 w-full md:left-32 md:w-[calc(100%-8rem)] bg-zinc-900/80 backdrop-blur-xl px-4 py-3 border-b border-white/5">
+                <div className="fixed z-40 top-11 left-0 w-full md:left-32 md:w-[calc(100%-8rem)] bg-zinc-900/80 backdrop-blur-xl px-4 py-3">
                     <input
                         autoFocus
                         type="text"
@@ -225,40 +241,32 @@ export default function TopNav() {
 
 /* ================= OPTIONS MENU ================= */
 
-function OptionsMenu({ viewMode, onToggleView, onSelectMode, onCreateFolder }) {
+function OptionsMenu({
+    viewMode,
+    onToggleView,
+    onSelectMode,
+    onCreateFolder,
+    onSortAlpha,
+    onSortRecent
+}) {
     return (
         <div className="absolute right-0 md:left-full md:ml-6 mt-2 md:mt-[-60px] w-56 bg-zinc-900 border border-white/10 rounded-xl shadow-2xl text-sm text-white overflow-hidden z-[60]">
-            <MenuItem
-                icon={<FolderPlus size={18} />}
-                text="Create folder"
-                onClick={onCreateFolder}
-            />
-
+            <MenuItem icon={<FolderPlus size={18} />} text="Create folder" onClick={onCreateFolder} />
             <MenuItem
                 icon={viewMode === "grid" ? <List size={18} /> : <LayoutGrid size={18} />}
                 text={viewMode === "grid" ? "Switch to list" : "Switch to grid"}
                 onClick={onToggleView}
             />
-
-            <MenuItem
-                icon={<CheckSquare size={18} />}
-                text="Select files"
-                onClick={onSelectMode}
-            />
+            <MenuItem icon={<CheckSquare size={18} />} text="Select files" onClick={onSelectMode} />
 
             <div className="border-t border-white/5" />
 
-            <MenuItem icon={<ArrowDownAZ size={18} />} text="Alphabetical" />
-            <MenuItem icon={<Clock size={18} />} text="Recently added" />
+            <MenuItem icon={<ArrowDownAZ size={18} />} text="Alphabetical" onClick={onSortAlpha} />
+            <MenuItem icon={<Clock size={18} />} text="Recently added" onClick={onSortRecent} />
 
             <div className="border-t border-white/5" />
 
-            <MenuItem
-                icon={<Trash2 size={18} />}
-                text="Delete books"
-                danger
-                onClick={onSelectMode}
-            />
+            <MenuItem icon={<Trash2 size={18} />} text="Delete books" danger onClick={onSelectMode} />
         </div>
     );
 }
