@@ -2,6 +2,9 @@ import { useState, useEffect } from "react";
 import PromoSlider from "./PromoSlider";
 import f3banner from "../assets/f3banner2.png";
 
+/* ---------------- HELPERS ---------------- */
+
+// Formats date to "X hours/days ago"
 const formatTimeAgo = (dateString) => {
     if (!dateString) return "Recently";
     const now = new Date();
@@ -20,15 +23,19 @@ export default function Storyteller() {
     const [recentBooks, setRecentBooks] = useState([]);
     const [loading, setLoading] = useState(true);
 
+    /* ---------------- FETCH RECENT DATA ---------------- */
     useEffect(() => {
         const fetchRecent = async () => {
             if (!API_URL) return;
             try {
                 const res = await fetch(`${API_URL}/api/books`);
                 const data = await res.json();
+
+                // Sort by ID (time-sequential) and take the top 3
                 const sorted = data
                     .sort((a, b) => b._id.localeCompare(a._id))
-                    .slice(0, 6); // Take up to 6 for scrolling
+                    .slice(0, 3);
+
                 setRecentBooks(sorted);
             } catch (err) {
                 console.error("❌ Failed to fetch recent books:", err);
@@ -39,77 +46,106 @@ export default function Storyteller() {
         fetchRecent();
     }, [API_URL]);
 
+    /* ---------------- HANDLERS ---------------- */
     const openBook = (book) => {
-        if (book.url) window.open(`${API_URL}${book.url}`, "_blank");
+        if (book.url) {
+            // Opens the PDF directly in a new browser tab
+            window.open(`${API_URL}${book.url}`, "_blank");
+        } else {
+            alert("This book does not have a valid file URL.");
+        }
     };
 
     return (
-        /* pt-11 makes sure content starts after the mobile TopNav height */
-        <div className="w-full bg-bg flex flex-col min-h-screen pt-11 md:pt-0">
+        <div className="w-full bg-bg flex flex-col min-h-screen">
             <main className="flex-1 flex flex-col">
-                <div className="flex flex-col space-y-6 py-6">
+                <div className="flex flex-col space-y-8 py-4">
 
-                    {/* SECTION 1: PROMO SLIDER (20vh) */}
-                    <div className="h-[20vh] w-full px-6">
+                    {/* PROMO SLIDER */}
+                    <div className="h-[22vh] w-full px-6">
                         <PromoSlider />
                     </div>
 
-                    {/* SECTION 2: F3 BANNER (26vh - Slightly bigger) */}
+                    {/* F3 BANNER CARD */}
                     <div className="px-6">
                         <div
-                            className="group h-[26vh] w-full rounded-2xl bg-cover bg-center relative overflow-hidden cursor-pointer shadow-2xl"
+                            className="group h-[26vh] w-full rounded-2xl bg-cover bg-center relative overflow-hidden cursor-pointer shadow-xl"
                             style={{ backgroundImage: `url(${f3banner})` }}
                             onClick={() => window.open("https://funficfalls.onrender.com/", "_blank")}
                         >
-                            <div className="absolute inset-0 bg-black/10 group-hover:bg-black/50 transition-all duration-300" />
+                            <div className="absolute inset-0 bg-black/20 group-hover:bg-black/60 transition-all duration-300" />
                             <div className="absolute inset-0 flex flex-col items-center justify-center text-center opacity-0 group-hover:opacity-100 transition-all duration-300 px-8">
-                                <h2 className="text-xl font-bold text-white uppercase tracking-tighter">
-                                    Publish Your Web Novels
+                                <h2 className="text-xl md:text-2xl font-bold text-white tracking-tight">
+                                    Write and publish your web novels and reach readers
                                 </h2>
-                                <p className="text-yellow-400 text-xs font-bold mt-2">EXPLORE F3 →</p>
+                                <div className="mt-4 px-4 py-2 bg-yellow-400 text-black text-xs font-bold rounded-full uppercase tracking-tighter">
+                                    Explore F3 →
+                                </div>
                             </div>
                         </div>
                     </div>
 
-                    {/* SECTION 3: RECENTLY ADDED (20vh - Scrollable) */}
-                    <div className="w-full">
-                        <div className="px-6 flex justify-between items-end mb-4">
-                            <h2 className="text-lg font-bold text-white tracking-tight">Recently Added</h2>
-                            <span className="text-zinc-500 text-[10px] uppercase font-bold">Swipe →</span>
+                    {/* RECENTLY ADDED SECTION */}
+                    <div className="w-full px-6 pb-12">
+                        <div className="flex items-center justify-between mb-5">
+                            <h2 className="text-xl font-bold text-white tracking-tight">
+                                Recently Added
+                            </h2>
+                            <button
+                                onClick={() => window.location.href = '/library'}
+                                className="text-yellow-400 text-sm font-semibold hover:underline"
+                            >
+                                View Library
+                            </button>
                         </div>
 
-                        <div className="h-[20vh] flex gap-4 overflow-x-auto px-6 no-scrollbar">
-                            {loading ? (
-                                [1, 2, 3].map((i) => (
-                                    <div key={i} className="min-w-[280px] h-full bg-white/5 rounded-2xl animate-pulse" />
-                                ))
-                            ) : (
-                                recentBooks.map((book) => (
+                        {loading ? (
+                            <div className="flex gap-4">
+                                {[1, 2, 3].map((i) => (
+                                    <div key={i} className="flex-1 h-20 bg-white/5 rounded-xl animate-pulse" />
+                                ))}
+                            </div>
+                        ) : recentBooks.length === 0 ? (
+                            <div className="bg-white/5 border border-white/10 rounded-2xl p-8 text-center">
+                                <p className="text-zinc-500">Your library is currently empty.</p>
+                            </div>
+                        ) : (
+                            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
+                                {recentBooks.map((book) => (
                                     <div
                                         key={book._id}
-                                        className="min-w-[280px] h-full bg-yellow-400 rounded-2xl p-5 text-black flex items-center justify-between cursor-pointer active:scale-95 transition-transform flex-shrink-0 shadow-lg"
+                                        className="bg-yellow-400/90 rounded-2xl p-4 text-black flex items-center justify-between cursor-pointer hover:bg-yellow-400 active:scale-[0.97] transition-all shadow-lg hover:shadow-yellow-400/20"
                                         onClick={() => openBook(book)}
                                     >
                                         <div className="flex items-center gap-4 overflow-hidden">
-                                            <div className="w-12 h-16 bg-black/10 rounded-lg flex-shrink-0 flex items-center justify-center shadow-inner overflow-hidden">
+                                            {/* COVER THUMBNAIL */}
+                                            <div className="w-10 h-14 bg-black/10 rounded-md flex-shrink-0 overflow-hidden flex items-center justify-center shadow-inner">
                                                 {book.cover ? (
-                                                    <img src={`${API_URL}${book.cover}`} className="w-full h-full object-cover" alt="" />
+                                                    <img
+                                                        src={`${API_URL}${book.cover}`}
+                                                        className="w-full h-full object-cover"
+                                                        alt=""
+                                                    />
                                                 ) : (
-                                                    <span className="text-2xl">📄</span>
+                                                    <span className="text-xl">📄</span>
                                                 )}
                                             </div>
+
+                                            {/* DETAILS */}
                                             <div className="overflow-hidden">
-                                                <h3 className="font-bold text-sm truncate leading-tight">{book.title}</h3>
+                                                <h3 className="font-bold text-sm leading-tight truncate">
+                                                    {book.title}
+                                                </h3>
                                                 <p className="text-[10px] mt-1 font-black uppercase tracking-widest opacity-60">
-                                                    {formatTimeAgo(book.createdAt)}
+                                                    {formatTimeAgo(book.createdAt || book.updatedAt)}
                                                 </p>
                                             </div>
                                         </div>
-                                        <div className="text-2xl opacity-30">›</div>
+                                        <div className="text-xl opacity-40 font-light ml-2">›</div>
                                     </div>
-                                ))
-                            )}
-                        </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
 
                 </div>
