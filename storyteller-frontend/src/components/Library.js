@@ -6,7 +6,7 @@ import {
 
 import f3logo from "../assets/blacklogo.png";
 import defaultCover from "../assets/cover.jpg";
-import Reader from "./Reader"; // Import the Reader component we built
+import Reader from "./Reader";
 
 /* ---------------- FOLDER MODAL COMPONENT ---------------- */
 function FolderModal({ isOpen, onClose, onCreate }) {
@@ -46,8 +46,8 @@ export default function Library() {
     const API_URL = process.env.REACT_APP_API_URL;
 
     const [books, setBooks] = useState([]);
-    const [activeBook, setActiveBook] = useState(null); // For Action Sheet
-    const [activeReaderBook, setActiveReaderBook] = useState(null); // For Reader Mode
+    const [activeBook, setActiveBook] = useState(null);
+    const [activeReaderBook, setActiveReaderBook] = useState(null);
     const [loading, setLoading] = useState(true);
     const [uploading, setUploading] = useState(false);
     const sheetRef = useRef(null);
@@ -63,6 +63,15 @@ export default function Library() {
     const [sortType, setSortType] = useState("recent");
     const [viewMode, setViewMode] = useState(localStorage.getItem("libraryViewMode") || "grid");
     const [searchQuery, setSearchQuery] = useState("");
+
+    /* 🛠️ HELPER: FIX IMAGE URLS */
+    const getCoverUrl = (cover) => {
+        if (!cover) return defaultCover;
+        // If it already starts with http, it's a Cloudinary link - don't add API_URL
+        if (cover.startsWith('http')) return cover;
+        // Otherwise, it's a local path from your server
+        return `${API_URL}${cover}`;
+    };
 
     /* --- RENAME LOGIC --- */
     const handleRename = async (bookId) => {
@@ -254,7 +263,6 @@ export default function Library() {
             const updatedBook = await res.json();
             setBooks((prev) => prev.map((b) => (b._id === bookId ? updatedBook : b)));
 
-            // If action is download audio, we just stop here (API processes it)
             if (action === "download") {
                 setActiveBook(null);
                 console.log("Audio processing started...");
@@ -308,7 +316,12 @@ export default function Library() {
                                 </div>
                             )}
                             <div className={`overflow-hidden rounded-md bg-zinc-800 flex-shrink-0 ${viewMode === "grid" ? "aspect-[2/3] w-full" : "w-12 h-16"}`}>
-                                <img src={book.cover ? (book.cover.startsWith('http') ? book.cover : `${API_URL}${book.cover}`) : defaultCover} alt={book.title} className="w-full h-full object-cover" onError={(e) => { e.target.src = defaultCover; }} />
+                                <img
+                                    src={getCoverUrl(book.cover)}
+                                    alt={book.title}
+                                    className="w-full h-full object-cover"
+                                    onError={(e) => { e.target.src = defaultCover; }}
+                                />
                             </div>
                             <div className="flex-1 overflow-hidden">
                                 <p className={`text-white font-medium truncate ${viewMode === "grid" ? "mt-2 text-sm px-1 text-center" : "text-base"}`}>{book.title}</p>
@@ -343,7 +356,7 @@ export default function Library() {
                             <>
                                 <div className="flex items-center justify-between px-1 mb-4">
                                     <div className="flex items-center gap-3">
-                                        <img src={activeBook.cover ? (activeBook.cover.startsWith('http') ? activeBook.cover : `${API_URL}${activeBook.cover}`) : defaultCover} className="w-12 h-16 rounded-md object-cover shadow-md" alt="cover" />
+                                        <img src={getCoverUrl(activeBook.cover)} className="w-12 h-16 rounded-md object-cover shadow-md" alt="cover" />
                                         <div className="flex flex-col">
                                             <h3 className="text-white font-bold text-base leading-tight truncate w-48">{activeBook.title}</h3>
                                             <p className="text-yellow-200/70 text-[11px] font-medium uppercase tracking-wider">
