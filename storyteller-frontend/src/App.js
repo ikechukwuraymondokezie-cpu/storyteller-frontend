@@ -6,7 +6,8 @@ import FloatingUploadButton from "./components/FloatingUploadButton";
 
 import Storyteller from "./components/Storyteller";
 import Library from "./components/Library";
-import Profile from "./components/Profile"; // 1. Import your new Profile component
+import Profile from "./components/Profile";
+import Reader from "./components/Reader"; // Import the Reader
 
 function App() {
   return (
@@ -21,16 +22,18 @@ function App() {
           <Routes>
             <Route path="/" element={<Storyteller />} />
             <Route path="/library" element={<Library />} />
-
-            {/* 2. Add the Profile Route */}
             <Route path="/profile" element={<Profile />} />
 
-            {/* Catch-all redirect (prevents blank screen) */}
+            {/* 1. Add the Reader Route */}
+            {/* Using :id so you can load specific books */}
+            <Route path="/reader/:id" element={<Reader />} />
+
+            {/* Catch-all redirect */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </main>
 
-        {/* Mobile bottom navbar ONLY */}
+        {/* Mobile bottom navbar */}
         <div className="md:hidden">
           <BottomNav />
         </div>

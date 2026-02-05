@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 /* --------------------
-   GLOBAL POLISH
+    GLOBAL POLISH
 -------------------- */
 html,
 body {
@@ -18,8 +18,7 @@ body {
 }
 
 /* --------------------
-   GEOMETRIC SANS FONT
-   (Tailwind default fallback-safe)
+    GEOMETRIC SANS FONT
 -------------------- */
 body {
   font-family: ui-sans-serif, system-ui, -apple-system,
@@ -30,8 +29,10 @@ body {
 }
 
 /* --------------------
-   BOTTOM SHEET ANIMATION
+    ANIMATIONS
 -------------------- */
+
+/* Original Bottom Sheet */
 @keyframes slideUp {
   from {
     transform: translateY(100%);
@@ -42,12 +43,46 @@ body {
   }
 }
 
+/* New Reader Entry: Fade + Subtle Scale */
+@keyframes fadeInScale {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .animate-slideUp {
   animation: slideUp 0.25s ease-out;
 }
 
+.reader-overlay-active {
+  animation: fadeInScale 0.25s ease-out forwards;
+}
+
 /* --------------------
-   DESKTOP QUALITY OF LIFE
+    READER UTILITIES
+-------------------- */
+
+/* Prevent background scrolling when reader is active */
+body.reader-open {
+  overflow: hidden;
+  /* Prevents layout shift on Windows browsers with scrollbars */
+  padding-right: var(--removed-body-scrollbar-width, 0px);
+}
+
+/* Play Button Glow/Pulse */
+.play-btn-glow {
+  box-shadow: 0 0 20px rgba(79, 70, 229, 0.4);
+  @apply transition-transform duration-200 active:scale-90;
+}
+
+/* --------------------
+    DESKTOP QUALITY OF LIFE
 -------------------- */
 
 /* Smooth scrolling on desktop trackpads */
@@ -59,4 +94,18 @@ body {
 img {
   user-select: none;
   -webkit-user-drag: none;
+}
+
+/* Custom Scrollbar for the Reader Content */
+.reader-ui main::-webkit-scrollbar {
+  width: 6px;
+}
+
+.reader-ui main::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.reader-ui main::-webkit-scrollbar-thumb {
+  background: #e5e7eb;
+  border-radius: 10px;
 }
