@@ -84,9 +84,8 @@ export default function Library() {
             }
         };
 
-        // NEW: Sort Listener
         const handleSort = (e) => {
-            setSortType(e.detail); // "alpha" or "recent"
+            setSortType(e.detail);
         };
 
         window.addEventListener("toggle-selection-mode", handleToggle);
@@ -157,8 +156,7 @@ export default function Library() {
             if (sortType === "alpha") {
                 return a.title.localeCompare(b.title);
             } else {
-                // Sort by "Recently Added" (assuming MongoDB _id or a createdAt field)
-                return new Date(b.createdAt || b._id.getTimestamp?.() || 0) - new Date(a.createdAt || a._id.getTimestamp?.() || 0);
+                return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
             }
         });
 
@@ -167,7 +165,7 @@ export default function Library() {
         if (!API_URL || !file) return;
         const formData = new FormData();
         formData.append("file", file);
-        formData.append("folder", activeFolder === "All" ? "default" : activeFolder);
+        formData.append("folder", activeFolder === "All" ? "All" : activeFolder);
 
         try {
             setUploading(true);
@@ -176,8 +174,8 @@ export default function Library() {
                 body: formData,
             });
             const data = await res.json();
-            if (data?.book) {
-                setBooks((prev) => [data.book, ...prev]);
+            if (data?._id) { // Book is returned directly in your new routes
+                setBooks((prev) => [data, ...prev]);
             }
         } catch (err) {
             console.error("❌ Upload failed:", err);
@@ -201,7 +199,6 @@ export default function Library() {
             setIsSelectMode(false);
         } catch (err) {
             console.error("❌ Bulk delete failed:", err);
-            alert("Delete failed. Please try again.");
         }
     };
 
@@ -251,6 +248,7 @@ export default function Library() {
 
             if (action === "download" && updatedBook.url) {
                 const link = document.createElement("a");
+                // IMPORTANT: PDFs are local, so we keep API_URL for the URL path
                 link.href = `${API_URL}${updatedBook.url}`;
                 link.download = `${updatedBook.title}.pdf`;
                 link.click();
@@ -329,11 +327,13 @@ export default function Library() {
                                 </div>
                             )}
 
-                            {/* COVER IMAGE */}
+                            {/* COVER IMAGE - CLOUDINARY READY */}
                             <div className={`overflow-hidden rounded-md bg-zinc-800 flex-shrink-0 
                                 ${viewMode === "grid" ? "aspect-[2/3] w-full" : "w-12 h-16"}`}
                             >
-                                <img src={book.cover ? `${API_URL}${book.cover}` : defaultCover} alt={book.title}
+                                <img
+                                    src={book.cover ? (book.cover.startsWith('http') ? book.cover : `${API_URL}${book.cover}`) : defaultCover}
+                                    alt={book.title}
                                     className="w-full h-full object-cover"
                                     onError={(e) => { e.target.src = defaultCover; }}
                                 />
@@ -346,7 +346,7 @@ export default function Library() {
                                 </p>
                                 {viewMode === "list" && (
                                     <p className="text-zinc-500 text-[10px] uppercase tracking-widest mt-0.5">
-                                        Folder: {book.folder || "Default"}
+                                        Folder: {book.folder || "All"}
                                     </p>
                                 )}
                             </div>
@@ -396,7 +396,7 @@ export default function Library() {
 
                         <div className="flex items-center gap-4 mb-6 mt-2">
                             <img
-                                src={activeBook.cover ? `${API_URL}${activeBook.cover}` : defaultCover}
+                                src={activeBook.cover ? (activeBook.cover.startsWith('http') ? activeBook.cover : `${API_URL}${activeBook.cover}`) : defaultCover}
                                 className="w-12 h-16 rounded-lg object-cover shadow-lg border border-white/5"
                                 alt="cover"
                             />

@@ -6,11 +6,15 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs-extra");
 const { exec } = require("child_process");
+const cloudinary = require("cloudinary").v2; // Added Cloudinary
 
 const app = express();
 
+/* -------------------- CLOUDINARY CONFIG -------------------- */
+// This will automatically use the CLOUDINARY_URL from your Render Env Variables
+cloudinary.config();
+
 /* -------------------- MIDDLEWARE -------------------- */
-// Updated CORS to be more robust for your specific Frontend URL
 app.use(cors({
     origin: "https://storyteller-b1i3.onrender.com",
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
@@ -36,16 +40,15 @@ mongoose.connect(MONGO_URI)
     .catch((err) => console.error("❌ MongoDB error:", err));
 
 /* -------------------- SCHEMAS -------------------- */
-// New Schema for Folders so they don't disappear when empty
 const Folder = mongoose.model("Folder", new mongoose.Schema({
     name: { type: String, required: true, unique: true }
 }));
 
 const bookSchema = new mongoose.Schema({
     title: { type: String, required: true },
-    cover: String,
+    cover: String, // This will now store the Cloudinary URL
     pdfPath: String,
-    folder: { type: String, default: "All" }, // Changed "default" to "All" for cleaner UI
+    folder: { type: String, default: "All" },
     downloads: { type: Number, default: 0 },
     ttsRequests: { type: Number, default: 0 },
 }, { timestamps: true });
@@ -66,7 +69,7 @@ const upload = multer({ storage });
 const formatBook = (book) => ({
     _id: book._id,
     title: book.title,
-    cover: book.cover || null,
+    cover: book.cover || null, // Will return the full https URL
     url: book.pdfPath || null,
     folder: book.folder,
     downloads: book.downloads,
@@ -79,10 +82,8 @@ const deleteBookFiles = async (book) => {
             const fullPdfPath = path.join(__dirname, "..", book.pdfPath);
             if (await fs.pathExists(fullPdfPath)) await fs.remove(fullPdfPath);
         }
-        if (book.cover) {
-            const fullCoverPath = path.join(__dirname, "..", book.cover);
-            if (await fs.pathExists(fullCoverPath)) await fs.remove(fullCoverPath);
-        }
+        // NOTE: We don't delete from Cloudinary here to keep it simple, 
+        // but the local reference in MongoDB is removed.
     } catch (err) {
         console.error("⚠️ Error deleting files:", err);
     }
@@ -90,7 +91,6 @@ const deleteBookFiles = async (book) => {
 
 /* -------------------- API ROUTES -------------------- */
 
-// GET ALL UNIQUE FOLDERS (From the Folder Model)
 app.get("/api/books/folders", async (_, res) => {
     try {
         const folders = await Folder.find().sort({ name: 1 });
@@ -129,24 +129,44 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
         const pdfPath = `/uploads/pdf/${req.file.filename}`;
         const pdfFullPath = req.file.path;
         const baseName = path.parse(req.file.filename).name;
+        const tempLocalCoverPath = path.join(coversDir, `${baseName}.png`);
         const outputPrefix = path.join(coversDir, baseName);
 
+        // 1. Generate thumbnail locally first
         const generateThumbnail = () => new Promise((resolve) => {
-            exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfFullPath}" "${outputPrefix}"`, (error) => {
-                if (error) return resolve(null);
-                resolve(`/uploads/covers/${baseName}.png`);
+            exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfFullPath}" "${outputPrefix}"`, async (error) => {
+                if (error) {
+                    console.error("pdftoppm error:", error);
+                    return resolve(null);
+                }
+
+                try {
+                    // 2. Upload the generated thumbnail to Cloudinary
+                    const uploadRes = await cloudinary.uploader.upload(tempLocalCoverPath, {
+                        folder: "storyteller_covers"
+                    });
+
+                    // 3. Delete the temporary local cover file to save space
+                    await fs.remove(tempLocalCoverPath);
+
+                    resolve(uploadRes.secure_url);
+                } catch (cloudErr) {
+                    console.error("Cloudinary Error:", cloudErr);
+                    resolve(null);
+                }
             });
         });
 
-        const cover = await generateThumbnail();
-        const book = await Book.create({ title, pdfPath, cover, folder });
+        const coverUrl = await generateThumbnail();
+        const book = await Book.create({ title, pdfPath, cover: coverUrl, folder });
+
         res.status(201).json(formatBook(book));
     } catch (err) {
+        console.error("Upload route error:", err);
         res.status(500).json({ error: "Upload failed" });
     }
 });
 
-// MOVE BOOK TO FOLDER
 app.patch("/api/books/:id/move", async (req, res) => {
     try {
         const { folderName } = req.body;

@@ -1,43 +1,29 @@
-# ---------------------------
-# Stage 1: Build frontend
-# ---------------------------
-FROM node:20-bullseye AS frontend-build
+# Use a slim version of Node to keep the image lightweight
+FROM node:20-bullseye-slim
+
+# Install system dependencies (needed for PDF processing)
+# We add 'ca-certificates' to ensure secure connections to Cloudinary
+RUN apt-get update && apt-get install -y \
+    poppler-utils \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
-WORKDIR /app/storyteller-frontend
+WORKDIR /app
 
-# Copy frontend package.json and install dependencies
-COPY storyteller-frontend/package*.json ./
-RUN npm install
-
-# Copy all frontend source files and build
-COPY storyteller-frontend/ ./
-RUN npm run build
-
-# ---------------------------
-# Stage 2: Build backend
-# ---------------------------
-FROM node:20-bullseye
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y poppler-utils
-
-# Set working directory for backend
-WORKDIR /app/backend
-
-# Copy backend package.json and install dependencies
+# Copy backend dependency files
+# Stage 2 will now install 'cloudinary' from your package.json
 COPY backend/package*.json ./
-RUN npm install
 
-# Copy backend source code and uploads
-COPY backend/src ./src
-COPY backend/uploads ./uploads
+# Install only production dependencies
+RUN npm install --production
 
-# Copy frontend build into backend public folder
-COPY --from=frontend-build /app/storyteller-frontend/build ./public
+# Copy the rest of your backend source code
+COPY backend/ ./
 
-# Expose backend port
+# Expose the port Render expects
 EXPOSE 10000
 
-# Start backend server
+# Start the server
+# Adjust the path if your entry point is different (e.g., node server.js)
 CMD ["node", "src/server.js"]

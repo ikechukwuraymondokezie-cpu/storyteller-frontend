@@ -2,11 +2,15 @@ const express = require("express");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs-extra");
-const { spawn } = require("child_process");
+const { exec } = require("child_process"); // Switched to exec for simpler flow
+const cloudinary = require("cloudinary").v2; // Added Cloudinary
 const Book = require("../models/Book");
 const Folder = require("../models/Folder");
 
 const router = express.Router();
+
+/* ---------------- CLOUDINARY CONFIG ---------------- */
+cloudinary.config(); // Auto-detects CLOUDINARY_URL from env
 
 /* ---------------- STORAGE CONFIG ---------------- */
 const uploadsRoot = path.join(__dirname, "../uploads");
@@ -14,7 +18,6 @@ const pdfDir = path.join(uploadsRoot, "pdf");
 const coversDir = path.join(uploadsRoot, "covers");
 const audioDir = path.join(uploadsRoot, "audio");
 
-// Ensure physical directories exist
 fs.ensureDirSync(pdfDir);
 fs.ensureDirSync(coversDir);
 fs.ensureDirSync(audioDir);
@@ -36,10 +39,7 @@ const deleteFiles = async (book) => {
             const p = path.join(__dirname, "..", book.pdfPath);
             if (await fs.pathExists(p)) await fs.remove(p);
         }
-        if (book.cover) {
-            const c = path.join(__dirname, "..", book.cover);
-            if (await fs.pathExists(c)) await fs.remove(c);
-        }
+        // Note: We are no longer deleting covers from disk because they are on Cloudinary
     } catch (err) {
         console.error("File deletion error:", err);
     }
@@ -47,26 +47,21 @@ const deleteFiles = async (book) => {
 
 /* ---------------- FOLDER ROUTES ---------------- */
 
-// Get folder names for the frontend tabs
 router.get("/folders", async (_, res) => {
     try {
         const folders = await Folder.find().sort({ name: 1 });
-        // The frontend expects ["All", "Folder1", "Folder2"]
         res.json(["All", ...folders.map(f => f.name)]);
     } catch (err) {
         res.status(500).json({ error: "Failed to fetch folders" });
     }
 });
 
-// Create folder in DB
 router.post("/folders", async (req, res) => {
     try {
         const { name } = req.body;
         if (!name) return res.status(400).json({ error: "Name required" });
-
         const existing = await Folder.findOne({ name });
         if (existing) return res.status(400).json({ error: "Exists" });
-
         const folder = await Folder.create({ name });
         res.status(201).json(folder);
     } catch (err) {
@@ -76,14 +71,13 @@ router.post("/folders", async (req, res) => {
 
 /* ---------------- BOOK ROUTES ---------------- */
 
-// Get all books
 router.get("/", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
         res.json(books.map(b => ({
             _id: b._id,
             title: b.title,
-            cover: b.cover,
+            cover: b.cover, // This will now be a Cloudinary URL
             url: b.pdfPath,
             folder: b.folder || "All",
             downloads: b.downloads || 0,
@@ -94,7 +88,7 @@ router.get("/", async (_, res) => {
     }
 });
 
-// Upload Book + Thumbnail
+// Upload Book + Thumbnail to Cloudinary
 router.post("/", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file" });
@@ -102,31 +96,49 @@ router.post("/", upload.single("file"), async (req, res) => {
         const folderName = req.body.folder || "All";
         const baseName = path.parse(req.file.filename).name;
         const pdfDiskPath = req.file.path;
+        const tempLocalCoverPath = path.join(coversDir, `${baseName}.png`);
+        const outputPrefix = path.join(coversDir, baseName);
 
-        // Cover generation promise
+        // 1. Generate Thumbnail locally
         const generateCover = () => new Promise((resolve) => {
-            const proc = spawn("pdftoppm", [
-                "-f", "1", "-l", "1", "-png", "-singlefile",
-                pdfDiskPath, path.join(coversDir, baseName)
-            ]);
-            proc.on("close", () => {
-                const coverPath = path.join(coversDir, `${baseName}.png`);
-                resolve(fs.existsSync(coverPath) ? `/uploads/covers/${baseName}.png` : null);
+            // Using pdftoppm to create a local png first
+            exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfDiskPath}" "${outputPrefix}"`, async (error) => {
+                if (error) {
+                    console.error("pdftoppm error:", error);
+                    return resolve(null);
+                }
+
+                try {
+                    // 2. Upload the local png to Cloudinary
+                    const uploadRes = await cloudinary.uploader.upload(tempLocalCoverPath, {
+                        folder: "storyteller_covers"
+                    });
+
+                    // 3. Clean up the local png file immediately
+                    if (fs.existsSync(tempLocalCoverPath)) {
+                        await fs.remove(tempLocalCoverPath);
+                    }
+
+                    resolve(uploadRes.secure_url); // Return the Cloudinary URL
+                } catch (cloudErr) {
+                    console.error("Cloudinary Error:", cloudErr);
+                    resolve(null);
+                }
             });
-            proc.on("error", () => resolve(null));
         });
 
-        const coverPath = await generateCover();
+        const coverUrl = await generateCover();
 
         const book = await Book.create({
             title: req.file.originalname.replace(/\.[^/.]+$/, ""),
             pdfPath: `/uploads/pdf/${req.file.filename}`,
-            cover: coverPath,
+            cover: coverUrl,
             folder: folderName,
         });
 
         res.status(201).json(book);
     } catch (err) {
+        console.error("Upload error:", err);
         res.status(500).json({ error: "Upload failed" });
     }
 });
