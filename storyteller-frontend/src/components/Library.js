@@ -43,7 +43,7 @@ function FolderModal({ isOpen, onClose, onCreate }) {
 }
 
 export default function Library() {
-    const API_URL = process.env.REACT_APP_API_URL;
+    const API_URL = process.env.REACT_APP_API_URL || "";
 
     const [books, setBooks] = useState([]);
     const [activeBook, setActiveBook] = useState(null);
@@ -67,14 +67,13 @@ export default function Library() {
     /* 🛠️ HELPER: FIX IMAGE URLS */
     const getCoverUrl = (cover) => {
         if (!cover) return defaultCover;
-        // If it already starts with http, it's a Cloudinary link - don't add API_URL
         if (cover.startsWith('http')) return cover;
-        // Otherwise, it's a local path from your server
         return `${API_URL}${cover}`;
     };
 
     /* --- RENAME LOGIC --- */
     const handleRename = async (bookId) => {
+        if (!activeBook) return;
         const newTitle = window.prompt("Rename file to:", activeBook.title);
         if (!newTitle || newTitle === activeBook.title) return;
 
@@ -126,12 +125,12 @@ export default function Library() {
             setLoading(true);
             const bookRes = await fetch(`${API_URL}/api/books`);
             const bookData = await bookRes.json();
-            setBooks(bookData);
+            setBooks(Array.isArray(bookData) ? bookData : []);
 
             const folderRes = await fetch(`${API_URL}/api/books/folders`);
             const folderData = await folderRes.json();
             setFolders((prev) => {
-                const combined = ["All", "Favorites", "Finished", ...folderData];
+                const combined = ["All", "Favorites", "Finished", ...(Array.isArray(folderData) ? folderData : [])];
                 return [...new Set(combined.filter(f => f !== ""))];
             });
         } catch (err) { console.error("❌ Failed to fetch:", err); } finally { setLoading(false); }
@@ -155,14 +154,14 @@ export default function Library() {
         } catch (err) { console.error("❌ Folder creation failed:", err); }
     };
 
-    const filteredBooks = books
+    const filteredBooks = (books || [])
         .filter((book) => {
-            const matchesSearch = book.title.toLowerCase().includes(searchQuery);
+            const matchesSearch = book.title?.toLowerCase().includes(searchQuery);
             const matchesFolder = activeFolder === "All" || book.folder === activeFolder;
             return matchesSearch && matchesFolder;
         })
         .sort((a, b) => {
-            if (sortType === "alpha") return a.title.localeCompare(b.title);
+            if (sortType === "alpha") return (a.title || "").localeCompare(b.title || "");
             return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
         });
 
@@ -265,20 +264,17 @@ export default function Library() {
 
             if (action === "download") {
                 setActiveBook(null);
-                console.log("Audio processing started...");
                 return;
             }
         } catch (err) { console.error("❌ Action failed:", err); }
     };
 
-    // --- RENDERER LOGIC ---
     if (activeReaderBook) {
         return <Reader book={activeReaderBook} onBack={() => setActiveReaderBook(null)} />;
     }
 
     return (
         <div className={`min-h-screen bg-bg px-6 py-8 ${isSelectMode ? "pb-32" : ""}`}>
-            {/* HEADER */}
             <div className="flex justify-between items-center mb-6">
                 <h1 className="text-3xl md:text-5xl font-extrabold text-yellow-400">Your Collection</h1>
                 {!isSelectMode && (
@@ -290,14 +286,12 @@ export default function Library() {
                 )}
             </div>
 
-            {/* FOLDER TABS */}
             <div className="flex items-center gap-2 overflow-x-auto pb-6 no-scrollbar">
                 {folders.map((folder) => (
                     <button key={folder} onClick={() => setActiveFolder(folder)} className={`px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest transition-all whitespace-nowrap border ${activeFolder === folder ? "bg-yellow-400 border-yellow-400 text-black" : "bg-transparent border-white/10 text-zinc-500 hover:text-white"}`}>{folder}</button>
                 ))}
             </div>
 
-            {/* MAIN GRID/LIST */}
             {loading ? (
                 <div className="text-center text-zinc-400 mt-20 italic">Loading library...</div>
             ) : filteredBooks.length === 0 ? (
@@ -320,7 +314,7 @@ export default function Library() {
                                     src={getCoverUrl(book.cover)}
                                     alt={book.title}
                                     className="w-full h-full object-cover"
-                                    onError={(e) => { e.target.src = defaultCover; }}
+                                    onError={(e) => { e.currentTarget.src = defaultCover; }}
                                 />
                             </div>
                             <div className="flex-1 overflow-hidden">
@@ -335,7 +329,6 @@ export default function Library() {
                 </div>
             )}
 
-            {/* SELECTION BAR */}
             {isSelectMode && (
                 <div className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[92%] max-w-md bg-zinc-900 border border-white/10 shadow-2xl rounded-2xl p-4 flex items-center justify-between z-[60] animate-in slide-in-from-bottom-10">
                     <div className="flex items-center gap-3">
@@ -346,17 +339,15 @@ export default function Library() {
                 </div>
             )}
 
-            {/* ACTION SHEET */}
             {activeBook && !isSelectMode && (
                 <div className="fixed inset-0 bg-black/60 z-[110] flex items-end md:items-center justify-center" onClick={() => { setActiveBook(null); setIsMoving(false); }}>
                     <div ref={sheetRef} onClick={(e) => e.stopPropagation()} className="w-full max-w-lg bg-[#1c1c1e] rounded-t-[32px] md:rounded-2xl p-4 shadow-2xl animate-in slide-in-from-bottom-10">
                         <div className="w-12 h-1.5 bg-zinc-800 rounded-full mx-auto mb-4 md:hidden" />
-
                         {!isMoving ? (
                             <>
                                 <div className="flex items-center justify-between px-1 mb-4">
                                     <div className="flex items-center gap-3">
-                                        <img src={getCoverUrl(activeBook.cover)} className="w-12 h-16 rounded-md object-cover shadow-md" alt="cover" />
+                                        <img src={getCoverUrl(activeBook.cover)} className="w-12 h-16 rounded-md object-cover shadow-md" alt="cover" onError={(e) => { e.currentTarget.src = defaultCover; }} />
                                         <div className="flex flex-col">
                                             <h3 className="text-white font-bold text-base leading-tight truncate w-48">{activeBook.title}</h3>
                                             <p className="text-yellow-200/70 text-[11px] font-medium uppercase tracking-wider">
@@ -366,19 +357,14 @@ export default function Library() {
                                     </div>
                                     <button className="text-white p-2 hover:bg-zinc-800 rounded-full transition-colors"><Share className="w-5 h-5" strokeWidth={1.5} /></button>
                                 </div>
-
                                 <div className="flex flex-col gap-2">
-                                    <button
-                                        onClick={() => handleAction(activeBook._id, "download")}
-                                        className="w-full flex items-center gap-4 bg-yellow-700/20 border border-yellow-700/30 py-2.5 px-4 rounded-2xl transition-all active:bg-yellow-400 active:text-black group"
-                                    >
+                                    <button onClick={() => handleAction(activeBook._id, "download")} className="w-full flex items-center gap-4 bg-yellow-700/20 border border-yellow-700/30 py-2.5 px-4 rounded-2xl transition-all active:bg-yellow-400 active:text-black group">
                                         <Download className="text-yellow-500 w-5 h-5 group-active:text-black" strokeWidth={2} />
                                         <div className="text-left">
                                             <p className="font-bold text-[15px] text-white group-active:text-black">Download Audio</p>
                                             <p className="text-yellow-200/40 text-[11px] group-active:text-black/70">Listen with the best voices offline</p>
                                         </div>
                                     </button>
-
                                     {activeBook.source === 'funfiction' ? (
                                         <button onClick={() => handleAction(activeBook._id, "tts")} className="w-full flex items-center gap-4 bg-black py-4 px-4 rounded-2xl border border-zinc-800/40 active:opacity-70">
                                             <img src={f3logo} className="w-6 h-6" alt="f3" />
@@ -386,29 +372,20 @@ export default function Library() {
                                         </button>
                                     ) : (
                                         <div className="flex flex-col bg-black rounded-2xl border border-zinc-800/40 overflow-hidden">
-                                            <button
-                                                onClick={() => { setIsSelectMode(true); setActiveBook(null); }}
-                                                className="flex items-center gap-4 py-3.5 px-4 hover:bg-zinc-900 border-b border-zinc-800/40 active:opacity-70 text-left"
-                                            >
+                                            <button onClick={() => { setIsSelectMode(true); setActiveBook(null); }} className="flex items-center gap-4 py-3.5 px-4 hover:bg-zinc-900 border-b border-zinc-800/40 active:opacity-70 text-left">
                                                 <CheckSquare className="text-white w-5 h-5" strokeWidth={1.5} />
                                                 <p className="text-white font-bold text-[15px]">Select Multiple</p>
                                             </button>
-
                                             <button onClick={() => setIsMoving(true)} className="flex items-center gap-4 py-3.5 px-4 hover:bg-zinc-900 border-b border-zinc-800/40">
                                                 <FolderPlus className="text-white w-5 h-5" strokeWidth={1.5} />
                                                 <p className="text-white font-bold text-[15px]">Move to Folder</p>
                                             </button>
-
-                                            <button
-                                                onClick={() => handleRename(activeBook._id)}
-                                                className="flex items-center gap-4 py-3.5 px-4 hover:bg-zinc-900 active:opacity-70 text-left"
-                                            >
+                                            <button onClick={() => handleRename(activeBook._id)} className="flex items-center gap-4 py-3.5 px-4 hover:bg-zinc-900 active:opacity-70 text-left">
                                                 <Edit3 className="text-white w-5 h-5" strokeWidth={1.5} />
                                                 <p className="text-white font-bold text-[15px]">Rename File</p>
                                             </button>
                                         </div>
                                     )}
-
                                     <button onClick={() => handleAction(activeBook._id, "delete")} className="w-full flex items-center gap-4 bg-black py-3.5 px-4 rounded-2xl border border-zinc-800/40 active:opacity-70">
                                         <Trash2 className="text-red-500 w-5 h-5" strokeWidth={1.5} />
                                         <p className="text-red-500 font-bold text-[15px]">Delete</p>
@@ -436,7 +413,6 @@ export default function Library() {
                     </div>
                 </div>
             )}
-
             <FolderModal isOpen={isFolderModalOpen} onClose={() => setIsFolderModalOpen(false)} onCreate={createNewFolder} />
         </div>
     );
