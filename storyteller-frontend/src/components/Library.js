@@ -50,7 +50,6 @@ export default function Library() {
     const [uploading, setUploading] = useState(false);
     const sheetRef = useRef(null);
 
-    // 1. Permanent Folders Logic
     const [folders, setFolders] = useState(["All", "Favorites", "Finished"]);
     const [activeFolder, setActiveFolder] = useState("All");
     const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
@@ -61,6 +60,26 @@ export default function Library() {
 
     const [sortType, setSortType] = useState("recent");
     const [viewMode, setViewMode] = useState(localStorage.getItem("libraryViewMode") || "grid");
+    const [searchQuery, setSearchQuery] = useState("");
+
+    /* --- RENAME LOGIC --- */
+    const handleRename = async (bookId) => {
+        const newTitle = window.prompt("Rename file to:", activeBook.title);
+        if (!newTitle || newTitle === activeBook.title) return;
+
+        try {
+            const res = await fetch(`${API_URL}/api/books/${bookId}/rename`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ title: newTitle }),
+            });
+            if (res.ok) {
+                const updated = await res.json();
+                setBooks(prev => prev.map(b => b._id === bookId ? updated : b));
+                setActiveBook(null);
+            }
+        } catch (err) { console.error("❌ Rename failed:", err); }
+    };
 
     /* ---------------- TOP NAV EVENT LISTENERS ---------------- */
     useEffect(() => {
@@ -89,7 +108,7 @@ export default function Library() {
         };
     }, [viewMode]);
 
-    /* ---------------- FETCH DATA (WITH FOLDER MERGING) ---------------- */
+    /* ---------------- FETCH DATA ---------------- */
     const fetchData = async () => {
         if (!API_URL) return;
         try {
@@ -100,22 +119,15 @@ export default function Library() {
 
             const folderRes = await fetch(`${API_URL}/api/books/folders`);
             const folderData = await folderRes.json();
-
-            // Filter out any "All" from DB to prevent duplicates
             setFolders((prev) => {
                 const combined = ["All", "Favorites", "Finished", ...folderData];
                 return [...new Set(combined.filter(f => f !== ""))];
             });
-        } catch (err) {
-            console.error("❌ Failed to fetch library data:", err);
-        } finally {
-            setLoading(false);
-        }
+        } catch (err) { console.error("❌ Failed to fetch:", err); } finally { setLoading(false); }
     };
 
     useEffect(() => { fetchData(); }, [API_URL]);
 
-    /* ---------------- FOLDER ACTIONS ---------------- */
     const createNewFolder = async (name) => {
         if (!API_URL || folders.includes(name)) return;
         try {
@@ -132,9 +144,6 @@ export default function Library() {
         } catch (err) { console.error("❌ Folder creation failed:", err); }
     };
 
-    const [searchQuery, setSearchQuery] = useState("");
-
-    /* ---------------- FILTERING & SORTING ---------------- */
     const filteredBooks = books
         .filter((book) => {
             const matchesSearch = book.title.toLowerCase().includes(searchQuery);
@@ -146,7 +155,6 @@ export default function Library() {
             return new Date(b.createdAt || 0) - new Date(a.createdAt || 0);
         });
 
-    /* ---------------- UPLOAD & DELETE ---------------- */
     const handleUpload = async (file) => {
         if (!API_URL || !file) return;
         const formData = new FormData();
@@ -204,11 +212,9 @@ export default function Library() {
         };
     }, [activeBook]);
 
-    /* ---------------- CONSOLIDATED ACTIONS (FIXED) ---------------- */
     const handleAction = async (bookId, action) => {
         if (!API_URL) return;
 
-        // 1. DELETE ACTION
         if (action === "delete") {
             if (!window.confirm("Delete this book?")) return;
             try {
@@ -221,7 +227,6 @@ export default function Library() {
             return;
         }
 
-        // 2. MOVE TO FOLDER ACTION
         if (action.startsWith("move:")) {
             const targetFolder = action === "move:none" ? "" : action.split(":")[1];
             try {
@@ -238,7 +243,6 @@ export default function Library() {
             return;
         }
 
-        // 3. OTHER ACTIONS (TTS / DOWNLOAD)
         try {
             const res = await fetch(`${API_URL}/api/books/${bookId}/actions`, {
                 method: "PATCH",
@@ -278,7 +282,7 @@ export default function Library() {
                 ))}
             </div>
 
-            {/* MAIN CONTENT GRID/LIST */}
+            {/* MAIN GRID/LIST */}
             {loading ? (
                 <div className="text-center text-zinc-400 mt-20 italic">Loading library...</div>
             ) : filteredBooks.length === 0 ? (
@@ -307,7 +311,7 @@ export default function Library() {
                 </div>
             )}
 
-            {/* FLOATING SELECTION BAR */}
+            {/* SELECTION BAR */}
             {isSelectMode && (
                 <div className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[92%] max-w-md bg-zinc-900 border border-white/10 shadow-2xl rounded-2xl p-4 flex items-center justify-between z-[60] animate-in slide-in-from-bottom-10">
                     <div className="flex items-center gap-3">
@@ -331,7 +335,8 @@ export default function Library() {
                                         <img src={activeBook.cover ? (activeBook.cover.startsWith('http') ? activeBook.cover : `${API_URL}${activeBook.cover}`) : defaultCover} className="w-12 h-16 rounded-md object-cover shadow-md" alt="cover" />
                                         <div className="flex flex-col">
                                             <h3 className="text-white font-bold text-base leading-tight truncate w-48">{activeBook.title}</h3>
-                                            <p className="text-zinc-500 text-[12px] font-medium uppercase tracking-tight">
+                                            {/* LIGHTER YELLOW SUBTITLE */}
+                                            <p className="text-yellow-200/70 text-[11px] font-medium uppercase tracking-wider">
                                                 {activeBook.wordCount ? `${(activeBook.wordCount / 1000).toFixed(1)}k` : '0'} words • {activeBook.source === 'funfiction' ? 'Premium' : 'PDF'}
                                             </p>
                                         </div>
@@ -342,11 +347,15 @@ export default function Library() {
                                 </div>
 
                                 <div className="flex flex-col gap-2">
-                                    <button onClick={() => handleAction(activeBook._id, "download")} className="w-full flex items-center gap-4 bg-[#2c2c2e] py-2.5 px-4 rounded-2xl active:opacity-70">
-                                        <Download className="text-white w-5 h-5" strokeWidth={1.5} />
+                                    {/* DARK YELLOW -> BRIGHT YELLOW ON PRESS */}
+                                    <button
+                                        onClick={() => handleAction(activeBook._id, "download")}
+                                        className="w-full flex items-center gap-4 bg-yellow-700/20 border border-yellow-700/30 py-2.5 px-4 rounded-2xl transition-all active:bg-yellow-400 active:text-black group"
+                                    >
+                                        <Download className="text-yellow-500 w-5 h-5 group-active:text-black" strokeWidth={2} />
                                         <div className="text-left">
-                                            <p className="text-white font-bold text-[15px]">Download Audio</p>
-                                            <p className="text-zinc-500 text-[11px]">Listen with the best voices offline</p>
+                                            <p className="font-bold text-[15px] text-white group-active:text-black">Download Audio</p>
+                                            <p className="text-yellow-200/40 text-[11px] group-active:text-black/70">Listen with the best voices offline</p>
                                         </div>
                                     </button>
 
@@ -357,9 +366,28 @@ export default function Library() {
                                         </button>
                                     ) : (
                                         <div className="flex flex-col bg-black rounded-2xl border border-zinc-800/40 overflow-hidden">
-                                            <button className="flex items-center gap-4 py-3.5 px-4 hover:bg-zinc-900 border-b border-zinc-800/40"><CheckSquare className="text-white w-5 h-5" strokeWidth={1.5} /><p className="text-white font-bold text-[15px]">Select Multiple</p></button>
-                                            <button onClick={() => setIsMoving(true)} className="flex items-center gap-4 py-3.5 px-4 hover:bg-zinc-900 border-b border-zinc-800/40"><FolderPlus className="text-white w-5 h-5" strokeWidth={1.5} /><p className="text-white font-bold text-[15px]">Move to Folder</p></button>
-                                            <button className="flex items-center gap-4 py-3.5 px-4 hover:bg-zinc-900"><Edit3 className="text-white w-5 h-5" strokeWidth={1.5} /><p className="text-white font-bold text-[15px]">Rename File</p></button>
+                                            {/* FIXED SELECT MULTIPLE */}
+                                            <button
+                                                onClick={() => { setIsSelectMode(true); setActiveBook(null); }}
+                                                className="flex items-center gap-4 py-3.5 px-4 hover:bg-zinc-900 border-b border-zinc-800/40 active:opacity-70 text-left"
+                                            >
+                                                <CheckSquare className="text-white w-5 h-5" strokeWidth={1.5} />
+                                                <p className="text-white font-bold text-[15px]">Select Multiple</p>
+                                            </button>
+
+                                            <button onClick={() => setIsMoving(true)} className="flex items-center gap-4 py-3.5 px-4 hover:bg-zinc-900 border-b border-zinc-800/40">
+                                                <FolderPlus className="text-white w-5 h-5" strokeWidth={1.5} />
+                                                <p className="text-white font-bold text-[15px]">Move to Folder</p>
+                                            </button>
+
+                                            {/* FIXED RENAME */}
+                                            <button
+                                                onClick={() => handleRename(activeBook._id)}
+                                                className="flex items-center gap-4 py-3.5 px-4 hover:bg-zinc-900 active:opacity-70 text-left"
+                                            >
+                                                <Edit3 className="text-white w-5 h-5" strokeWidth={1.5} />
+                                                <p className="text-white font-bold text-[15px]">Rename File</p>
+                                            </button>
                                         </div>
                                     )}
 
@@ -377,11 +405,9 @@ export default function Library() {
                                     <h3 className="text-white font-bold text-lg">Move to Folder</h3>
                                 </div>
                                 <div className="max-h-60 overflow-y-auto space-y-1 pr-2 custom-scrollbar">
-                                    {/* CLEAR FOLDER BUTTON */}
                                     <button onClick={() => handleAction(activeBook._id, "move:none")} className="w-full flex items-center gap-3 p-4 rounded-xl bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800 transition-all mb-2">
                                         <X size={18} /><span className="font-medium text-[15px]">Remove from Folder</span>
                                     </button>
-                                    {/* ACTUAL FOLDERS */}
                                     {folders.filter(f => f !== "All").map((folder) => (
                                         <button key={folder} onClick={() => handleAction(activeBook._id, `move:${folder}`)} className="w-full flex items-center gap-3 p-4 rounded-xl hover:bg-white/5 text-zinc-300 hover:text-yellow-400 transition-all border border-transparent hover:border-white/10">
                                             <Folder size={18} strokeWidth={1.5} /><span className="font-medium text-[15px]">{folder}</span>
