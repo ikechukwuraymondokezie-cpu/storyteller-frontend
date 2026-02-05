@@ -6,6 +6,7 @@ import {
 
 import f3logo from "../assets/blacklogo.png";
 import defaultCover from "../assets/cover.jpg";
+import Reader from "./Reader"; // Import the Reader component we built
 
 /* ---------------- FOLDER MODAL COMPONENT ---------------- */
 function FolderModal({ isOpen, onClose, onCreate }) {
@@ -45,7 +46,8 @@ export default function Library() {
     const API_URL = process.env.REACT_APP_API_URL;
 
     const [books, setBooks] = useState([]);
-    const [activeBook, setActiveBook] = useState(null);
+    const [activeBook, setActiveBook] = useState(null); // For Action Sheet
+    const [activeReaderBook, setActiveReaderBook] = useState(null); // For Reader Mode
     const [loading, setLoading] = useState(true);
     const [uploading, setUploading] = useState(false);
     const sheetRef = useRef(null);
@@ -252,14 +254,19 @@ export default function Library() {
             const updatedBook = await res.json();
             setBooks((prev) => prev.map((b) => (b._id === bookId ? updatedBook : b)));
 
-            if (action === "download" && updatedBook.url) {
-                const link = document.createElement("a");
-                link.href = updatedBook.url.startsWith('http') ? updatedBook.url : `${API_URL}${updatedBook.url}`;
-                link.download = `${updatedBook.title}.pdf`;
-                link.click();
+            // If action is download audio, we just stop here (API processes it)
+            if (action === "download") {
+                setActiveBook(null);
+                console.log("Audio processing started...");
+                return;
             }
         } catch (err) { console.error("❌ Action failed:", err); }
     };
+
+    // --- RENDERER LOGIC ---
+    if (activeReaderBook) {
+        return <Reader book={activeReaderBook} onBack={() => setActiveReaderBook(null)} />;
+    }
 
     return (
         <div className={`min-h-screen bg-bg px-6 py-8 ${isSelectMode ? "pb-32" : ""}`}>
@@ -290,7 +297,11 @@ export default function Library() {
             ) : (
                 <div className={viewMode === "grid" ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4" : "flex flex-col gap-2"}>
                     {filteredBooks.map((book) => (
-                        <div key={book._id} onClick={() => isSelectMode && toggleBookSelection(book._id)} className={`relative bg-zinc-900 transition group cursor-pointer overflow-hidden ${viewMode === "grid" ? "rounded-lg p-2 flex-col" : "rounded-xl p-3 flex items-center gap-4"} ${selectedIds.includes(book._id) ? "ring-2 ring-yellow-400 bg-zinc-800" : "hover:bg-zinc-800"}`}>
+                        <div
+                            key={book._id}
+                            onClick={() => isSelectMode ? toggleBookSelection(book._id) : setActiveReaderBook(book)}
+                            className={`relative bg-zinc-900 transition group cursor-pointer overflow-hidden ${viewMode === "grid" ? "rounded-lg p-2 flex-col" : "rounded-xl p-3 flex items-center gap-4"} ${selectedIds.includes(book._id) ? "ring-2 ring-yellow-400 bg-zinc-800" : "hover:bg-zinc-800"}`}
+                        >
                             {isSelectMode && (
                                 <div className={viewMode === "grid" ? "absolute top-3 left-3 z-10" : "mr-2"}>
                                     <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition ${selectedIds.includes(book._id) ? "bg-yellow-400 border-yellow-400" : "bg-black/40 border-white"}`}>{selectedIds.includes(book._id) && <X size={12} className="text-black stroke-[4px]" />}</div>
@@ -324,7 +335,7 @@ export default function Library() {
 
             {/* ACTION SHEET */}
             {activeBook && !isSelectMode && (
-                <div className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center justify-center" onClick={() => { setActiveBook(null); setIsMoving(false); }}>
+                <div className="fixed inset-0 bg-black/60 z-[110] flex items-end md:items-center justify-center" onClick={() => { setActiveBook(null); setIsMoving(false); }}>
                     <div ref={sheetRef} onClick={(e) => e.stopPropagation()} className="w-full max-w-lg bg-[#1c1c1e] rounded-t-[32px] md:rounded-2xl p-4 shadow-2xl animate-in slide-in-from-bottom-10">
                         <div className="w-12 h-1.5 bg-zinc-800 rounded-full mx-auto mb-4 md:hidden" />
 
@@ -335,19 +346,15 @@ export default function Library() {
                                         <img src={activeBook.cover ? (activeBook.cover.startsWith('http') ? activeBook.cover : `${API_URL}${activeBook.cover}`) : defaultCover} className="w-12 h-16 rounded-md object-cover shadow-md" alt="cover" />
                                         <div className="flex flex-col">
                                             <h3 className="text-white font-bold text-base leading-tight truncate w-48">{activeBook.title}</h3>
-                                            {/* LIGHTER YELLOW SUBTITLE */}
                                             <p className="text-yellow-200/70 text-[11px] font-medium uppercase tracking-wider">
                                                 {activeBook.wordCount ? `${(activeBook.wordCount / 1000).toFixed(1)}k` : '0'} words • {activeBook.source === 'funfiction' ? 'Premium' : 'PDF'}
                                             </p>
                                         </div>
                                     </div>
-                                    {activeBook.source !== 'funfiction' && (
-                                        <button className="text-white p-2 hover:bg-zinc-800 rounded-full transition-colors"><Share className="w-5 h-5" strokeWidth={1.5} /></button>
-                                    )}
+                                    <button className="text-white p-2 hover:bg-zinc-800 rounded-full transition-colors"><Share className="w-5 h-5" strokeWidth={1.5} /></button>
                                 </div>
 
                                 <div className="flex flex-col gap-2">
-                                    {/* DARK YELLOW -> BRIGHT YELLOW ON PRESS */}
                                     <button
                                         onClick={() => handleAction(activeBook._id, "download")}
                                         className="w-full flex items-center gap-4 bg-yellow-700/20 border border-yellow-700/30 py-2.5 px-4 rounded-2xl transition-all active:bg-yellow-400 active:text-black group"
@@ -366,7 +373,6 @@ export default function Library() {
                                         </button>
                                     ) : (
                                         <div className="flex flex-col bg-black rounded-2xl border border-zinc-800/40 overflow-hidden">
-                                            {/* FIXED SELECT MULTIPLE */}
                                             <button
                                                 onClick={() => { setIsSelectMode(true); setActiveBook(null); }}
                                                 className="flex items-center gap-4 py-3.5 px-4 hover:bg-zinc-900 border-b border-zinc-800/40 active:opacity-70 text-left"
@@ -380,7 +386,6 @@ export default function Library() {
                                                 <p className="text-white font-bold text-[15px]">Move to Folder</p>
                                             </button>
 
-                                            {/* FIXED RENAME */}
                                             <button
                                                 onClick={() => handleRename(activeBook._id)}
                                                 className="flex items-center gap-4 py-3.5 px-4 hover:bg-zinc-900 active:opacity-70 text-left"
@@ -391,11 +396,10 @@ export default function Library() {
                                         </div>
                                     )}
 
-                                    {activeBook.source !== 'funfiction' ? (
-                                        <button onClick={() => handleAction(activeBook._id, "delete")} className="w-full flex items-center gap-4 bg-black py-3.5 px-4 rounded-2xl border border-zinc-800/40 active:opacity-70"><Trash2 className="text-red-500 w-5 h-5" strokeWidth={1.5} /><p className="text-red-500 font-bold text-[15px]">Delete</p></button>
-                                    ) : (
-                                        <button onClick={() => setIsMoving(true)} className="w-full flex items-center gap-4 bg-black py-3.5 px-4 rounded-2xl border border-zinc-800/40 active:opacity-70"><FolderPlus className="text-white w-5 h-5" strokeWidth={1.5} /><p className="text-white font-bold text-[15px]">Move to Folder</p></button>
-                                    )}
+                                    <button onClick={() => handleAction(activeBook._id, "delete")} className="w-full flex items-center gap-4 bg-black py-3.5 px-4 rounded-2xl border border-zinc-800/40 active:opacity-70">
+                                        <Trash2 className="text-red-500 w-5 h-5" strokeWidth={1.5} />
+                                        <p className="text-red-500 font-bold text-[15px]">Delete</p>
+                                    </button>
                                 </div>
                             </>
                         ) : (
