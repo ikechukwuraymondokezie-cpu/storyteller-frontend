@@ -6,12 +6,11 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs-extra");
 const { exec } = require("child_process");
-const cloudinary = require("cloudinary").v2; // Added Cloudinary
+const cloudinary = require("cloudinary").v2;
 
 const app = express();
 
 /* -------------------- CLOUDINARY CONFIG -------------------- */
-// This will automatically use the CLOUDINARY_URL from your Render Env Variables
 cloudinary.config();
 
 /* -------------------- MIDDLEWARE -------------------- */
@@ -46,9 +45,9 @@ const Folder = mongoose.model("Folder", new mongoose.Schema({
 
 const bookSchema = new mongoose.Schema({
     title: { type: String, required: true },
-    cover: String, // This will now store the Cloudinary URL
+    cover: String,
     pdfPath: String,
-    folder: { type: String, default: "All" },
+    folder: { type: String, default: "" }, // Changed default to empty string to match "All" logic
     downloads: { type: Number, default: 0 },
     ttsRequests: { type: Number, default: 0 },
 }, { timestamps: true });
@@ -69,11 +68,12 @@ const upload = multer({ storage });
 const formatBook = (book) => ({
     _id: book._id,
     title: book.title,
-    cover: book.cover || null, // Will return the full https URL
+    cover: book.cover || null,
     url: book.pdfPath || null,
-    folder: book.folder,
+    folder: book.folder || "",
     downloads: book.downloads,
     ttsRequests: book.ttsRequests,
+    createdAt: book.createdAt
 });
 
 const deleteBookFiles = async (book) => {
@@ -82,8 +82,6 @@ const deleteBookFiles = async (book) => {
             const fullPdfPath = path.join(__dirname, "..", book.pdfPath);
             if (await fs.pathExists(fullPdfPath)) await fs.remove(fullPdfPath);
         }
-        // NOTE: We don't delete from Cloudinary here to keep it simple, 
-        // but the local reference in MongoDB is removed.
     } catch (err) {
         console.error("⚠️ Error deleting files:", err);
     }
@@ -94,7 +92,7 @@ const deleteBookFiles = async (book) => {
 app.get("/api/books/folders", async (_, res) => {
     try {
         const folders = await Folder.find().sort({ name: 1 });
-        res.json(["All", ...folders.map(f => f.name)]);
+        res.json(folders.map(f => f.name));
     } catch {
         res.status(500).json({ error: "Failed to fetch folders" });
     }
@@ -125,14 +123,13 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
         const title = req.file.originalname.replace(/\.[^/.]+$/, "");
-        const folder = req.body.folder || "All";
+        const folder = req.body.folder === "All" ? "" : (req.body.folder || "");
         const pdfPath = `/uploads/pdf/${req.file.filename}`;
         const pdfFullPath = req.file.path;
         const baseName = path.parse(req.file.filename).name;
         const tempLocalCoverPath = path.join(coversDir, `${baseName}.png`);
         const outputPrefix = path.join(coversDir, baseName);
 
-        // 1. Generate thumbnail locally first
         const generateThumbnail = () => new Promise((resolve) => {
             exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfFullPath}" "${outputPrefix}"`, async (error) => {
                 if (error) {
@@ -141,14 +138,10 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
                 }
 
                 try {
-                    // 2. Upload the generated thumbnail to Cloudinary
                     const uploadRes = await cloudinary.uploader.upload(tempLocalCoverPath, {
                         folder: "storyteller_covers"
                     });
-
-                    // 3. Delete the temporary local cover file to save space
                     await fs.remove(tempLocalCoverPath);
-
                     resolve(uploadRes.secure_url);
                 } catch (cloudErr) {
                     console.error("Cloudinary Error:", cloudErr);
@@ -167,13 +160,25 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
     }
 });
 
+// Fixed: matches frontend body { folder: targetFolder }
 app.patch("/api/books/:id/move", async (req, res) => {
     try {
-        const { folderName } = req.body;
-        const book = await Book.findByIdAndUpdate(req.params.id, { folder: folderName }, { new: true });
+        const { folder } = req.body;
+        const book = await Book.findByIdAndUpdate(req.params.id, { folder: folder || "" }, { new: true });
         res.json(formatBook(book));
     } catch {
         res.status(500).json({ error: "Move failed" });
+    }
+});
+
+// Added: required for the handleRename function in Library.js
+app.patch("/api/books/:id/rename", async (req, res) => {
+    try {
+        const { title } = req.body;
+        const book = await Book.findByIdAndUpdate(req.params.id, { title }, { new: true });
+        res.json(formatBook(book));
+    } catch {
+        res.status(500).json({ error: "Rename failed" });
     }
 });
 

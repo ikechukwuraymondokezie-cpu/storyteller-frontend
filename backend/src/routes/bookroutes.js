@@ -2,15 +2,15 @@ const express = require("express");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs-extra");
-const { exec } = require("child_process"); // Switched to exec for simpler flow
-const cloudinary = require("cloudinary").v2; // Added Cloudinary
+const { exec } = require("child_process");
+const cloudinary = require("cloudinary").v2;
 const Book = require("../models/Book");
 const Folder = require("../models/Folder");
 
 const router = express.Router();
 
 /* ---------------- CLOUDINARY CONFIG ---------------- */
-cloudinary.config(); // Auto-detects CLOUDINARY_URL from env
+cloudinary.config();
 
 /* ---------------- STORAGE CONFIG ---------------- */
 const uploadsRoot = path.join(__dirname, "../uploads");
@@ -39,7 +39,6 @@ const deleteFiles = async (book) => {
             const p = path.join(__dirname, "..", book.pdfPath);
             if (await fs.pathExists(p)) await fs.remove(p);
         }
-        // Note: We are no longer deleting covers from disk because they are on Cloudinary
     } catch (err) {
         console.error("File deletion error:", err);
     }
@@ -77,7 +76,7 @@ router.get("/", async (_, res) => {
         res.json(books.map(b => ({
             _id: b._id,
             title: b.title,
-            cover: b.cover, // This will now be a Cloudinary URL
+            cover: b.cover,
             url: b.pdfPath,
             folder: b.folder || "All",
             downloads: b.downloads || 0,
@@ -88,7 +87,6 @@ router.get("/", async (_, res) => {
     }
 });
 
-// Upload Book + Thumbnail to Cloudinary
 router.post("/", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file" });
@@ -99,9 +97,7 @@ router.post("/", upload.single("file"), async (req, res) => {
         const tempLocalCoverPath = path.join(coversDir, `${baseName}.png`);
         const outputPrefix = path.join(coversDir, baseName);
 
-        // 1. Generate Thumbnail locally
         const generateCover = () => new Promise((resolve) => {
-            // Using pdftoppm to create a local png first
             exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfDiskPath}" "${outputPrefix}"`, async (error) => {
                 if (error) {
                     console.error("pdftoppm error:", error);
@@ -109,17 +105,11 @@ router.post("/", upload.single("file"), async (req, res) => {
                 }
 
                 try {
-                    // 2. Upload the local png to Cloudinary
                     const uploadRes = await cloudinary.uploader.upload(tempLocalCoverPath, {
                         folder: "storyteller_covers"
                     });
-
-                    // 3. Clean up the local png file immediately
-                    if (fs.existsSync(tempLocalCoverPath)) {
-                        await fs.remove(tempLocalCoverPath);
-                    }
-
-                    resolve(uploadRes.secure_url); // Return the Cloudinary URL
+                    if (fs.existsSync(tempLocalCoverPath)) await fs.remove(tempLocalCoverPath);
+                    resolve(uploadRes.secure_url);
                 } catch (cloudErr) {
                     console.error("Cloudinary Error:", cloudErr);
                     resolve(null);
@@ -143,7 +133,39 @@ router.post("/", upload.single("file"), async (req, res) => {
     }
 });
 
-// Bulk Delete
+/**
+ * FIXED: Rename Route
+ * Added to handle title updates from the Library UI
+ */
+router.patch("/:id/rename", async (req, res) => {
+    try {
+        const { title } = req.body;
+        if (!title) return res.status(400).json({ error: "Title is required" });
+        const book = await Book.findByIdAndUpdate(req.params.id, { title }, { new: true });
+        res.json(book);
+    } catch (err) {
+        res.status(500).json({ error: "Rename failed" });
+    }
+});
+
+/**
+ * FIXED: Move Route
+ * Matches frontend sending { folder: targetFolder }
+ */
+router.patch("/:id/move", async (req, res) => {
+    try {
+        const { folder } = req.body; // Changed from folderName to folder
+        const book = await Book.findByIdAndUpdate(
+            req.params.id,
+            { folder: folder || "All" },
+            { new: true }
+        );
+        res.json(book);
+    } catch (err) {
+        res.status(500).json({ error: "Move failed" });
+    }
+});
+
 router.post("/bulk-delete", async (req, res) => {
     try {
         const { ids } = req.body;
@@ -158,7 +180,6 @@ router.post("/bulk-delete", async (req, res) => {
     }
 });
 
-// Single Delete
 router.delete("/:id", async (req, res) => {
     try {
         const book = await Book.findById(req.params.id);
@@ -171,22 +192,6 @@ router.delete("/:id", async (req, res) => {
     }
 });
 
-// Move book
-router.patch("/:id/move", async (req, res) => {
-    try {
-        const { folderName } = req.body;
-        const book = await Book.findByIdAndUpdate(
-            req.params.id,
-            { folder: folderName || "All" },
-            { new: true }
-        );
-        res.json(book);
-    } catch (err) {
-        res.status(500).json({ error: "Move failed" });
-    }
-});
-
-// Stats updates
 router.patch("/:id/actions", async (req, res) => {
     try {
         const { action } = req.body;
