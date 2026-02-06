@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
@@ -9,6 +9,8 @@ import {
 const Reader = () => {
     const { id } = useParams();
     const navigate = useNavigate();
+    const mainRef = useRef(null); // Ref for smooth scrolling
+
     const [book, setBook] = useState(null);
     const [isPlaying, setIsPlaying] = useState(false);
     const [progress, setProgress] = useState(0);
@@ -19,40 +21,51 @@ const Reader = () => {
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
     useEffect(() => {
-        document.body.classList.add('reader-open');
+        // Prevent background scrolling when reader is open
+        document.body.style.overflow = 'hidden';
 
         const fetchBookDetails = async () => {
             try {
-                const response = await fetch(`${BACKEND_URL}/api/books`);
-                if (!response.ok) throw new Error("Backend unreachable");
+                setLoading(true);
+                // Optimization: Fetch the specific book ID instead of the whole list
+                const response = await fetch(`${BACKEND_URL}/api/books/${id}`);
 
-                const data = await response.json();
+                if (!response.ok) {
+                    // Fallback to searching the list if your specific endpoint isn't ready
+                    const listResponse = await fetch(`${BACKEND_URL}/api/books`);
+                    const data = await listResponse.json();
+                    const targetId = String(id).trim();
+                    const foundBook = data.find(b => String(b._id).trim() === targetId);
 
-                // Clean comparison: remove any potential whitespace/quotes
-                const targetId = String(id).trim();
-                const foundBook = data.find(b => String(b._id).trim() === targetId);
-
-                if (foundBook) {
-                    setBook(foundBook);
+                    if (foundBook) setBook(foundBook);
+                    else throw new Error("Book not found");
                 } else {
-                    setError(`Book with ID ${targetId} not found.`);
+                    const data = await response.json();
+                    setBook(data);
                 }
             } catch (err) {
-                setError("Failed to load book data.");
+                setError("Failed to load book data. Please try again.");
             } finally {
                 setLoading(false);
             }
         };
-        fetchBookDetails();
 
-        return () => document.body.classList.remove('reader-open');
+        if (id) fetchBookDetails();
+
+        return () => {
+            document.body.style.overflow = 'unset'; // Restore scrolling on close
+        };
     }, [id]);
 
     const getBookText = () => {
         if (!book) return "";
-        // Check standard fields
-        const text = book.content || book.description || book.text || "No text content found for this book.";
-        return text;
+        return book.content || book.description || book.text || "No text content found.";
+    };
+
+    const scrollToTop = () => {
+        if (mainRef.current) {
+            mainRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+        }
     };
 
     if (loading) {
@@ -66,9 +79,9 @@ const Reader = () => {
 
     if (error) {
         return ReactDOM.createPortal(
-            <div style={{ ...styles.container, justifyContent: 'center', alignItems: 'center' }}>
-                <p style={{ color: 'red' }}>{error}</p>
-                <button onClick={() => navigate(-1)} style={styles.pillBtn}>Go Back</button>
+            <div style={{ ...styles.container, justifyContent: 'center', alignItems: 'center', padding: '20px', textAlign: 'center' }}>
+                <p style={{ color: '#ef4444', marginBottom: '20px', fontWeight: 'bold' }}>{error}</p>
+                <button onClick={() => navigate(-1)} style={{ ...styles.pillBtn, backgroundColor: '#000' }}>Go Back</button>
             </div>,
             document.body
         );
@@ -93,7 +106,7 @@ const Reader = () => {
                 </div>
             </header>
 
-            <main style={styles.mainContent}>
+            <main ref={mainRef} style={styles.mainContent}>
                 <div style={styles.bookText}>
                     <h1 style={styles.chapterTitle}>Reading Mode</h1>
                     <h2 style={styles.chapterSubtitle}>{book?.title || "Untitled"}</h2>
@@ -103,10 +116,7 @@ const Reader = () => {
                         ))}
                     </div>
                 </div>
-                <button
-                    style={styles.scrollTopBtn}
-                    onClick={() => document.querySelector('main').scrollTo({ top: 0, behavior: 'smooth' })}
-                >
+                <button style={styles.scrollTopBtn} onClick={scrollToTop}>
                     <ChevronUp color="white" />
                 </button>
             </main>
@@ -122,7 +132,6 @@ const Reader = () => {
                 </div>
                 <div style={styles.controlsRow}>
                     <div style={styles.flagIcon}>
-                        {/* FIXED: Using direct URL from Cloudinary */}
                         {book?.coverImage ? (
                             <img src={book.coverImage} alt="" style={styles.miniCover} />
                         ) : "📖"}
@@ -142,32 +151,4 @@ const Reader = () => {
     );
 };
 
-const styles = {
-    container: { position: 'fixed', inset: 0, zIndex: 999999, height: '100vh', width: '100vw', backgroundColor: '#fff', display: 'flex', flexDirection: 'column', fontFamily: 'serif' },
-    header: { padding: '15px 15px 10px 15px', backgroundColor: '#000', color: '#fff' },
-    topRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' },
-    topIcons: { display: 'flex', gap: '24px', alignItems: 'center' },
-    aaText: { fontSize: '20px', fontWeight: 'bold' },
-    buttonRow: { display: 'flex', gap: '10px', overflowX: 'auto', paddingBottom: '5px' },
-    pillBtn: { backgroundColor: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', padding: '8px 14px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', whiteSpace: 'nowrap' },
-    mainContent: { flex: 1, overflowY: 'auto', padding: '40px 25px', color: '#1a1a1a' },
-    bookText: { maxWidth: '650px', margin: '0 auto', lineHeight: '1.8', fontSize: '19px' },
-    chapterTitle: { textAlign: 'center', fontStyle: 'italic', fontSize: '18px', color: '#888' },
-    chapterSubtitle: { textAlign: 'center', fontSize: '28px', marginBottom: '35px', fontWeight: 'bold' },
-    textContent: { color: '#2d3436', textAlign: 'justify' },
-    scrollTopBtn: { position: 'fixed', right: '25px', bottom: '180px', backgroundColor: '#333', borderRadius: '12px', padding: '10px', border: 'none' },
-    footer: { backgroundColor: '#1a1a1a', padding: '20px 20px 40px 20px', color: 'white' },
-    progressBarContainer: { height: '4px', backgroundColor: '#333', borderRadius: '2px', marginBottom: '12px' },
-    progressBar: { height: '100%', backgroundColor: '#6366f1' },
-    timeLabels: { display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: '#888', marginBottom: '25px' },
-    controlsRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-    playbackCenter: { display: 'flex', alignItems: 'center', gap: '35px' },
-    playBtn: { width: '72px', height: '72px', borderRadius: '50%', backgroundColor: '#4f46e5', border: 'none', display: 'flex', justifyContent: 'center', alignItems: 'center' },
-    skipBtn: { position: 'relative' },
-    skipNum: { position: 'absolute', top: '55%', left: '50%', transform: 'translate(-50%, -50%)', fontSize: '10px', fontWeight: 'bold' },
-    speedIndicator: { border: '1px solid #444', padding: '6px 12px', borderRadius: '10px', fontSize: '14px' },
-    moreDot: { fontSize: '22px' },
-    miniCover: { width: 30, height: 30, borderRadius: 4, objectFit: 'cover' }
-};
-
-export default Reader;
+// ... keep your styles object exactly as it was ...

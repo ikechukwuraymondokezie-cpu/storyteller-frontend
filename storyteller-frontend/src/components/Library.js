@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { useNavigate } from "react-router-dom"; // Change 1: Added Navigate
 import {
     MoreHorizontal, Download, Plus, FolderPlus, Trash2, X, Folder,
     Share, Edit3, BookOpen, CheckSquare, Star, PlayCircle
@@ -44,6 +45,7 @@ function FolderModal({ isOpen, onClose, onCreate }) {
 
 export default function Library() {
     const API_URL = process.env.REACT_APP_API_URL || "";
+    const navigate = useNavigate(); // Change 2: Initialized navigate
 
     const [books, setBooks] = useState([]);
     const [activeBook, setActiveBook] = useState(null);
@@ -301,7 +303,7 @@ export default function Library() {
                     {filteredBooks.map((book) => (
                         <div
                             key={book._id}
-                            onClick={() => isSelectMode ? toggleBookSelection(book._id) : setActiveReaderBook(book)}
+                            onClick={() => isSelectMode ? toggleBookSelection(book._id) : navigate(`/reader/${book._id}`)}
                             className={`relative bg-zinc-900 transition group cursor-pointer overflow-hidden ${viewMode === "grid" ? "rounded-lg p-2 flex-col" : "rounded-xl p-3 flex items-center gap-4"} ${selectedIds.includes(book._id) ? "ring-2 ring-yellow-400 bg-zinc-800" : "hover:bg-zinc-800"}`}
                         >
                             {isSelectMode && (
