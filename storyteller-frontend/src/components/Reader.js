@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     ChevronLeft, MessageSquare, FileText, Mic,
-    RotateCcw, RotateCw, Play, Pause, ChevronUp
+    RotateCcw, RotateCw, Play, Pause, ChevronUp, Loader2
 } from 'lucide-react';
 
 const Reader = () => {
@@ -11,27 +11,25 @@ const Reader = () => {
     const navigate = useNavigate();
     const [book, setBook] = useState(null);
     const [isPlaying, setIsPlaying] = useState(false);
-    const [progress, setProgress] = useState(38);
+    const [progress, setProgress] = useState(0);
     const [speed, setSpeed] = useState(1.1);
     const [loading, setLoading] = useState(true);
 
-    // AS PER YOUR CONFIGURATION:
-    // This is where the React app lives
-    const FRONTEND_URL = "https://storyteller-b1i3.onrender.com";
-    // This is where your Node.js/Express API lives
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
     useEffect(() => {
-        // Lock background scroll when reader is open
         document.body.classList.add('reader-open');
 
         const fetchBookDetails = async () => {
             try {
-                // Fetching from your Backend URL
                 const response = await fetch(`${BACKEND_URL}/api/books`);
                 const data = await response.json();
                 const foundBook = data.find(b => b._id === id);
-                if (foundBook) setBook(foundBook);
+                if (foundBook) {
+                    setBook(foundBook);
+                    // If your backend tracks progress, set it here
+                    if (foundBook.progress) setProgress(foundBook.progress);
+                }
             } catch (err) {
                 console.error("Fetch error:", err);
             } finally {
@@ -41,12 +39,20 @@ const Reader = () => {
         fetchBookDetails();
 
         return () => {
-            // Re-enable scroll when reader is closed
             document.body.classList.remove('reader-open');
         };
     }, [id, BACKEND_URL]);
 
-    if (loading) return null;
+    // Enhanced Loading State
+    if (loading) {
+        return ReactDOM.createPortal(
+            <div style={{ ...styles.container, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>
+                <Loader2 className="animate-spin" color="white" size={40} />
+                <p style={{ color: 'white', marginTop: '10px', fontFamily: 'sans-serif' }}>Opening your book...</p>
+            </div>,
+            document.body
+        );
+    }
 
     const readerContent = (
         <div className="reader-ui reader-overlay-active" style={styles.container}>
@@ -73,23 +79,24 @@ const Reader = () => {
                 </div>
             </header>
 
-            {/* 2. READING CONTENT */}
+            {/* 2. DYNAMIC READING CONTENT */}
             <main style={styles.mainContent}>
                 <div style={styles.bookText}>
-                    <h1 style={styles.chapterTitle}>Chapter 1</h1>
-                    <h2 style={styles.chapterSubtitle}>{book?.title || "Reading..."}</h2>
-                    <div className="prose">
-                        <p>
-                            The authority of the believer is unveiled more fully in the Book of Ephesians
-                            than any other epistle written to the churches. Because this book is based
-                            on Ephesians, let me encourage you to read the first three chapters over
-                            and over again for several days.
-                        </p>
-                        <p>
-                            You will notice there are Spirit-anointed prayers at the end of the first
-                            and third chapters. However, Paul didn't pray these prayers only for the
-                            Church at Ephesus...
-                        </p>
+                    <h1 style={styles.chapterTitle}>Full Read</h1>
+                    <h2 style={styles.chapterSubtitle}>{book?.title}</h2>
+
+                    <div className="prose" style={styles.textContent}>
+                        {/* Checking for 'content' or 'description' fields. 
+                           If your backend returns a long string, we split by newlines for better readability.
+                        */}
+                        {(book?.content || book?.description || "No content available for this book.")
+                            .split('\n')
+                            .map((paragraph, index) => (
+                                <p key={index} style={{ marginBottom: '1.5em' }}>
+                                    {paragraph}
+                                </p>
+                            ))
+                        }
                     </div>
                 </div>
 
@@ -108,13 +115,18 @@ const Reader = () => {
                 </div>
 
                 <div style={styles.timeLabels}>
-                    <span>05:02</span>
-                    <span>Page 5 of 72</span>
-                    <span>1:17:31</span>
+                    <span>00:00</span>
+                    <span style={{ color: '#6366f1', fontWeight: 'bold' }}>{book?.category || 'Book'}</span>
+                    <span>Finish</span>
                 </div>
 
                 <div style={styles.controlsRow}>
-                    <div style={styles.flagIcon}>🇦🇺</div>
+                    <div style={styles.flagIcon}>
+                        {/* Display a cover thumbnail if available, else an emoji */}
+                        {book?.coverImage ? (
+                            <img src={book.coverImage} alt="" style={{ width: 30, height: 30, borderRadius: 4 }} />
+                        ) : "📖"}
+                    </div>
 
                     <div style={styles.playbackCenter}>
                         <div style={styles.skipBtn}><RotateCcw size={26} /> <span style={styles.skipNum}>10</span></div>
@@ -134,7 +146,6 @@ const Reader = () => {
         </div>
     );
 
-    // Using Portal to ensure it bypasses any parent nav z-index issues
     return ReactDOM.createPortal(readerContent, document.body);
 };
 
@@ -142,7 +153,7 @@ const styles = {
     container: {
         position: 'fixed',
         inset: 0,
-        zIndex: 999999, // Absolute highest priority
+        zIndex: 999999,
         height: '100vh',
         width: '100vw',
         backgroundColor: '#fff',
@@ -179,8 +190,9 @@ const styles = {
         backgroundColor: '#fff'
     },
     bookText: { maxWidth: '650px', margin: '0 auto', lineHeight: '1.8', fontSize: '19px' },
-    chapterTitle: { textAlign: 'center', fontStyle: 'italic', fontSize: '20px', color: '#666' },
+    chapterTitle: { textAlign: 'center', fontStyle: 'italic', fontSize: '18px', color: '#888', textTransform: 'uppercase', letterSpacing: '1px' },
     chapterSubtitle: { textAlign: 'center', fontSize: '28px', marginBottom: '35px', fontWeight: 'bold' },
+    textContent: { color: '#2d3436', textAlign: 'justify' },
     scrollTopBtn: {
         position: 'fixed',
         right: '25px',
