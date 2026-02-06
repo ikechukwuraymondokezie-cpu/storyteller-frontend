@@ -24,10 +24,16 @@ const Reader = () => {
             try {
                 const response = await fetch(`${BACKEND_URL}/api/books`);
                 const data = await response.json();
-                const foundBook = data.find(b => b._id === id);
+
+                // DEBUG: Open browser console to see what fields exist
+                console.log("Database response:", data);
+
+                // Using == instead of === in case ID is an object or string mismatch
+                const foundBook = data.find(b => b._id == id);
+
                 if (foundBook) {
+                    console.log("Book matched:", foundBook);
                     setBook(foundBook);
-                    // If your backend tracks progress, set it here
                     if (foundBook.progress) setProgress(foundBook.progress);
                 }
             } catch (err) {
@@ -43,7 +49,24 @@ const Reader = () => {
         };
     }, [id, BACKEND_URL]);
 
-    // Enhanced Loading State
+    // SMART CONTENT HUNTER: Checks all common fields for the book text
+    const getActualContent = () => {
+        if (!book) return "";
+
+        // Priority order of fields to check
+        const fields = [book.content, book.description, book.text, book.fullText, book.extract];
+
+        for (const field of fields) {
+            if (field && typeof field === 'string' && field.length > 5) {
+                return field;
+            }
+        }
+
+        // If nothing found, show the keys that ARE there to help us debug
+        const availableKeys = Object.keys(book).join(", ");
+        return `Content field not found. Available fields in your database: ${availableKeys}`;
+    };
+
     if (loading) {
         return ReactDOM.createPortal(
             <div style={{ ...styles.container, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>
@@ -82,14 +105,11 @@ const Reader = () => {
             {/* 2. DYNAMIC READING CONTENT */}
             <main style={styles.mainContent}>
                 <div style={styles.bookText}>
-                    <h1 style={styles.chapterTitle}>Full Read</h1>
-                    <h2 style={styles.chapterSubtitle}>{book?.title}</h2>
+                    <h1 style={styles.chapterTitle}>Reading Mode</h1>
+                    <h2 style={styles.chapterSubtitle}>{book?.title || "Untitled"}</h2>
 
                     <div className="prose" style={styles.textContent}>
-                        {/* Checking for 'content' or 'description' fields. 
-                           If your backend returns a long string, we split by newlines for better readability.
-                        */}
-                        {(book?.content || book?.description || "No content available for this book.")
+                        {getActualContent()
                             .split('\n')
                             .map((paragraph, index) => (
                                 <p key={index} style={{ marginBottom: '1.5em' }}>
@@ -116,15 +136,14 @@ const Reader = () => {
 
                 <div style={styles.timeLabels}>
                     <span>00:00</span>
-                    <span style={{ color: '#6366f1', fontWeight: 'bold' }}>{book?.category || 'Book'}</span>
+                    <span style={{ color: '#6366f1', fontWeight: 'bold' }}>{book?.category || 'General'}</span>
                     <span>Finish</span>
                 </div>
 
                 <div style={styles.controlsRow}>
                     <div style={styles.flagIcon}>
-                        {/* Display a cover thumbnail if available, else an emoji */}
                         {book?.coverImage ? (
-                            <img src={book.coverImage} alt="" style={{ width: 30, height: 30, borderRadius: 4 }} />
+                            <img src={book.coverImage} alt="" style={{ width: 30, height: 30, borderRadius: 4, objectFit: 'cover' }} />
                         ) : "📖"}
                     </div>
 
@@ -192,7 +211,7 @@ const styles = {
     bookText: { maxWidth: '650px', margin: '0 auto', lineHeight: '1.8', fontSize: '19px' },
     chapterTitle: { textAlign: 'center', fontStyle: 'italic', fontSize: '18px', color: '#888', textTransform: 'uppercase', letterSpacing: '1px' },
     chapterSubtitle: { textAlign: 'center', fontSize: '28px', marginBottom: '35px', fontWeight: 'bold' },
-    textContent: { color: '#2d3436', textAlign: 'justify' },
+    textContent: { color: '#2d3436', textAlign: 'justify', whiteSpace: 'pre-wrap' },
     scrollTopBtn: {
         position: 'fixed',
         right: '25px',
