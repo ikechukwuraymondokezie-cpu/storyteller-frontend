@@ -24,23 +24,21 @@ const Reader = () => {
         const fetchBookDetails = async () => {
             try {
                 const response = await fetch(`${BACKEND_URL}/api/books`);
-                if (!response.ok) throw new Error("Failed to reach backend");
+                if (!response.ok) throw new Error("Backend unreachable");
 
                 const data = await response.json();
 
-                // 1. IMPROVED MATCHING LOGIC
-                // We convert both to strings and trim them to ensure a perfect match
-                const foundBook = data.find(b => String(b._id).trim() === String(id).trim());
+                // Clean comparison: remove any potential whitespace/quotes
+                const targetId = String(id).trim();
+                const foundBook = data.find(b => String(b._id).trim() === targetId);
 
                 if (foundBook) {
                     setBook(foundBook);
                 } else {
-                    setError(`Book ID ${id} not found in database.`);
-                    console.log("IDs available in DB:", data.map(b => b._id));
+                    setError(`Book with ID ${targetId} not found.`);
                 }
             } catch (err) {
-                setError(err.message);
-                console.error("Fetch error:", err);
+                setError("Failed to load book data.");
             } finally {
                 setLoading(false);
             }
@@ -48,17 +46,13 @@ const Reader = () => {
         fetchBookDetails();
 
         return () => document.body.classList.remove('reader-open');
-    }, [id, BACKEND_URL]);
+    }, [id]);
 
-    // 2. HELPER TO EXTRACT TEXT
-    const renderContent = () => {
-        if (!book) return null;
-        // Check every possible text field
-        const text = book.content || book.description || book.text || book.fullText || "This book has no text content stored.";
-
-        return text.split('\n').map((paragraph, index) => (
-            <p key={index} style={{ marginBottom: '1.5em' }}>{paragraph}</p>
-        ));
+    const getBookText = () => {
+        if (!book) return "";
+        // Check standard fields
+        const text = book.content || book.description || book.text || "No text content found for this book.";
+        return text;
     };
 
     if (loading) {
@@ -72,15 +66,15 @@ const Reader = () => {
 
     if (error) {
         return ReactDOM.createPortal(
-            <div style={{ ...styles.container, justifyContent: 'center', alignItems: 'center', padding: '20px' }}>
-                <p style={{ color: 'red', textAlign: 'center' }}>{error}</p>
-                <button onClick={() => navigate(-1)} style={{ marginTop: '20px', padding: '10px 20px' }}>Go Back</button>
+            <div style={{ ...styles.container, justifyContent: 'center', alignItems: 'center' }}>
+                <p style={{ color: 'red' }}>{error}</p>
+                <button onClick={() => navigate(-1)} style={styles.pillBtn}>Go Back</button>
             </div>,
             document.body
         );
     }
 
-    const readerUI = (
+    return ReactDOM.createPortal(
         <div className="reader-ui" style={styles.container}>
             <header style={styles.header}>
                 <div style={styles.topRow}>
@@ -102,14 +96,13 @@ const Reader = () => {
             <main style={styles.mainContent}>
                 <div style={styles.bookText}>
                     <h1 style={styles.chapterTitle}>Reading Mode</h1>
-                    {/* If book is found, show title; otherwise show 'Book Not Found' */}
-                    <h2 style={styles.chapterSubtitle}>{book ? book.title : "Book Not Found"}</h2>
-
+                    <h2 style={styles.chapterSubtitle}>{book?.title || "Untitled"}</h2>
                     <div className="prose" style={styles.textContent}>
-                        {renderContent()}
+                        {getBookText().split('\n').map((p, i) => (
+                            <p key={i} style={{ marginBottom: '1.5em' }}>{p}</p>
+                        ))}
                     </div>
                 </div>
-
                 <button
                     style={styles.scrollTopBtn}
                     onClick={() => document.querySelector('main').scrollTo({ top: 0, behavior: 'smooth' })}
@@ -128,7 +121,12 @@ const Reader = () => {
                     <span>Finish</span>
                 </div>
                 <div style={styles.controlsRow}>
-                    <div style={styles.flagIcon}>{book?.coverImage ? "🖼️" : "📖"}</div>
+                    <div style={styles.flagIcon}>
+                        {/* FIXED: Using direct URL from Cloudinary */}
+                        {book?.coverImage ? (
+                            <img src={book.coverImage} alt="" style={styles.miniCover} />
+                        ) : "📖"}
+                    </div>
                     <div style={styles.playbackCenter}>
                         <div style={styles.skipBtn}><RotateCcw size={26} /><span style={styles.skipNum}>10</span></div>
                         <button style={styles.playBtn} onClick={() => setIsPlaying(!isPlaying)}>
@@ -139,10 +137,9 @@ const Reader = () => {
                     <div style={styles.speedIndicator}>{speed}×</div>
                 </div>
             </footer>
-        </div>
+        </div>,
+        document.body
     );
-
-    return ReactDOM.createPortal(readerUI, document.body);
 };
 
 const styles = {
@@ -155,7 +152,7 @@ const styles = {
     pillBtn: { backgroundColor: 'rgba(255,255,255,0.15)', border: 'none', color: 'white', padding: '8px 14px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', whiteSpace: 'nowrap' },
     mainContent: { flex: 1, overflowY: 'auto', padding: '40px 25px', color: '#1a1a1a' },
     bookText: { maxWidth: '650px', margin: '0 auto', lineHeight: '1.8', fontSize: '19px' },
-    chapterTitle: { textAlign: 'center', fontStyle: 'italic', fontSize: '18px', color: '#888', textTransform: 'uppercase' },
+    chapterTitle: { textAlign: 'center', fontStyle: 'italic', fontSize: '18px', color: '#888' },
     chapterSubtitle: { textAlign: 'center', fontSize: '28px', marginBottom: '35px', fontWeight: 'bold' },
     textContent: { color: '#2d3436', textAlign: 'justify' },
     scrollTopBtn: { position: 'fixed', right: '25px', bottom: '180px', backgroundColor: '#333', borderRadius: '12px', padding: '10px', border: 'none' },
@@ -169,7 +166,8 @@ const styles = {
     skipBtn: { position: 'relative' },
     skipNum: { position: 'absolute', top: '55%', left: '50%', transform: 'translate(-50%, -50%)', fontSize: '10px', fontWeight: 'bold' },
     speedIndicator: { border: '1px solid #444', padding: '6px 12px', borderRadius: '10px', fontSize: '14px' },
-    moreDot: { fontSize: '22px' }
+    moreDot: { fontSize: '22px' },
+    miniCover: { width: 30, height: 30, borderRadius: 4, objectFit: 'cover' }
 };
 
 export default Reader;
