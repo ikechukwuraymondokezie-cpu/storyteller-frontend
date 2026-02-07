@@ -22,43 +22,20 @@ app.use(cors({
 app.use(express.json());
 
 /* -------------------- UPLOADS & STATIC FILES -------------------- */
+// We still keep these for temporary processing before sending to Cloudinary
 const uploadsBase = path.join(__dirname, "uploads");
-// UPDATED: Folder name changed from 'pdf' to 'pdfs'
 const uploadDir = path.join(uploadsBase, "pdfs");
 const coversDir = path.join(uploadsBase, "covers");
-const audioDir = path.join(uploadsBase, "audio");
 
-// Ensure directories exist
 fs.ensureDirSync(uploadDir);
 fs.ensureDirSync(coversDir);
-fs.ensureDirSync(audioDir);
 
-/**
- * STATIC SERVING:
- * Maps the URL /uploads to the physical folder.
- */
 app.use("/uploads", express.static(uploadsBase));
 
 /* -------------------- MONGODB -------------------- */
 const MONGO_URI = process.env.MONGO_URI;
 mongoose.connect(MONGO_URI)
-    .then(async () => {
-        console.log("✅ MongoDB connected");
-
-        /* --- AUTOMATIC DATA FIX FOR FOLDER NAME --- */
-        try {
-            const booksToFix = await Book.find({ pdfPath: { $regex: /^\/uploads\/pdf\// } });
-            if (booksToFix.length > 0) {
-                for (let book of booksToFix) {
-                    book.pdfPath = book.pdfPath.replace("/uploads/pdf/", "/uploads/pdfs/");
-                    await book.save();
-                }
-                console.log(`🛠️ Fixed ${booksToFix.length} book paths from /pdf/ to /pdfs/`);
-            }
-        } catch (err) {
-            console.error("Migration error:", err);
-        }
-    })
+    .then(() => console.log("✅ MongoDB connected"))
     .catch((err) => console.error("❌ MongoDB error:", err));
 
 /* -------------------- SCHEMAS -------------------- */
@@ -69,7 +46,7 @@ const Folder = mongoose.model("Folder", new mongoose.Schema({
 const bookSchema = new mongoose.Schema({
     title: { type: String, required: true },
     cover: String,
-    pdfPath: String,
+    pdfPath: String, // Will now store Cloudinary URL
     folder: { type: String, default: "All" },
     downloads: { type: Number, default: 0 },
     ttsRequests: { type: Number, default: 0 },
@@ -99,20 +76,9 @@ const formatBook = (book) => ({
     createdAt: book.createdAt
 });
 
-const deleteBookFiles = async (book) => {
-    try {
-        if (book.pdfPath) {
-            const relativePath = book.pdfPath.startsWith('/') ? book.pdfPath.substring(1) : book.pdfPath;
-            const fullPdfPath = path.join(__dirname, relativePath);
-            if (await fs.pathExists(fullPdfPath)) await fs.remove(fullPdfPath);
-        }
-    } catch (err) {
-        console.error("⚠️ Error deleting files:", err);
-    }
-};
-
 /* -------------------- API ROUTES -------------------- */
 
+// Get Folders
 app.get("/api/books/folders", async (_, res) => {
     try {
         const folders = await Folder.find().sort({ name: 1 });
@@ -122,6 +88,7 @@ app.get("/api/books/folders", async (_, res) => {
     }
 });
 
+// Create Folder
 app.post("/api/books/folders", async (req, res) => {
     try {
         const { name } = req.body;
@@ -133,6 +100,7 @@ app.post("/api/books/folders", async (req, res) => {
     }
 });
 
+// Get All Books
 app.get("/api/books", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
@@ -142,6 +110,7 @@ app.get("/api/books", async (_, res) => {
     }
 });
 
+// Get Single Book
 app.get("/api/books/:id", async (req, res) => {
     try {
         const book = await Book.findById(req.params.id);
@@ -152,18 +121,28 @@ app.get("/api/books/:id", async (req, res) => {
     }
 });
 
-// Upload Book
+/**
+ * UPLOAD BOOK (WITH CLOUDINARY RAW STORAGE)
+ */
 app.post("/api/books", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-        const title = req.file.originalname.replace(/\.[^/.]+$/, "");
+        const title = req.body.title || req.file.originalname.replace(/\.[^/.]+$/, "");
         const folder = req.body.folder || "All";
-
-        // UPDATED: Changed path to /pdfs/
-        const pdfPath = `/uploads/pdfs/${req.file.filename}`;
         const pdfFullPath = req.file.path;
 
+        // 1. Upload PDF to Cloudinary as "raw"
+        const uploadPdf = async () => {
+            const result = await cloudinary.uploader.upload(pdfFullPath, {
+                folder: "storyteller_pdfs",
+                resource_type: "raw", // MUST be raw for non-image files
+                public_id: `${Date.now()}-${req.file.originalname}`
+            });
+            return result.secure_url;
+        };
+
+        // 2. Generate Thumbnail using pdftoppm
         const baseName = path.parse(req.file.filename).name;
         const tempLocalCoverPath = path.join(coversDir, `${baseName}.png`);
         const outputPrefix = path.join(coversDir, baseName);
@@ -178,25 +157,39 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
                     const uploadRes = await cloudinary.uploader.upload(tempLocalCoverPath, {
                         folder: "storyteller_covers"
                     });
-                    await fs.remove(tempLocalCoverPath);
+                    await fs.remove(tempLocalCoverPath); // Clean up local png
                     resolve(uploadRes.secure_url);
                 } catch (cloudErr) {
-                    console.error("Cloudinary Error:", cloudErr);
+                    console.error("Cover Upload Error:", cloudErr);
                     resolve(null);
                 }
             });
         });
 
-        const coverUrl = await generateThumbnail();
-        const book = await Book.create({ title, pdfPath, cover: coverUrl, folder });
+        // Run both uploads
+        const [pdfUrl, coverUrl] = await Promise.all([uploadPdf(), generateThumbnail()]);
+
+        // 3. Save to Database
+        const book = await Book.create({
+            title,
+            pdfPath: pdfUrl,
+            cover: coverUrl,
+            folder
+        });
+
+        // 4. CLEAN UP: Delete the temporary local PDF
+        await fs.remove(pdfFullPath);
 
         res.status(201).json(formatBook(book));
     } catch (err) {
         console.error("Upload error:", err);
+        // Clean up on failure if file exists
+        if (req.file) await fs.remove(req.file.path);
         res.status(500).json({ error: "Upload failed" });
     }
 });
 
+// Rename
 app.patch("/api/books/:id/rename", async (req, res) => {
     try {
         const { title } = req.body;
@@ -207,49 +200,18 @@ app.patch("/api/books/:id/rename", async (req, res) => {
     }
 });
 
-app.patch("/api/books/:id/move", async (req, res) => {
-    try {
-        const { folder } = req.body;
-        const book = await Book.findByIdAndUpdate(req.params.id, { folder: folder || "All" }, { new: true });
-        res.json(formatBook(book));
-    } catch {
-        res.status(500).json({ error: "Move failed" });
-    }
-});
-
+// Delete
 app.delete("/api/books/:id", async (req, res) => {
     try {
         const book = await Book.findById(req.params.id);
         if (book) {
-            await deleteBookFiles(book);
+            // Note: Cloudinary deletion would require extra logic using public_id
+            // For now, we just delete the DB record
             await book.deleteOne();
         }
         res.json({ message: "Deleted" });
     } catch {
         res.status(500).json({ error: "Delete failed" });
-    }
-});
-
-app.post("/api/books/bulk-delete", async (req, res) => {
-    try {
-        const { ids } = req.body;
-        const books = await Book.find({ _id: { $in: ids } });
-        await Promise.all(books.map(deleteBookFiles));
-        await Book.deleteMany({ _id: { $in: ids } });
-        res.json({ message: "Bulk delete success" });
-    } catch {
-        res.status(500).json({ error: "Bulk delete failed" });
-    }
-});
-
-app.patch("/api/books/:id/actions", async (req, res) => {
-    try {
-        const { action } = req.body;
-        const update = action === "download" ? { $inc: { downloads: 1 } } : { $inc: { ttsRequests: 1 } };
-        const book = await Book.findByIdAndUpdate(req.params.id, update, { new: true });
-        res.json(formatBook(book));
-    } catch {
-        res.status(500).json({ error: "Action failed" });
     }
 });
 

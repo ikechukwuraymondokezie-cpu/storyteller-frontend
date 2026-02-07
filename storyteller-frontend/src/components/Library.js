@@ -1,5 +1,4 @@
-import { useState, useRef, useEffect } from "react";
-import React, { useState, useEffect, useRef } from "react"; // Added missing imports
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
     MoreHorizontal, Download, Plus, FolderPlus, Trash2, X, Folder,
@@ -16,7 +15,7 @@ function FolderModal({ isOpen, onClose, onCreate }) {
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-            <div className="bg-zinc-900 border border-white/10 w-full max-sm rounded-2xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
                 <h2 className="text-xl font-bold text-white mb-1">New Folder</h2>
                 <p className="text-zinc-500 text-sm mb-4">Organize your collection by genre or mood.</p>
                 <input
@@ -44,7 +43,6 @@ function FolderModal({ isOpen, onClose, onCreate }) {
 }
 
 export default function Library() {
-    // API URL - Ensure no trailing slash for clean path joining
     const API_URL = "https://storyteller-frontend-x65b.onrender.com";
     const navigate = useNavigate();
 
@@ -66,15 +64,18 @@ export default function Library() {
     const [viewMode, setViewMode] = useState(localStorage.getItem("libraryViewMode") || "grid");
     const [searchQuery, setSearchQuery] = useState("");
 
-    /* 🛠️ UPDATED HELPER: Bridge local vs cloud storage URLs */
+    /* --- HELPERS --- */
     const getCoverUrl = (cover) => {
         if (!cover) return defaultCover;
-        // If it's a Cloudinary link (starts with http), return as is
         if (cover.startsWith('http')) return cover;
+        return `${API_URL}${cover.startsWith('/') ? cover : `/uploads/covers/${cover}`}`;
+    };
 
-        // If it's a local path, ensure it starts with /uploads/covers/
-        const cleanPath = cover.startsWith('/') ? cover : `/uploads/covers/${cover}`;
-        return `${API_URL}${cleanPath}`;
+    // New Helper for the PDF URL itself
+    const getPdfUrl = (path) => {
+        if (!path) return null;
+        if (path.startsWith('http')) return path;
+        return `${API_URL}${path.startsWith('/') ? path : `/uploads/pdfs/${path}`}`;
     };
 
     /* --- RENAME LOGIC --- */
@@ -97,7 +98,7 @@ export default function Library() {
         } catch (err) { console.error("❌ Rename failed:", err); }
     };
 
-    /* ---------------- TOP NAV EVENT LISTENERS ---------------- */
+    /* --- EVENT LISTENERS --- */
     useEffect(() => {
         const handleToggle = () => { setIsSelectMode((prev) => !prev); setSelectedIds([]); };
         const handleSearch = (e) => { setSearchQuery(e.detail.toLowerCase()); };
@@ -124,7 +125,7 @@ export default function Library() {
         };
     }, [viewMode]);
 
-    /* ---------------- FETCH DATA ---------------- */
+    /* --- FETCH DATA --- */
     const fetchData = async () => {
         try {
             setLoading(true);
@@ -201,32 +202,7 @@ export default function Library() {
         setSelectedIds((prev) => prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]);
     };
 
-    /* ---------------- MOBILE SWIPE ---------------- */
-    useEffect(() => {
-        if (!sheetRef.current || !activeBook) return;
-        const sheet = sheetRef.current;
-        let startY = 0, currentY = 0;
-        const start = (e) => { startY = e.touches[0].clientY; sheet.style.transition = "none"; };
-        const move = (e) => {
-            currentY = e.touches[0].clientY;
-            const diff = currentY - startY;
-            if (diff > 0) sheet.style.transform = `translateY(${diff}px)`;
-        };
-        const end = () => {
-            sheet.style.transition = "transform 0.25s ease";
-            if (currentY - startY > 90) { setActiveBook(null); setIsMoving(false); }
-            else { sheet.style.transform = "translateY(0)"; }
-        };
-        sheet.addEventListener("touchstart", start);
-        sheet.addEventListener("touchmove", move);
-        sheet.addEventListener("touchend", end);
-        return () => {
-            sheet.removeEventListener("touchstart", start);
-            sheet.removeEventListener("touchmove", move);
-            sheet.removeEventListener("touchend", end);
-        };
-    }, [activeBook]);
-
+    /* --- ACTION HANDLERS --- */
     const handleAction = async (bookId, action) => {
         if (action === "delete") {
             if (!window.confirm("Delete this book?")) return;
@@ -238,6 +214,16 @@ export default function Library() {
                 }
             } catch (err) { console.error("❌ Delete failed:", err); }
             return;
+        }
+
+        if (action === "download" && activeBook?.url) {
+            // Trigger actual browser download
+            const link = document.createElement('a');
+            link.href = getPdfUrl(activeBook.url);
+            link.download = `${activeBook.title}.pdf`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
         }
 
         if (action.startsWith("move:")) {
@@ -269,7 +255,8 @@ export default function Library() {
     };
 
     return (
-        <div className={`min-h-screen bg-bg px-6 py-8 ${isSelectMode ? "pb-32" : ""}`}>
+        <div className={`min-h-screen bg-[#09090b] px-6 py-8 ${isSelectMode ? "pb-32" : ""}`}>
+            {/* Header */}
             <div className="flex justify-between items-center mb-6">
                 <h1 className="text-3xl md:text-5xl font-extrabold text-yellow-400">Your Collection</h1>
                 {!isSelectMode && (
@@ -281,12 +268,14 @@ export default function Library() {
                 )}
             </div>
 
+            {/* Folders */}
             <div className="flex items-center gap-2 overflow-x-auto pb-6 no-scrollbar">
                 {folders.map((folder) => (
                     <button key={folder} onClick={() => setActiveFolder(folder)} className={`px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest transition-all whitespace-nowrap border ${activeFolder === folder ? "bg-yellow-400 border-yellow-400 text-black" : "bg-transparent border-white/10 text-zinc-500 hover:text-white"}`}>{folder}</button>
                 ))}
             </div>
 
+            {/* Content Area */}
             {loading ? (
                 <div className="text-center text-zinc-400 mt-20 italic">Loading library...</div>
             ) : filteredBooks.length === 0 ? (
@@ -301,7 +290,9 @@ export default function Library() {
                         >
                             {isSelectMode && (
                                 <div className={viewMode === "grid" ? "absolute top-3 left-3 z-10" : "mr-2"}>
-                                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition ${selectedIds.includes(book._id) ? "bg-yellow-400 border-yellow-400" : "bg-black/40 border-white"}`}>{selectedIds.includes(book._id) && <X size={12} className="text-black stroke-[4px]" />}</div>
+                                    <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition ${selectedIds.includes(book._id) ? "bg-yellow-400 border-yellow-400" : "bg-black/40 border-white"}`}>
+                                        {selectedIds.includes(book._id) && <X size={12} className="text-black stroke-[4px]" />}
+                                    </div>
                                 </div>
                             )}
                             <div className={`overflow-hidden rounded-md bg-zinc-800 flex-shrink-0 ${viewMode === "grid" ? "aspect-[2/3] w-full" : "w-12 h-16"}`}>
@@ -324,6 +315,7 @@ export default function Library() {
                 </div>
             )}
 
+            {/* Bulk Actions Bar */}
             {isSelectMode && (
                 <div className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[92%] max-w-md bg-zinc-900 border border-white/10 shadow-2xl rounded-2xl p-4 flex items-center justify-between z-[60] animate-in slide-in-from-bottom-10">
                     <div className="flex items-center gap-3">
@@ -334,6 +326,7 @@ export default function Library() {
                 </div>
             )}
 
+            {/* Active Book Action Sheet */}
             {activeBook && !isSelectMode && (
                 <div className="fixed inset-0 bg-black/60 z-[110] flex items-end md:items-center justify-center" onClick={() => { setActiveBook(null); setIsMoving(false); }}>
                     <div ref={sheetRef} onClick={(e) => e.stopPropagation()} className="w-full max-w-lg bg-[#1c1c1e] rounded-t-[32px] md:rounded-2xl p-4 shadow-2xl animate-in slide-in-from-bottom-10">
@@ -356,8 +349,8 @@ export default function Library() {
                                     <button onClick={() => handleAction(activeBook._id, "download")} className="w-full flex items-center gap-4 bg-yellow-700/20 border border-yellow-700/30 py-2.5 px-4 rounded-2xl transition-all active:bg-yellow-400 active:text-black group">
                                         <Download className="text-yellow-500 w-5 h-5 group-active:text-black" strokeWidth={2} />
                                         <div className="text-left">
-                                            <p className="font-bold text-[15px] text-white group-active:text-black">Download Audio</p>
-                                            <p className="text-yellow-200/40 text-[11px] group-active:text-black/70">Listen with the best voices offline</p>
+                                            <p className="font-bold text-[15px] text-white group-active:text-black">Download Book</p>
+                                            <p className="text-yellow-200/40 text-[11px] group-active:text-black/70">Save file to your device</p>
                                         </div>
                                     </button>
                                     <button onClick={() => handleAction(activeBook._id, "tts")} className="w-full flex items-center gap-4 bg-black py-4 px-4 rounded-2xl border border-zinc-800/40 active:opacity-70">

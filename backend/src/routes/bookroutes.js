@@ -14,7 +14,6 @@ cloudinary.config();
 
 /* ---------------- STORAGE CONFIG ---------------- */
 const uploadsRoot = path.join(__dirname, "../uploads");
-// UPDATED: Folder name changed from 'pdf' to 'pdfs' to match your server reality
 const pdfDir = path.join(uploadsRoot, "pdfs");
 const coversDir = path.join(uploadsRoot, "covers");
 const audioDir = path.join(uploadsRoot, "audio");
@@ -36,8 +35,8 @@ const upload = multer({ storage });
 /* ---------------- HELPERS ---------------- */
 const deleteFiles = async (book) => {
     try {
-        if (book.pdfPath) {
-            // Updated to be more robust with pathing
+        // Only try to delete local files if they aren't Cloudinary URLs
+        if (book.pdfPath && !book.pdfPath.startsWith('http')) {
             const p = path.join(__dirname, "..", book.pdfPath);
             if (await fs.pathExists(p)) await fs.remove(p);
         }
@@ -120,14 +119,13 @@ router.post("/", upload.single("file"), async (req, res) => {
         const outputPrefix = path.join(coversDir, baseName);
         const tempLocalCoverPath = `${outputPrefix}.png`;
 
+        // 1. Generate Cover from local PDF
         const generateCover = () => new Promise((resolve) => {
-            // pdftoppm uses the disk path to read the file
             exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfDiskPath}" "${outputPrefix}"`, async (error) => {
                 if (error) {
                     console.error("pdftoppm error:", error);
                     return resolve(null);
                 }
-
                 try {
                     const uploadRes = await cloudinary.uploader.upload(tempLocalCoverPath, {
                         folder: "storyteller_covers"
@@ -135,30 +133,44 @@ router.post("/", upload.single("file"), async (req, res) => {
                     if (fs.existsSync(tempLocalCoverPath)) await fs.remove(tempLocalCoverPath);
                     resolve(uploadRes.secure_url);
                 } catch (cloudErr) {
-                    console.error("Cloudinary Error:", cloudErr);
+                    console.error("Cloudinary Cover Error:", cloudErr);
                     resolve(null);
                 }
             });
         });
 
-        const coverUrl = await generateCover();
+        // 2. Upload PDF to Cloudinary as 'raw'
+        const uploadPdfToCloud = async () => {
+            const result = await cloudinary.uploader.upload(pdfDiskPath, {
+                folder: "storyteller_pdfs",
+                resource_type: "raw",
+                public_id: `${Date.now()}-${req.file.originalname}`
+            });
+            return result.secure_url;
+        };
 
-        // UPDATED: Saved path reflects the 'pdfs' folder name
+        // Run uploads in parallel
+        const [coverUrl, cloudPdfUrl] = await Promise.all([generateCover(), uploadPdfToCloud()]);
+
+        // 3. Save to Database with the Cloudinary URL
         const book = await Book.create({
             title: req.file.originalname.replace(/\.[^/.]+$/, ""),
-            pdfPath: `/uploads/pdfs/${req.file.filename}`,
+            pdfPath: cloudPdfUrl,
             cover: coverUrl,
             folder: folderName,
         });
 
+        // 4. CLEAN UP: Delete the local PDF so Render doesn't wipe it later
+        if (fs.existsSync(pdfDiskPath)) await fs.remove(pdfDiskPath);
+
         res.status(201).json(book);
     } catch (err) {
         console.error("Upload error:", err);
+        if (req.file && fs.existsSync(req.file.path)) await fs.remove(req.file.path);
         res.status(500).json({ error: "Upload failed" });
     }
 });
 
-// Rename, Move, Delete, and Actions remain consistent...
 router.patch("/:id/rename", async (req, res) => {
     try {
         const { title } = req.body;
