@@ -36,6 +36,7 @@ const upload = multer({ storage });
 const deleteFiles = async (book) => {
     try {
         if (book.pdfPath) {
+            // Updated to be more robust with pathing
             const p = path.join(__dirname, "..", book.pdfPath);
             if (await fs.pathExists(p)) await fs.remove(p);
         }
@@ -58,7 +59,7 @@ router.get("/folders", async (_, res) => {
 router.post("/folders", async (req, res) => {
     try {
         const { name } = req.body;
-        if (!name) return res.status(400).json({ error: "Name required" });
+        if (!name || name === "All") return res.status(400).json({ error: "Invalid name" });
         const existing = await Folder.findOne({ name });
         if (existing) return res.status(400).json({ error: "Exists" });
         const folder = await Folder.create({ name });
@@ -70,6 +71,7 @@ router.post("/folders", async (req, res) => {
 
 /* ---------------- BOOK ROUTES ---------------- */
 
+// GET ALL BOOKS
 router.get("/", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
@@ -80,10 +82,33 @@ router.get("/", async (_, res) => {
             url: b.pdfPath,
             folder: b.folder || "All",
             downloads: b.downloads || 0,
-            ttsRequests: b.ttsRequests || 0
+            ttsRequests: b.ttsRequests || 0,
+            createdAt: b.createdAt
         })));
     } catch (err) {
         res.status(500).json({ error: "Fetch failed" });
+    }
+});
+
+/**
+ * NEW: GET SINGLE BOOK
+ * Added to support direct URL access for Reader.js
+ */
+router.get("/:id", async (req, res) => {
+    try {
+        const book = await Book.findById(req.params.id);
+        if (!book) return res.status(404).json({ error: "Book not found" });
+        res.json({
+            _id: book._id,
+            title: book.title,
+            cover: book.cover,
+            url: book.pdfPath,
+            folder: book.folder || "All",
+            downloads: book.downloads || 0,
+            ttsRequests: book.ttsRequests || 0
+        });
+    } catch (err) {
+        res.status(500).json({ error: "Failed to fetch book details" });
     }
 });
 
@@ -94,8 +119,8 @@ router.post("/", upload.single("file"), async (req, res) => {
         const folderName = req.body.folder || "All";
         const baseName = path.parse(req.file.filename).name;
         const pdfDiskPath = req.file.path;
-        const tempLocalCoverPath = path.join(coversDir, `${baseName}.png`);
         const outputPrefix = path.join(coversDir, baseName);
+        const tempLocalCoverPath = `${outputPrefix}.png`;
 
         const generateCover = () => new Promise((resolve) => {
             exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfDiskPath}" "${outputPrefix}"`, async (error) => {
@@ -133,10 +158,6 @@ router.post("/", upload.single("file"), async (req, res) => {
     }
 });
 
-/**
- * FIXED: Rename Route
- * Added to handle title updates from the Library UI
- */
 router.patch("/:id/rename", async (req, res) => {
     try {
         const { title } = req.body;
@@ -148,13 +169,9 @@ router.patch("/:id/rename", async (req, res) => {
     }
 });
 
-/**
- * FIXED: Move Route
- * Matches frontend sending { folder: targetFolder }
- */
 router.patch("/:id/move", async (req, res) => {
     try {
-        const { folder } = req.body; // Changed from folderName to folder
+        const { folder } = req.body;
         const book = await Book.findByIdAndUpdate(
             req.params.id,
             { folder: folder || "All" },

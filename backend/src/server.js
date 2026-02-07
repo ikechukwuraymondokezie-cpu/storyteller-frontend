@@ -22,6 +22,7 @@ app.use(cors({
 app.use(express.json());
 
 /* -------------------- UPLOADS -------------------- */
+// Using absolute paths to ensure stability across different environments
 const uploadDir = path.join(__dirname, "../uploads/pdf");
 const coversDir = path.join(__dirname, "../uploads/covers");
 const audioDir = path.join(__dirname, "../uploads/audio");
@@ -30,6 +31,8 @@ fs.ensureDirSync(uploadDir);
 fs.ensureDirSync(coversDir);
 fs.ensureDirSync(audioDir);
 
+// Serves the entire uploads folder. 
+// A request to /uploads/pdf/file.pdf will look in ../uploads/pdf/file.pdf
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 
 /* -------------------- MONGODB -------------------- */
@@ -47,7 +50,7 @@ const bookSchema = new mongoose.Schema({
     title: { type: String, required: true },
     cover: String,
     pdfPath: String,
-    folder: { type: String, default: "" }, // Changed default to empty string to match "All" logic
+    folder: { type: String, default: "" },
     downloads: { type: Number, default: 0 },
     ttsRequests: { type: Number, default: 0 },
 }, { timestamps: true });
@@ -69,7 +72,7 @@ const formatBook = (book) => ({
     _id: book._id,
     title: book.title,
     cover: book.cover || null,
-    url: book.pdfPath || null,
+    url: book.pdfPath || null, // This maps to the /uploads/pdf/... string
     folder: book.folder || "",
     downloads: book.downloads,
     ttsRequests: book.ttsRequests,
@@ -118,6 +121,17 @@ app.get("/api/books", async (_, res) => {
     }
 });
 
+// NEW: Route to fetch a single book by ID
+app.get("/api/books/:id", async (req, res) => {
+    try {
+        const book = await Book.findById(req.params.id);
+        if (!book) return res.status(404).json({ error: "Book not found" });
+        res.json(formatBook(book));
+    } catch {
+        res.status(500).json({ error: "Error fetching book" });
+    }
+});
+
 app.post("/api/books", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -160,7 +174,6 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
     }
 });
 
-// Fixed: matches frontend body { folder: targetFolder }
 app.patch("/api/books/:id/move", async (req, res) => {
     try {
         const { folder } = req.body;
@@ -171,7 +184,6 @@ app.patch("/api/books/:id/move", async (req, res) => {
     }
 });
 
-// Added: required for the handleRename function in Library.js
 app.patch("/api/books/:id/rename", async (req, res) => {
     try {
         const { title } = req.body;
