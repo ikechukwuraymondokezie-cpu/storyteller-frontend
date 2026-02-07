@@ -4,8 +4,10 @@ const path = require("path");
 const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
-// FIXED IMPORT: Direct path to the library to avoid "pdf is not a function" error
-const pdfParser = require("pdf-parse/lib/pdf-parse.js");
+
+// FIXED: Using standard require to avoid ERR_PACKAGE_PATH_NOT_EXPORTED
+const pdf = require("pdf-parse");
+
 const Book = require("../models/Book");
 const Folder = require("../models/Folder");
 
@@ -126,12 +128,18 @@ router.post("/", upload.single("file"), async (req, res) => {
         const outputPrefix = path.join(coversDir, baseName);
         const tempLocalCoverPath = `${outputPrefix}.png`;
 
-        // --- UPDATED: EXTRACT TEXT AND COUNT WORDS ---
+        // --- UPDATED: SAFE EXTRACTION LOGIC ---
         let extractedText = "";
         let wordCount = 0;
         try {
             const dataBuffer = await fs.readFile(pdfDiskPath);
-            // Using the fixed parser reference
+
+            // This bridge handles cases where the function is inside .default
+            let pdfParser = pdf;
+            if (typeof pdfParser !== 'function' && pdfParser.default) {
+                pdfParser = pdfParser.default;
+            }
+
             const pdfData = await pdfParser(dataBuffer);
             extractedText = pdfData.text ? pdfData.text.trim() : "";
 
@@ -176,8 +184,7 @@ router.post("/", upload.single("file"), async (req, res) => {
         // Run uploads in parallel
         const [coverUrl, cloudPdfUrl] = await Promise.all([generateCover(), uploadPdfToCloud()]);
 
-        // 3. Save to Database with Clean Logic
-        // We use || to ensure 'content' is never empty, which prevents the frontend "Converting" hang
+        // 3. Save to Database
         const book = await Book.create({
             title: req.file.originalname.replace(/\.[^/.]+$/, ""),
             pdfPath: cloudPdfUrl,

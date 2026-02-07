@@ -8,8 +8,8 @@ const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
 
-// FIXED: Direct import to avoid "pdf is not a function" TypeError
-const pdf = require("pdf-parse/lib/pdf-parse.js");
+// FIXED: Standard require to avoid ERR_PACKAGE_PATH_NOT_EXPORTED
+const pdf = require("pdf-parse");
 
 const app = express();
 
@@ -141,7 +141,14 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
         let wordCount = 0;
         try {
             const dataBuffer = await fs.readFile(pdfFullPath);
-            const pdfData = await pdf(dataBuffer); // Now using the fixed import
+
+            // COMPATIBILITY CHECK: Handles different export styles of pdf-parse
+            let pdfParser = pdf;
+            if (typeof pdfParser !== 'function' && pdfParser.default) {
+                pdfParser = pdfParser.default;
+            }
+
+            const pdfData = await pdfParser(dataBuffer);
             extractedText = pdfData.text ? pdfData.text.trim() : "";
 
             if (extractedText) {
@@ -194,7 +201,6 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
             pdfPath: pdfUrl,
             cover: coverUrl,
             folder,
-            // Fallback content prevents the frontend from hanging on "Processing"
             content: extractedText || "No selectable text found in this PDF.",
             words: wordCount || 0
         });
