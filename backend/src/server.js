@@ -15,25 +15,30 @@ cloudinary.config();
 
 /* -------------------- MIDDLEWARE -------------------- */
 app.use(cors({
-    origin: "https://storyteller-b1i3.onrender.com",
+    origin: ["https://storyteller-b1i3.onrender.com", "http://localhost:5173"], // Added localhost for dev
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     credentials: true
 }));
 app.use(express.json());
 
-/* -------------------- UPLOADS -------------------- */
-// Using absolute paths to ensure stability across different environments
-const uploadDir = path.join(__dirname, "../uploads/pdf");
-const coversDir = path.join(__dirname, "../uploads/covers");
-const audioDir = path.join(__dirname, "../uploads/audio");
+/* -------------------- UPLOADS & STATIC FILES -------------------- */
+// We define the root uploads folder and its subdirectories
+const uploadsBase = path.join(__dirname, "uploads");
+const uploadDir = path.join(uploadsBase, "pdf");
+const coversDir = path.join(uploadsBase, "covers");
+const audioDir = path.join(uploadsBase, "audio");
 
+// Ensure directories exist
 fs.ensureDirSync(uploadDir);
 fs.ensureDirSync(coversDir);
 fs.ensureDirSync(audioDir);
 
-// Serves the entire uploads folder. 
-// A request to /uploads/pdf/file.pdf will look in ../uploads/pdf/file.pdf
-app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
+/**
+ * STATIC SERVING FIX:
+ * This tells Express to serve anything inside the "uploads" folder.
+ * If the DB stores "/uploads/pdf/file.pdf", this middleware will find it.
+ */
+app.use("/uploads", express.static(uploadsBase));
 
 /* -------------------- MONGODB -------------------- */
 const MONGO_URI = process.env.MONGO_URI;
@@ -50,7 +55,7 @@ const bookSchema = new mongoose.Schema({
     title: { type: String, required: true },
     cover: String,
     pdfPath: String,
-    folder: { type: String, default: "" },
+    folder: { type: String, default: "All" }, // Standardized to "All"
     downloads: { type: Number, default: 0 },
     ttsRequests: { type: Number, default: 0 },
 }, { timestamps: true });
@@ -72,8 +77,8 @@ const formatBook = (book) => ({
     _id: book._id,
     title: book.title,
     cover: book.cover || null,
-    url: book.pdfPath || null, // This maps to the /uploads/pdf/... string
-    folder: book.folder || "",
+    url: book.pdfPath || null,
+    folder: book.folder || "All",
     downloads: book.downloads,
     ttsRequests: book.ttsRequests,
     createdAt: book.createdAt
@@ -82,7 +87,9 @@ const formatBook = (book) => ({
 const deleteBookFiles = async (book) => {
     try {
         if (book.pdfPath) {
-            const fullPdfPath = path.join(__dirname, "..", book.pdfPath);
+            // Remove the leading slash to join correctly with __dirname
+            const relativePath = book.pdfPath.startsWith('/') ? book.pdfPath.substring(1) : book.pdfPath;
+            const fullPdfPath = path.join(__dirname, relativePath);
             if (await fs.pathExists(fullPdfPath)) await fs.remove(fullPdfPath);
         }
     } catch (err) {
@@ -92,15 +99,17 @@ const deleteBookFiles = async (book) => {
 
 /* -------------------- API ROUTES -------------------- */
 
+// Get Folders
 app.get("/api/books/folders", async (_, res) => {
     try {
         const folders = await Folder.find().sort({ name: 1 });
-        res.json(folders.map(f => f.name));
+        res.json(["All", ...folders.map(f => f.name)]);
     } catch {
         res.status(500).json({ error: "Failed to fetch folders" });
     }
 });
 
+// Create Folder
 app.post("/api/books/folders", async (req, res) => {
     try {
         const { name } = req.body;
@@ -112,6 +121,7 @@ app.post("/api/books/folders", async (req, res) => {
     }
 });
 
+// Get All Books
 app.get("/api/books", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
@@ -121,7 +131,10 @@ app.get("/api/books", async (_, res) => {
     }
 });
 
-// NEW: Route to fetch a single book by ID
+/**
+ * NEW: Get Single Book
+ * Used by the Reader component to load the PDF URL directly
+ */
 app.get("/api/books/:id", async (req, res) => {
     try {
         const book = await Book.findById(req.params.id);
@@ -132,14 +145,17 @@ app.get("/api/books/:id", async (req, res) => {
     }
 });
 
+// Upload Book
 app.post("/api/books", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
         const title = req.file.originalname.replace(/\.[^/.]+$/, "");
-        const folder = req.body.folder === "All" ? "" : (req.body.folder || "");
+        const folder = req.body.folder || "All";
         const pdfPath = `/uploads/pdf/${req.file.filename}`;
         const pdfFullPath = req.file.path;
+
+        // Thumbnail generation
         const baseName = path.parse(req.file.filename).name;
         const tempLocalCoverPath = path.join(coversDir, `${baseName}.png`);
         const outputPrefix = path.join(coversDir, baseName);
@@ -147,10 +163,9 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
         const generateThumbnail = () => new Promise((resolve) => {
             exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfFullPath}" "${outputPrefix}"`, async (error) => {
                 if (error) {
-                    console.error("pdftoppm error:", error);
+                    console.error("pdftoppm error (ensure poppler-utils is installed):", error);
                     return resolve(null);
                 }
-
                 try {
                     const uploadRes = await cloudinary.uploader.upload(tempLocalCoverPath, {
                         folder: "storyteller_covers"
@@ -174,16 +189,7 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
     }
 });
 
-app.patch("/api/books/:id/move", async (req, res) => {
-    try {
-        const { folder } = req.body;
-        const book = await Book.findByIdAndUpdate(req.params.id, { folder: folder || "" }, { new: true });
-        res.json(formatBook(book));
-    } catch {
-        res.status(500).json({ error: "Move failed" });
-    }
-});
-
+// Rename Book
 app.patch("/api/books/:id/rename", async (req, res) => {
     try {
         const { title } = req.body;
@@ -194,6 +200,18 @@ app.patch("/api/books/:id/rename", async (req, res) => {
     }
 });
 
+// Move Book to Folder
+app.patch("/api/books/:id/move", async (req, res) => {
+    try {
+        const { folder } = req.body;
+        const book = await Book.findByIdAndUpdate(req.params.id, { folder: folder || "All" }, { new: true });
+        res.json(formatBook(book));
+    } catch {
+        res.status(500).json({ error: "Move failed" });
+    }
+});
+
+// Delete Single Book
 app.delete("/api/books/:id", async (req, res) => {
     try {
         const book = await Book.findById(req.params.id);
@@ -207,6 +225,7 @@ app.delete("/api/books/:id", async (req, res) => {
     }
 });
 
+// Bulk Delete
 app.post("/api/books/bulk-delete", async (req, res) => {
     try {
         const { ids } = req.body;
@@ -219,6 +238,7 @@ app.post("/api/books/bulk-delete", async (req, res) => {
     }
 });
 
+// Update Action Stats
 app.patch("/api/books/:id/actions", async (req, res) => {
     try {
         const { action } = req.body;
@@ -230,6 +250,7 @@ app.patch("/api/books/:id/actions", async (req, res) => {
     }
 });
 
+/* -------------------- SERVER START -------------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
     console.log(`✅ Server running on port ${PORT}`);
