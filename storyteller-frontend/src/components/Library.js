@@ -71,7 +71,6 @@ export default function Library() {
         return `${API_URL}${cover.startsWith('/') ? cover : `/uploads/covers/${cover}`}`;
     };
 
-    // New Helper for the PDF URL itself
     const getPdfUrl = (path) => {
         if (!path) return null;
         if (path.startsWith('http')) return path;
@@ -202,7 +201,6 @@ export default function Library() {
         setSelectedIds((prev) => prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id]);
     };
 
-    /* --- ACTION HANDLERS --- */
     const handleAction = async (bookId, action) => {
         if (action === "delete") {
             if (!window.confirm("Delete this book?")) return;
@@ -217,7 +215,6 @@ export default function Library() {
         }
 
         if (action === "download" && activeBook?.url) {
-            // Trigger actual browser download
             const link = document.createElement('a');
             link.href = getPdfUrl(activeBook.url);
             link.download = `${activeBook.title}.pdf`;
@@ -256,7 +253,6 @@ export default function Library() {
 
     return (
         <div className={`min-h-screen bg-[#09090b] px-6 py-8 ${isSelectMode ? "pb-32" : ""}`}>
-            {/* Header */}
             <div className="flex justify-between items-center mb-6">
                 <h1 className="text-3xl md:text-5xl font-extrabold text-yellow-400">Your Collection</h1>
                 {!isSelectMode && (
@@ -268,14 +264,12 @@ export default function Library() {
                 )}
             </div>
 
-            {/* Folders */}
             <div className="flex items-center gap-2 overflow-x-auto pb-6 no-scrollbar">
                 {folders.map((folder) => (
                     <button key={folder} onClick={() => setActiveFolder(folder)} className={`px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest transition-all whitespace-nowrap border ${activeFolder === folder ? "bg-yellow-400 border-yellow-400 text-black" : "bg-transparent border-white/10 text-zinc-500 hover:text-white"}`}>{folder}</button>
                 ))}
             </div>
 
-            {/* Content Area */}
             {loading ? (
                 <div className="text-center text-zinc-400 mt-20 italic">Loading library...</div>
             ) : filteredBooks.length === 0 ? (
@@ -305,7 +299,7 @@ export default function Library() {
                             </div>
                             <div className="flex-1 overflow-hidden">
                                 <p className={`text-white font-medium truncate ${viewMode === "grid" ? "mt-2 text-sm px-1 text-center" : "text-base"}`}>{book.title}</p>
-                                {viewMode === "list" && <p className="text-zinc-500 text-[10px] uppercase tracking-widest mt-0.5">Folder: {book.folder || "All"}</p>}
+                                {viewMode === "list" && <p className="text-zinc-500 text-[10px] uppercase tracking-widest mt-0.5">{book.words ? `${book.words.toLocaleString()} words` : "Processing..."}</p>}
                             </div>
                             {!isSelectMode && (
                                 <button onClick={(e) => { e.stopPropagation(); setActiveBook(book); setIsMoving(false); }} className={`p-1 rounded-full bg-black/40 hover:bg-zinc-700 transition flex-shrink-0 ${viewMode === "grid" ? "absolute top-2 right-2" : "ml-auto"}`}><MoreHorizontal className="w-5 h-5 text-white" /></button>
@@ -315,7 +309,6 @@ export default function Library() {
                 </div>
             )}
 
-            {/* Bulk Actions Bar */}
             {isSelectMode && (
                 <div className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[92%] max-w-md bg-zinc-900 border border-white/10 shadow-2xl rounded-2xl p-4 flex items-center justify-between z-[60] animate-in slide-in-from-bottom-10">
                     <div className="flex items-center gap-3">
@@ -326,7 +319,6 @@ export default function Library() {
                 </div>
             )}
 
-            {/* Active Book Action Sheet */}
             {activeBook && !isSelectMode && (
                 <div className="fixed inset-0 bg-black/60 z-[110] flex items-end md:items-center justify-center" onClick={() => { setActiveBook(null); setIsMoving(false); }}>
                     <div ref={sheetRef} onClick={(e) => e.stopPropagation()} className="w-full max-w-lg bg-[#1c1c1e] rounded-t-[32px] md:rounded-2xl p-4 shadow-2xl animate-in slide-in-from-bottom-10">
@@ -339,7 +331,7 @@ export default function Library() {
                                         <div className="flex flex-col">
                                             <h3 className="text-white font-bold text-base leading-tight truncate w-48">{activeBook.title}</h3>
                                             <p className="text-yellow-200/70 text-[11px] font-medium uppercase tracking-wider">
-                                                {activeBook.downloads} downloads • PDF
+                                                {activeBook.words ? `${activeBook.words.toLocaleString()} words` : "Processing"} • PDF
                                             </p>
                                         </div>
                                     </div>

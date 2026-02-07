@@ -4,6 +4,7 @@ const path = require("path");
 const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
+const pdf = require("pdf-parse"); // New dependency for text extraction
 const Book = require("../models/Book");
 const Folder = require("../models/Folder");
 
@@ -35,7 +36,6 @@ const upload = multer({ storage });
 /* ---------------- HELPERS ---------------- */
 const deleteFiles = async (book) => {
     try {
-        // Only try to delete local files if they aren't Cloudinary URLs
         if (book.pdfPath && !book.pdfPath.startsWith('http')) {
             const p = path.join(__dirname, "..", book.pdfPath);
             if (await fs.pathExists(p)) await fs.remove(p);
@@ -80,6 +80,9 @@ router.get("/", async (_, res) => {
             title: b.title,
             cover: b.cover,
             url: b.pdfPath,
+            content: b.content || "",    // Included for Digital Mode
+            words: b.words || 0,        // Included for ActionSheet
+            summary: b.summary || "",   // Included for Summary Pill
             folder: b.folder || "All",
             downloads: b.downloads || 0,
             ttsRequests: b.ttsRequests || 0,
@@ -100,6 +103,9 @@ router.get("/:id", async (req, res) => {
             title: book.title,
             cover: book.cover,
             url: book.pdfPath,
+            content: book.content || "",
+            words: book.words || 0,
+            summary: book.summary || "",
             folder: book.folder || "All",
             downloads: book.downloads || 0,
             ttsRequests: book.ttsRequests || 0
@@ -118,6 +124,19 @@ router.post("/", upload.single("file"), async (req, res) => {
         const pdfDiskPath = req.file.path;
         const outputPrefix = path.join(coversDir, baseName);
         const tempLocalCoverPath = `${outputPrefix}.png`;
+
+        // --- NEW: EXTRACT TEXT AND COUNT WORDS ---
+        let extractedText = "";
+        let wordCount = 0;
+        try {
+            const dataBuffer = await fs.readFile(pdfDiskPath);
+            const pdfData = await pdf(dataBuffer);
+            extractedText = pdfData.text;
+            // Clean up text and split by whitespace to count words
+            wordCount = extractedText.trim().split(/\s+/).filter(w => w.length > 0).length;
+        } catch (textErr) {
+            console.error("Text extraction failed:", textErr);
+        }
 
         // 1. Generate Cover from local PDF
         const generateCover = () => new Promise((resolve) => {
@@ -152,15 +171,17 @@ router.post("/", upload.single("file"), async (req, res) => {
         // Run uploads in parallel
         const [coverUrl, cloudPdfUrl] = await Promise.all([generateCover(), uploadPdfToCloud()]);
 
-        // 3. Save to Database with the Cloudinary URL
+        // 3. Save to Database with Extracted Content & Words
         const book = await Book.create({
             title: req.file.originalname.replace(/\.[^/.]+$/, ""),
             pdfPath: cloudPdfUrl,
             cover: coverUrl,
             folder: folderName,
+            content: extractedText, // Saved for Digital Reader
+            words: wordCount,       // Saved for ActionSheet
         });
 
-        // 4. CLEAN UP: Delete the local PDF so Render doesn't wipe it later
+        // 4. CLEAN UP
         if (fs.existsSync(pdfDiskPath)) await fs.remove(pdfDiskPath);
 
         res.status(201).json(book);
@@ -170,6 +191,8 @@ router.post("/", upload.single("file"), async (req, res) => {
         res.status(500).json({ error: "Upload failed" });
     }
 });
+
+// ... (Rename, Move, Bulk Delete, Delete, Actions routes remain same) ...
 
 router.patch("/:id/rename", async (req, res) => {
     try {

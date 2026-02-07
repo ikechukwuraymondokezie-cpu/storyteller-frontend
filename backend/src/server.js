@@ -7,6 +7,7 @@ const path = require("path");
 const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
+const pdf = require("pdf-parse"); // New: For text extraction
 
 const app = express();
 
@@ -15,14 +16,13 @@ cloudinary.config();
 
 /* -------------------- MIDDLEWARE -------------------- */
 app.use(cors({
-    origin: ["https://storyteller-b1i3.onrender.com", "http://localhost:5173"],
+    origin: ["https://storyteller-b1i3.onrender.com", "http://localhost:5173", "https://storyteller-frontend-x65b.onrender.com"],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     credentials: true
 }));
 app.use(express.json());
 
 /* -------------------- UPLOADS & STATIC FILES -------------------- */
-// We still keep these for temporary processing before sending to Cloudinary
 const uploadsBase = path.join(__dirname, "uploads");
 const uploadDir = path.join(uploadsBase, "pdfs");
 const coversDir = path.join(uploadsBase, "covers");
@@ -46,10 +46,14 @@ const Folder = mongoose.model("Folder", new mongoose.Schema({
 const bookSchema = new mongoose.Schema({
     title: { type: String, required: true },
     cover: String,
-    pdfPath: String, // Will now store Cloudinary URL
+    pdfPath: String,
     folder: { type: String, default: "All" },
     downloads: { type: Number, default: 0 },
     ttsRequests: { type: Number, default: 0 },
+    // New fields for Digital Mode and ActionSheet
+    content: { type: String },        // Extracted full text
+    words: { type: Number, default: 0 }, // Word count
+    summary: { type: String }         // AI Summary placeholder
 }, { timestamps: true });
 
 const Book = mongoose.model("Book", bookSchema);
@@ -73,12 +77,14 @@ const formatBook = (book) => ({
     folder: book.folder || "All",
     downloads: book.downloads,
     ttsRequests: book.ttsRequests,
+    words: book.words || 0,         // Include in formatted response
+    content: book.content || "",    // Include in formatted response
+    summary: book.summary || "",    // Include in formatted response
     createdAt: book.createdAt
 });
 
 /* -------------------- API ROUTES -------------------- */
 
-// Get Folders
 app.get("/api/books/folders", async (_, res) => {
     try {
         const folders = await Folder.find().sort({ name: 1 });
@@ -88,7 +94,6 @@ app.get("/api/books/folders", async (_, res) => {
     }
 });
 
-// Create Folder
 app.post("/api/books/folders", async (req, res) => {
     try {
         const { name } = req.body;
@@ -100,7 +105,6 @@ app.post("/api/books/folders", async (req, res) => {
     }
 });
 
-// Get All Books
 app.get("/api/books", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
@@ -110,7 +114,6 @@ app.get("/api/books", async (_, res) => {
     }
 });
 
-// Get Single Book
 app.get("/api/books/:id", async (req, res) => {
     try {
         const book = await Book.findById(req.params.id);
@@ -122,7 +125,7 @@ app.get("/api/books/:id", async (req, res) => {
 });
 
 /**
- * UPLOAD BOOK (WITH CLOUDINARY RAW STORAGE)
+ * UPLOAD BOOK (WITH TEXT EXTRACTION & CLOUDINARY)
  */
 app.post("/api/books", upload.single("file"), async (req, res) => {
     try {
@@ -132,11 +135,24 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
         const folder = req.body.folder || "All";
         const pdfFullPath = req.file.path;
 
+        // --- NEW: EXTRACT TEXT AND COUNT WORDS ---
+        let extractedText = "";
+        let wordCount = 0;
+        try {
+            const dataBuffer = await fs.readFile(pdfFullPath);
+            const pdfData = await pdf(dataBuffer);
+            extractedText = pdfData.text;
+            // Clean up text and split by spaces for word count
+            wordCount = extractedText.trim().split(/\s+/).filter(word => word.length > 0).length;
+        } catch (textErr) {
+            console.error("Text extraction failed:", textErr);
+        }
+
         // 1. Upload PDF to Cloudinary as "raw"
         const uploadPdf = async () => {
             const result = await cloudinary.uploader.upload(pdfFullPath, {
                 folder: "storyteller_pdfs",
-                resource_type: "raw", // MUST be raw for non-image files
+                resource_type: "raw",
                 public_id: `${Date.now()}-${req.file.originalname}`
             });
             return result.secure_url;
@@ -157,7 +173,7 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
                     const uploadRes = await cloudinary.uploader.upload(tempLocalCoverPath, {
                         folder: "storyteller_covers"
                     });
-                    await fs.remove(tempLocalCoverPath); // Clean up local png
+                    await fs.remove(tempLocalCoverPath);
                     resolve(uploadRes.secure_url);
                 } catch (cloudErr) {
                     console.error("Cover Upload Error:", cloudErr);
@@ -166,30 +182,30 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
             });
         });
 
-        // Run both uploads
+        // Run both Cloudinary uploads
         const [pdfUrl, coverUrl] = await Promise.all([uploadPdf(), generateThumbnail()]);
 
-        // 3. Save to Database
+        // 3. Save to Database with Extracted Content
         const book = await Book.create({
             title,
             pdfPath: pdfUrl,
             cover: coverUrl,
-            folder
+            folder,
+            content: extractedText, // For Digital Reader Mode
+            words: wordCount        // For ActionSheet
         });
 
-        // 4. CLEAN UP: Delete the temporary local PDF
+        // 4. CLEAN UP local file
         await fs.remove(pdfFullPath);
 
         res.status(201).json(formatBook(book));
     } catch (err) {
         console.error("Upload error:", err);
-        // Clean up on failure if file exists
         if (req.file) await fs.remove(req.file.path);
         res.status(500).json({ error: "Upload failed" });
     }
 });
 
-// Rename
 app.patch("/api/books/:id/rename", async (req, res) => {
     try {
         const { title } = req.body;
@@ -200,13 +216,10 @@ app.patch("/api/books/:id/rename", async (req, res) => {
     }
 });
 
-// Delete
 app.delete("/api/books/:id", async (req, res) => {
     try {
         const book = await Book.findById(req.params.id);
         if (book) {
-            // Note: Cloudinary deletion would require extra logic using public_id
-            // For now, we just delete the DB record
             await book.deleteOne();
         }
         res.json({ message: "Deleted" });
@@ -215,7 +228,6 @@ app.delete("/api/books/:id", async (req, res) => {
     }
 });
 
-/* -------------------- SERVER START -------------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
     console.log(`✅ Server running on port ${PORT}`);

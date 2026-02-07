@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
     ChevronLeft, Loader2, MoreHorizontal, Type, List,
     RotateCcw, RotateCw, Play, Pause, MessageSquare,
-    Sparkles, Mic2, Search, ChevronUp, HelpCircle
+    Sparkles, Mic2, Search, ChevronUp, HelpCircle, FileText
 } from 'lucide-react';
 
 const Reader = () => {
@@ -13,6 +13,12 @@ const Reader = () => {
     const [book, setBook] = useState(null);
     const [loading, setLoading] = useState(true);
     const [isPlaying, setIsPlaying] = useState(false);
+
+    // VIEW MODES: 
+    // isDigitalMode handles the reflowed text (Black background, white text)
+    // viewMode handles the AI specific views (Reading vs Summary)
+    const [isDigitalMode, setIsDigitalMode] = useState(false);
+    const [viewMode, setViewMode] = useState('reading'); // 'reading' or 'summary'
 
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
@@ -29,17 +35,21 @@ const Reader = () => {
             }
         };
         fetchBook();
-    }, [id]);
+    }, [id, BACKEND_URL]);
 
     const getViewerUrl = () => {
         if (!book) return "";
         const rawUrl = book.url || book.pdfPath || book.filePath;
         const fullUrl = rawUrl.startsWith('http') ? rawUrl : `${BACKEND_URL}${rawUrl}`;
-        // Using Google Viewer to ensure the PDF renders inside the UI on mobile
+        // Google Docs Viewer helps bypass mobile "Download/Open" prompts
         return `https://docs.google.com/viewer?url=${encodeURIComponent(fullUrl)}&embedded=true`;
     };
 
-    if (loading) return <div style={styles.fullscreenCenter}><Loader2 className="animate-spin text-indigo-500" size={40} /></div>;
+    if (loading) return (
+        <div style={styles.fullscreenCenter}>
+            <Loader2 className="animate-spin text-indigo-500" size={40} />
+        </div>
+    );
 
     return ReactDOM.createPortal(
         <div style={styles.container}>
@@ -53,17 +63,42 @@ const Reader = () => {
 
                     <div style={styles.rightActions}>
                         <button style={styles.actionIcon}><Type size={22} /></button>
-                        <button style={styles.actionIcon}><List size={22} /></button>
+
+                        {/* DIGITAL REFLOW TOGGLE: Clicking this enters the digital text mode */}
+                        <button
+                            onClick={() => setIsDigitalMode(!isDigitalMode)}
+                            style={{
+                                ...styles.actionIcon,
+                                backgroundColor: isDigitalMode ? '#4f46e5' : 'transparent',
+                                borderRadius: '8px',
+                                color: isDigitalMode ? '#fff' : '#fff'
+                            }}
+                        >
+                            <FileText size={22} />
+                        </button>
+
                         <button style={styles.actionIcon}><MoreHorizontal size={22} /></button>
                     </div>
                 </div>
 
-                {/* AI Pills Container - Scrollable */}
+                {/* AI Pills Container */}
                 <div style={styles.pillScroll}>
-                    <button style={styles.pill}>
+                    <button
+                        onClick={() => setViewMode('reading')}
+                        style={{
+                            ...styles.pill,
+                            backgroundColor: viewMode === 'reading' ? '#4f46e5' : '#27272a'
+                        }}
+                    >
                         <MessageSquare size={16} fill="white" /> AI Chat
                     </button>
-                    <button style={styles.pill}>
+                    <button
+                        onClick={() => setViewMode('summary')}
+                        style={{
+                            ...styles.pill,
+                            backgroundColor: viewMode === 'summary' ? '#4f46e5' : '#27272a'
+                        }}
+                    >
                         <Sparkles size={16} /> Summary
                     </button>
                     <button style={styles.pill}>
@@ -75,15 +110,36 @@ const Reader = () => {
                 </div>
             </div>
 
-            {/* --- CENTER PDF CONTENT --- */}
-            <div style={styles.viewerContainer}>
-                <iframe
-                    src={getViewerUrl()}
-                    style={styles.iframe}
-                    title="Document Viewer"
-                />
+            {/* --- CENTER CONTENT --- */}
+            <div style={{
+                ...styles.viewerContainer,
+                backgroundColor: isDigitalMode || viewMode === 'summary' ? '#000' : '#fff'
+            }}>
+                {viewMode === 'summary' ? (
+                    /* SUMMARY MODE */
+                    <div style={styles.digitalTextContainer}>
+                        <h1 style={styles.digitalMainTitle}>AI Summary</h1>
+                        <p style={styles.digitalBodyText}>{book?.summary || "Generating summary of the current chapter..."}</p>
+                    </div>
+                ) : isDigitalMode ? (
+                    /* DIGITAL REFLOW MODE (Black background, large white text) */
+                    <div style={styles.digitalTextContainer}>
+                        <h2 style={styles.digitalChapterTitle}>Chapter 1</h2>
+                        <h1 style={styles.digitalMainTitle}>{book?.title}</h1>
+                        <p style={styles.digitalBodyText}>
+                            {/* This is where the actual book text goes */}
+                            {book?.content || "Converting PDF content to digital text..."}
+                        </p>
+                    </div>
+                ) : (
+                    /* STANDARD PDF MODE */
+                    <iframe
+                        src={getViewerUrl()}
+                        style={styles.iframe}
+                        title="Document Viewer"
+                    />
+                )}
 
-                {/* Reference-accurate Floating Up Button */}
                 <button style={styles.floatingUpBtn}>
                     <ChevronUp size={24} />
                 </button>
@@ -169,7 +225,11 @@ const styles = {
         background: 'none',
         border: 'none',
         color: '#fff',
-        padding: '4px'
+        padding: '6px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        transition: 'all 0.2s ease'
     },
     pillScroll: {
         display: 'flex',
@@ -183,24 +243,49 @@ const styles = {
         display: 'flex',
         alignItems: 'center',
         gap: '6px',
-        backgroundColor: '#27272a',
         color: '#fff',
         border: 'none',
         padding: '8px 16px',
         borderRadius: '12px',
         fontSize: '14px',
         fontWeight: '600',
-        whiteSpace: 'nowrap'
+        whiteSpace: 'nowrap',
+        transition: 'background-color 0.2s ease'
     },
     viewerContainer: {
         flex: 1,
-        backgroundColor: '#fff',
-        position: 'relative'
+        position: 'relative',
+        overflow: 'hidden'
     },
     iframe: {
         width: '100%',
         height: '100%',
         border: 'none'
+    },
+    digitalTextContainer: {
+        height: '100%',
+        overflowY: 'auto',
+        padding: '40px 24px',
+        color: '#fff',
+        backgroundColor: '#000'
+    },
+    digitalChapterTitle: {
+        fontSize: '16px',
+        color: '#a1a1aa',
+        textTransform: 'uppercase',
+        letterSpacing: '1px',
+        marginBottom: '8px'
+    },
+    digitalMainTitle: {
+        fontSize: '32px',
+        fontWeight: 'bold',
+        marginBottom: '30px',
+        lineHeight: '1.2'
+    },
+    digitalBodyText: {
+        fontSize: '20px',
+        lineHeight: '1.7',
+        color: '#e4e4e7'
     },
     floatingUpBtn: {
         position: 'absolute',
@@ -229,7 +314,7 @@ const styles = {
     },
     progressFill: {
         height: '100%',
-        backgroundColor: '#6366f1', // Indigo-500
+        backgroundColor: '#6366f1',
         borderRadius: '2px'
     },
     timeLabels: {
