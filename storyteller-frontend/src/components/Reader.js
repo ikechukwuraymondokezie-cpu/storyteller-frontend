@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
     ChevronLeft, Loader2, MoreHorizontal, Type, List,
     RotateCcw, RotateCw, Play, Pause, MessageSquare,
-    Sparkles, Mic2, Search
+    Sparkles, Mic2, Search, ChevronUp, HelpCircle
 } from 'lucide-react';
 
 const Reader = () => {
@@ -13,7 +13,6 @@ const Reader = () => {
     const [book, setBook] = useState(null);
     const [loading, setLoading] = useState(true);
     const [isPlaying, setIsPlaying] = useState(false);
-    const [playbackSpeed, setPlaybackSpeed] = useState(1.1);
 
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
@@ -21,11 +20,10 @@ const Reader = () => {
         const fetchBook = async () => {
             try {
                 const response = await fetch(`${BACKEND_URL}/api/books/${id}`);
-                if (!response.ok) throw new Error("Book not found");
                 const data = await response.json();
                 setBook(data);
             } catch (err) {
-                console.error("Reader Error:", err);
+                console.error("Error:", err);
             } finally {
                 setLoading(false);
             }
@@ -33,121 +31,277 @@ const Reader = () => {
         fetchBook();
     }, [id]);
 
-    const getFileUrl = () => {
-        if (!book) return null;
-        const path = book.url || book.pdfPath || book.filePath;
-        if (!path) return null;
-        return path.startsWith('http') ? path : `${BACKEND_URL}${path.startsWith('/') ? '' : '/'}${path}`;
+    const getViewerUrl = () => {
+        if (!book) return "";
+        const rawUrl = book.url || book.pdfPath || book.filePath;
+        const fullUrl = rawUrl.startsWith('http') ? rawUrl : `${BACKEND_URL}${rawUrl}`;
+        // Using Google Viewer to ensure the PDF renders inside the UI on mobile
+        return `https://docs.google.com/viewer?url=${encodeURIComponent(fullUrl)}&embedded=true`;
     };
 
-    if (loading) return (
-        <div className="fixed inset-0 bg-black flex flex-col items-center justify-center z-[9999]">
-            <Loader2 className="animate-spin text-yellow-400 mb-4" size={40} />
-            <p className="text-white text-sm">Opening Reader...</p>
-        </div>
-    );
+    if (loading) return <div style={styles.fullscreenCenter}><Loader2 className="animate-spin text-indigo-500" size={40} /></div>;
 
     return ReactDOM.createPortal(
-        <div className="fixed inset-0 bg-[#000] flex flex-col z-[9999] font-sans overflow-hidden">
+        <div style={styles.container}>
 
-            {/* TOP TOOLBAR: Floating Style */}
-            <div className="h-16 flex items-center justify-between px-4 bg-black/50 backdrop-blur-md border-b border-white/5">
-                <div className="flex items-center gap-4">
-                    <button onClick={() => navigate(-1)} className="text-white hover:bg-white/10 p-2 rounded-full">
-                        <ChevronLeft size={28} />
+            {/* --- TOP NAV SECTION --- */}
+            <div style={styles.topNav}>
+                <div style={styles.navRow}>
+                    <button onClick={() => navigate(-1)} style={styles.backIcon}>
+                        <ChevronLeft size={32} strokeWidth={2.5} />
                     </button>
+
+                    <div style={styles.rightActions}>
+                        <button style={styles.actionIcon}><Type size={22} /></button>
+                        <button style={styles.actionIcon}><List size={22} /></button>
+                        <button style={styles.actionIcon}><MoreHorizontal size={22} /></button>
+                    </div>
                 </div>
 
-                <div className="flex items-center gap-6">
-                    <button className="text-white/90 flex items-center gap-2 text-sm font-medium bg-white/10 px-3 py-1.5 rounded-full">
-                        <MessageSquare size={18} /> AI Chat
+                {/* AI Pills Container - Scrollable */}
+                <div style={styles.pillScroll}>
+                    <button style={styles.pill}>
+                        <MessageSquare size={16} fill="white" /> AI Chat
                     </button>
-                    <button className="text-white/90 flex items-center gap-2 text-sm font-medium">
-                        <Sparkles size={18} /> Summary
+                    <button style={styles.pill}>
+                        <Sparkles size={16} /> Summary
                     </button>
-                    <button className="text-white/90 flex items-center gap-2 text-sm font-medium">
-                        <Mic2 size={18} /> Podcast
+                    <button style={styles.pill}>
+                        <Mic2 size={16} /> Podcast
                     </button>
-                    <button className="text-white/90">
-                        <Search size={20} />
+                    <button style={styles.pill}>
+                        <HelpCircle size={16} /> Q&A
                     </button>
-                </div>
-
-                <div className="flex items-center gap-4">
-                    <button className="text-white"><Type size={20} /></button>
-                    <button className="text-white"><List size={20} /></button>
-                    <button className="text-white"><MoreHorizontal size={20} /></button>
                 </div>
             </div>
 
-            {/* MAIN PDF VIEWER */}
-            <div className="flex-1 bg-[#f8f9fa] relative overflow-hidden">
+            {/* --- CENTER PDF CONTENT --- */}
+            <div style={styles.viewerContainer}>
                 <iframe
-                    src={`${getFileUrl()}#toolbar=0&navpanes=0`}
-                    title={book?.title}
-                    className="w-full h-full border-none"
+                    src={getViewerUrl()}
+                    style={styles.iframe}
+                    title="Document Viewer"
                 />
 
-                {/* Scroll to top floating button from image */}
-                <button className="absolute bottom-8 right-6 bg-zinc-800/80 text-white p-3 rounded-xl shadow-lg border border-white/10">
-                    <ChevronLeft className="rotate-90" size={24} />
+                {/* Reference-accurate Floating Up Button */}
+                <button style={styles.floatingUpBtn}>
+                    <ChevronUp size={24} />
                 </button>
             </div>
 
-            {/* BOTTOM CONTROLS: Audiobook Style */}
-            <div className="bg-black/95 border-t border-white/5 px-6 pt-4 pb-8">
-                {/* Progress Bar */}
-                <div className="w-full group px-2 mb-4">
-                    <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden relative">
-                        <div className="absolute top-0 left-0 h-full bg-indigo-500 w-[15%]" />
+            {/* --- BOTTOM PLAYER CONTROLS --- */}
+            <div style={styles.bottomPlayer}>
+                <div style={styles.progressBarWrapper}>
+                    <div style={styles.progressBase}>
+                        <div style={{ ...styles.progressFill, width: '15%' }} />
                     </div>
-                    <div className="flex justify-between mt-2 text-[11px] text-zinc-500 font-medium">
+                    <div style={styles.timeLabels}>
                         <span>05:02</span>
-                        <span>5 of 72</span>
+                        <span style={{ color: '#a1a1aa' }}>5 of 72</span>
                         <span>1:17:31</span>
                     </div>
                 </div>
 
-                {/* Playback Buttons */}
-                <div className="flex items-center justify-between">
-                    {/* Voice Selection / Flag */}
-                    <div className="flex items-center gap-2 bg-zinc-900 px-3 py-2 rounded-2xl border border-white/5">
-                        <div className="w-8 h-5 bg-blue-900 rounded-sm relative overflow-hidden">
-                            <span className="text-[8px] leading-none text-white p-0.5">🇦🇺</span>
-                        </div>
+                <div style={styles.controlRow}>
+                    <div style={styles.flagBox}>
+                        <span style={{ fontSize: '20px' }}>🇦🇺</span>
                     </div>
 
-                    <div className="flex items-center gap-8">
-                        <button className="text-white hover:text-indigo-400 transition">
-                            <RotateCcw size={28} />
-                            <span className="block text-[10px] font-bold mt-[-18px]">10</span>
+                    <div style={styles.mainButtons}>
+                        <button style={styles.skipBtn}>
+                            <RotateCcw size={30} />
+                            <span style={styles.skipNum}>10</span>
                         </button>
 
                         <button
                             onClick={() => setIsPlaying(!isPlaying)}
-                            className="w-16 h-16 bg-indigo-600 rounded-full flex items-center justify-center text-white hover:scale-105 active:scale-95 transition"
+                            style={styles.playBtn}
                         >
-                            {isPlaying ? <Pause size={32} fill="white" /> : <Play size={32} fill="white" className="ml-1" />}
+                            {isPlaying ? <Pause size={30} fill="white" /> : <Play size={30} fill="white" style={{ marginLeft: '4px' }} />}
                         </button>
 
-                        <button className="text-white hover:text-indigo-400 transition">
-                            <RotateCw size={28} />
-                            <span className="block text-[10px] font-bold mt-[-18px]">10</span>
+                        <button style={styles.skipBtn}>
+                            <RotateCw size={30} />
+                            <span style={styles.skipNum}>10</span>
                         </button>
                     </div>
 
-                    {/* Speed Selector */}
-                    <button
-                        onClick={() => setPlaybackSpeed(prev => prev >= 2 ? 1 : prev + 0.1)}
-                        className="bg-zinc-900 text-white px-4 py-2 rounded-2xl border border-white/5 font-bold text-sm min-w-[60px]"
-                    >
-                        {playbackSpeed.toFixed(1)}x
-                    </button>
+                    <button style={styles.speedPill}>1.1×</button>
                 </div>
             </div>
         </div>,
         document.body
     );
+};
+
+const styles = {
+    container: {
+        position: 'fixed',
+        inset: 0,
+        backgroundColor: '#000',
+        display: 'flex',
+        flexDirection: 'column',
+        zIndex: 99999,
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif'
+    },
+    topNav: {
+        paddingTop: '10px',
+        paddingBottom: '12px',
+        backgroundColor: '#000'
+    },
+    navRow: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '0 12px'
+    },
+    backIcon: {
+        background: 'none',
+        border: 'none',
+        color: '#fff',
+        cursor: 'pointer'
+    },
+    rightActions: {
+        display: 'flex',
+        gap: '16px'
+    },
+    actionIcon: {
+        background: 'none',
+        border: 'none',
+        color: '#fff',
+        padding: '4px'
+    },
+    pillScroll: {
+        display: 'flex',
+        gap: '8px',
+        overflowX: 'auto',
+        padding: '12px 16px 4px 16px',
+        msOverflowStyle: 'none',
+        scrollbarWidth: 'none'
+    },
+    pill: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        backgroundColor: '#27272a',
+        color: '#fff',
+        border: 'none',
+        padding: '8px 16px',
+        borderRadius: '12px',
+        fontSize: '14px',
+        fontWeight: '600',
+        whiteSpace: 'nowrap'
+    },
+    viewerContainer: {
+        flex: 1,
+        backgroundColor: '#fff',
+        position: 'relative'
+    },
+    iframe: {
+        width: '100%',
+        height: '100%',
+        border: 'none'
+    },
+    floatingUpBtn: {
+        position: 'absolute',
+        bottom: '20px',
+        right: '20px',
+        backgroundColor: 'rgba(39, 39, 42, 0.9)',
+        color: '#fff',
+        border: '1px solid rgba(255,255,255,0.1)',
+        padding: '12px',
+        borderRadius: '14px',
+        boxShadow: '0 10px 15px -3px rgba(0,0,0,0.3)'
+    },
+    bottomPlayer: {
+        backgroundColor: '#000',
+        padding: '20px 24px 40px 24px',
+        borderTop: '1px solid #18181b'
+    },
+    progressBarWrapper: {
+        marginBottom: '20px'
+    },
+    progressBase: {
+        height: '4px',
+        backgroundColor: '#27272a',
+        borderRadius: '2px',
+        width: '100%'
+    },
+    progressFill: {
+        height: '100%',
+        backgroundColor: '#6366f1', // Indigo-500
+        borderRadius: '2px'
+    },
+    timeLabels: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        marginTop: '8px',
+        fontSize: '12px',
+        color: '#71717a',
+        fontWeight: '600'
+    },
+    controlRow: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center'
+    },
+    flagBox: {
+        width: '48px',
+        height: '32px',
+        backgroundColor: '#18181b',
+        borderRadius: '8px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        border: '1px solid #27272a'
+    },
+    mainButtons: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '24px'
+    },
+    playBtn: {
+        width: '64px',
+        height: '64px',
+        backgroundColor: '#4f46e5',
+        borderRadius: '50%',
+        border: 'none',
+        color: '#fff',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+    },
+    skipBtn: {
+        background: 'none',
+        border: 'none',
+        color: '#fff',
+        position: 'relative',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center'
+    },
+    skipNum: {
+        fontSize: '10px',
+        fontWeight: 'bold',
+        position: 'absolute',
+        top: '11px'
+    },
+    speedPill: {
+        backgroundColor: '#18181b',
+        color: '#fff',
+        border: '1px solid #27272a',
+        padding: '8px 14px',
+        borderRadius: '20px',
+        fontSize: '14px',
+        fontWeight: 'bold'
+    },
+    fullscreenCenter: {
+        height: '100vh',
+        backgroundColor: '#000',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+    }
 };
 
 export default Reader;
