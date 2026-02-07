@@ -7,7 +7,9 @@ const path = require("path");
 const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
-const pdf = require("pdf-parse"); // New: For text extraction
+
+// FIXED: Direct import to avoid "pdf is not a function" TypeError
+const pdf = require("pdf-parse/lib/pdf-parse.js");
 
 const app = express();
 
@@ -50,10 +52,9 @@ const bookSchema = new mongoose.Schema({
     folder: { type: String, default: "All" },
     downloads: { type: Number, default: 0 },
     ttsRequests: { type: Number, default: 0 },
-    // New fields for Digital Mode and ActionSheet
-    content: { type: String },        // Extracted full text
-    words: { type: Number, default: 0 }, // Word count
-    summary: { type: String }         // AI Summary placeholder
+    content: { type: String },
+    words: { type: Number, default: 0 },
+    summary: { type: String }
 }, { timestamps: true });
 
 const Book = mongoose.model("Book", bookSchema);
@@ -77,9 +78,9 @@ const formatBook = (book) => ({
     folder: book.folder || "All",
     downloads: book.downloads,
     ttsRequests: book.ttsRequests,
-    words: book.words || 0,         // Include in formatted response
-    content: book.content || "",    // Include in formatted response
-    summary: book.summary || "",    // Include in formatted response
+    words: book.words || 0,
+    content: book.content || "",
+    summary: book.summary || "",
     createdAt: book.createdAt
 });
 
@@ -135,20 +136,23 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
         const folder = req.body.folder || "All";
         const pdfFullPath = req.file.path;
 
-        // --- NEW: EXTRACT TEXT AND COUNT WORDS ---
+        // --- EXTRACT TEXT AND COUNT WORDS ---
         let extractedText = "";
         let wordCount = 0;
         try {
             const dataBuffer = await fs.readFile(pdfFullPath);
-            const pdfData = await pdf(dataBuffer);
-            extractedText = pdfData.text;
-            // Clean up text and split by spaces for word count
-            wordCount = extractedText.trim().split(/\s+/).filter(word => word.length > 0).length;
+            const pdfData = await pdf(dataBuffer); // Now using the fixed import
+            extractedText = pdfData.text ? pdfData.text.trim() : "";
+
+            if (extractedText) {
+                wordCount = extractedText.split(/\s+/).filter(word => word.length > 0).length;
+            }
         } catch (textErr) {
             console.error("Text extraction failed:", textErr);
+            extractedText = "Extraction Error: Unable to read text from this PDF.";
         }
 
-        // 1. Upload PDF to Cloudinary as "raw"
+        // 1. Upload PDF to Cloudinary
         const uploadPdf = async () => {
             const result = await cloudinary.uploader.upload(pdfFullPath, {
                 folder: "storyteller_pdfs",
@@ -182,20 +186,19 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
             });
         });
 
-        // Run both Cloudinary uploads
         const [pdfUrl, coverUrl] = await Promise.all([uploadPdf(), generateThumbnail()]);
 
-        // 3. Save to Database with Extracted Content
+        // 3. Save to Database with Extracted Content fallback
         const book = await Book.create({
             title,
             pdfPath: pdfUrl,
             cover: coverUrl,
             folder,
-            content: extractedText, // For Digital Reader Mode
-            words: wordCount        // For ActionSheet
+            // Fallback content prevents the frontend from hanging on "Processing"
+            content: extractedText || "No selectable text found in this PDF.",
+            words: wordCount || 0
         });
 
-        // 4. CLEAN UP local file
         await fs.remove(pdfFullPath);
 
         res.status(201).json(formatBook(book));

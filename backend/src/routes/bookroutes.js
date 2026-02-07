@@ -4,7 +4,8 @@ const path = require("path");
 const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
-const pdf = require("pdf-parse"); // New dependency for text extraction
+// FIXED IMPORT: Direct path to the library to avoid "pdf is not a function" error
+const pdfParser = require("pdf-parse/lib/pdf-parse.js");
 const Book = require("../models/Book");
 const Folder = require("../models/Folder");
 
@@ -80,9 +81,9 @@ router.get("/", async (_, res) => {
             title: b.title,
             cover: b.cover,
             url: b.pdfPath,
-            content: b.content || "",    // Included for Digital Mode
-            words: b.words || 0,        // Included for ActionSheet
-            summary: b.summary || "",   // Included for Summary Pill
+            content: b.content || "No content available.",
+            words: b.words || 0,
+            summary: b.summary || "",
             folder: b.folder || "All",
             downloads: b.downloads || 0,
             ttsRequests: b.ttsRequests || 0,
@@ -103,7 +104,7 @@ router.get("/:id", async (req, res) => {
             title: book.title,
             cover: book.cover,
             url: book.pdfPath,
-            content: book.content || "",
+            content: book.content || "No content available.",
             words: book.words || 0,
             summary: book.summary || "",
             folder: book.folder || "All",
@@ -125,17 +126,21 @@ router.post("/", upload.single("file"), async (req, res) => {
         const outputPrefix = path.join(coversDir, baseName);
         const tempLocalCoverPath = `${outputPrefix}.png`;
 
-        // --- NEW: EXTRACT TEXT AND COUNT WORDS ---
+        // --- UPDATED: EXTRACT TEXT AND COUNT WORDS ---
         let extractedText = "";
         let wordCount = 0;
         try {
             const dataBuffer = await fs.readFile(pdfDiskPath);
-            const pdfData = await pdf(dataBuffer);
-            extractedText = pdfData.text;
-            // Clean up text and split by whitespace to count words
-            wordCount = extractedText.trim().split(/\s+/).filter(w => w.length > 0).length;
+            // Using the fixed parser reference
+            const pdfData = await pdfParser(dataBuffer);
+            extractedText = pdfData.text ? pdfData.text.trim() : "";
+
+            if (extractedText) {
+                wordCount = extractedText.split(/\s+/).filter(w => w.length > 0).length;
+            }
         } catch (textErr) {
             console.error("Text extraction failed:", textErr);
+            extractedText = "This PDF text could not be extracted.";
         }
 
         // 1. Generate Cover from local PDF
@@ -149,7 +154,7 @@ router.post("/", upload.single("file"), async (req, res) => {
                     const uploadRes = await cloudinary.uploader.upload(tempLocalCoverPath, {
                         folder: "storyteller_covers"
                     });
-                    if (fs.existsSync(tempLocalCoverPath)) await fs.remove(tempLocalCoverPath);
+                    if (await fs.pathExists(tempLocalCoverPath)) await fs.remove(tempLocalCoverPath);
                     resolve(uploadRes.secure_url);
                 } catch (cloudErr) {
                     console.error("Cloudinary Cover Error:", cloudErr);
@@ -158,7 +163,7 @@ router.post("/", upload.single("file"), async (req, res) => {
             });
         });
 
-        // 2. Upload PDF to Cloudinary as 'raw'
+        // 2. Upload PDF to Cloudinary
         const uploadPdfToCloud = async () => {
             const result = await cloudinary.uploader.upload(pdfDiskPath, {
                 folder: "storyteller_pdfs",
@@ -171,28 +176,29 @@ router.post("/", upload.single("file"), async (req, res) => {
         // Run uploads in parallel
         const [coverUrl, cloudPdfUrl] = await Promise.all([generateCover(), uploadPdfToCloud()]);
 
-        // 3. Save to Database with Extracted Content & Words
+        // 3. Save to Database with Clean Logic
+        // We use || to ensure 'content' is never empty, which prevents the frontend "Converting" hang
         const book = await Book.create({
             title: req.file.originalname.replace(/\.[^/.]+$/, ""),
             pdfPath: cloudPdfUrl,
             cover: coverUrl,
             folder: folderName,
-            content: extractedText, // Saved for Digital Reader
-            words: wordCount,       // Saved for ActionSheet
+            content: extractedText || "No selectable text found in this PDF.",
+            words: wordCount || 0,
         });
 
         // 4. CLEAN UP
-        if (fs.existsSync(pdfDiskPath)) await fs.remove(pdfDiskPath);
+        if (await fs.pathExists(pdfDiskPath)) await fs.remove(pdfDiskPath);
 
         res.status(201).json(book);
     } catch (err) {
         console.error("Upload error:", err);
-        if (req.file && fs.existsSync(req.file.path)) await fs.remove(req.file.path);
+        if (req.file && await fs.pathExists(req.file.path)) await fs.remove(req.file.path);
         res.status(500).json({ error: "Upload failed" });
     }
 });
 
-// ... (Rename, Move, Bulk Delete, Delete, Actions routes remain same) ...
+/* ---------------- OTHER ROUTES ---------------- */
 
 router.patch("/:id/rename", async (req, res) => {
     try {
