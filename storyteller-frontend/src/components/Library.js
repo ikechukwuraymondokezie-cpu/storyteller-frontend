@@ -1,13 +1,12 @@
 import { useState, useRef, useEffect } from "react";
-import { useNavigate } from "react-router-dom"; // Change 1: Added Navigate
+import { useNavigate } from "react-router-dom";
 import {
     MoreHorizontal, Download, Plus, FolderPlus, Trash2, X, Folder,
-    Share, Edit3, BookOpen, CheckSquare, Star, PlayCircle
+    Share, Edit3, CheckSquare, PlayCircle
 } from "lucide-react";
 
 import f3logo from "../assets/blacklogo.png";
 import defaultCover from "../assets/cover.jpg";
-import Reader from "./Reader";
 
 /* ---------------- FOLDER MODAL COMPONENT ---------------- */
 function FolderModal({ isOpen, onClose, onCreate }) {
@@ -16,7 +15,7 @@ function FolderModal({ isOpen, onClose, onCreate }) {
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-            <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="bg-zinc-900 border border-white/10 w-full max-sm rounded-2xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
                 <h2 className="text-xl font-bold text-white mb-1">New Folder</h2>
                 <p className="text-zinc-500 text-sm mb-4">Organize your collection by genre or mood.</p>
                 <input
@@ -44,12 +43,12 @@ function FolderModal({ isOpen, onClose, onCreate }) {
 }
 
 export default function Library() {
-    const API_URL = process.env.REACT_APP_API_URL || "";
-    const navigate = useNavigate(); // Change 2: Initialized navigate
+    // UPDATED: Production-ready API URL
+    const API_URL = "https://storyteller-frontend-x65b.onrender.com";
+    const navigate = useNavigate();
 
     const [books, setBooks] = useState([]);
     const [activeBook, setActiveBook] = useState(null);
-    const [activeReaderBook, setActiveReaderBook] = useState(null);
     const [loading, setLoading] = useState(true);
     const [uploading, setUploading] = useState(false);
     const sheetRef = useRef(null);
@@ -66,11 +65,12 @@ export default function Library() {
     const [viewMode, setViewMode] = useState(localStorage.getItem("libraryViewMode") || "grid");
     const [searchQuery, setSearchQuery] = useState("");
 
-    /* 🛠️ HELPER: FIX IMAGE URLS */
+    /* 🛠️ UPDATED HELPER: Bridge local vs cloud storage URLs */
     const getCoverUrl = (cover) => {
         if (!cover) return defaultCover;
         if (cover.startsWith('http')) return cover;
-        return `${API_URL}${cover}`;
+        const cleanPath = cover.startsWith('/') ? cover : `/${cover}`;
+        return `${API_URL}${cleanPath}`;
     };
 
     /* --- RENAME LOGIC --- */
@@ -122,7 +122,6 @@ export default function Library() {
 
     /* ---------------- FETCH DATA ---------------- */
     const fetchData = async () => {
-        if (!API_URL) return;
         try {
             setLoading(true);
             const bookRes = await fetch(`${API_URL}/api/books`);
@@ -138,10 +137,10 @@ export default function Library() {
         } catch (err) { console.error("❌ Failed to fetch:", err); } finally { setLoading(false); }
     };
 
-    useEffect(() => { fetchData(); }, [API_URL]);
+    useEffect(() => { fetchData(); }, []);
 
     const createNewFolder = async (name) => {
-        if (!API_URL || folders.includes(name)) return;
+        if (folders.includes(name)) return;
         try {
             const res = await fetch(`${API_URL}/api/books/folders`, {
                 method: "POST",
@@ -168,10 +167,10 @@ export default function Library() {
         });
 
     const handleUpload = async (file) => {
-        if (!API_URL || !file) return;
+        if (!file) return;
         const formData = new FormData();
         formData.append("file", file);
-        formData.append("folder", activeFolder === "All" ? "" : activeFolder);
+        formData.append("folder", activeFolder === "All" ? "All" : activeFolder);
         try {
             setUploading(true);
             const res = await fetch(`${API_URL}/api/books`, { method: "POST", body: formData });
@@ -225,8 +224,6 @@ export default function Library() {
     }, [activeBook]);
 
     const handleAction = async (bookId, action) => {
-        if (!API_URL) return;
-
         if (action === "delete") {
             if (!window.confirm("Delete this book?")) return;
             try {
@@ -240,7 +237,7 @@ export default function Library() {
         }
 
         if (action.startsWith("move:")) {
-            const targetFolder = action === "move:none" ? "" : action.split(":")[1];
+            const targetFolder = action.split(":")[1] || "All";
             try {
                 const res = await fetch(`${API_URL}/api/books/${bookId}/move`, {
                     method: "PATCH",
@@ -263,17 +260,9 @@ export default function Library() {
             });
             const updatedBook = await res.json();
             setBooks((prev) => prev.map((b) => (b._id === bookId ? updatedBook : b)));
-
-            if (action === "download") {
-                setActiveBook(null);
-                return;
-            }
+            if (action === "download") setActiveBook(null);
         } catch (err) { console.error("❌ Action failed:", err); }
     };
-
-    if (activeReaderBook) {
-        return <Reader book={activeReaderBook} onBack={() => setActiveReaderBook(null)} />;
-    }
 
     return (
         <div className={`min-h-screen bg-bg px-6 py-8 ${isSelectMode ? "pb-32" : ""}`}>
@@ -353,7 +342,7 @@ export default function Library() {
                                         <div className="flex flex-col">
                                             <h3 className="text-white font-bold text-base leading-tight truncate w-48">{activeBook.title}</h3>
                                             <p className="text-yellow-200/70 text-[11px] font-medium uppercase tracking-wider">
-                                                {activeBook.wordCount ? `${(activeBook.wordCount / 1000).toFixed(1)}k` : '0'} words • {activeBook.source === 'funfiction' ? 'Premium' : 'PDF'}
+                                                {activeBook.downloads} downloads • PDF
                                             </p>
                                         </div>
                                     </div>
@@ -367,27 +356,20 @@ export default function Library() {
                                             <p className="text-yellow-200/40 text-[11px] group-active:text-black/70">Listen with the best voices offline</p>
                                         </div>
                                     </button>
-                                    {activeBook.source === 'funfiction' ? (
-                                        <button onClick={() => handleAction(activeBook._id, "tts")} className="w-full flex items-center gap-4 bg-black py-4 px-4 rounded-2xl border border-zinc-800/40 active:opacity-70">
-                                            <img src={f3logo} className="w-6 h-6" alt="f3" />
-                                            <p className="text-white font-bold text-[15px]">Read with Funfiction</p>
+                                    <button onClick={() => handleAction(activeBook._id, "tts")} className="w-full flex items-center gap-4 bg-black py-4 px-4 rounded-2xl border border-zinc-800/40 active:opacity-70">
+                                        <img src={f3logo} className="w-6 h-6" alt="f3" />
+                                        <p className="text-white font-bold text-[15px]">Read with Funfiction</p>
+                                    </button>
+                                    <div className="flex flex-col bg-black rounded-2xl border border-zinc-800/40 overflow-hidden">
+                                        <button onClick={() => setIsMoving(true)} className="flex items-center gap-4 py-3.5 px-4 hover:bg-zinc-900 border-b border-zinc-800/40">
+                                            <FolderPlus className="text-white w-5 h-5" strokeWidth={1.5} />
+                                            <p className="text-white font-bold text-[15px]">Move to Folder</p>
                                         </button>
-                                    ) : (
-                                        <div className="flex flex-col bg-black rounded-2xl border border-zinc-800/40 overflow-hidden">
-                                            <button onClick={() => { setIsSelectMode(true); setActiveBook(null); }} className="flex items-center gap-4 py-3.5 px-4 hover:bg-zinc-900 border-b border-zinc-800/40 active:opacity-70 text-left">
-                                                <CheckSquare className="text-white w-5 h-5" strokeWidth={1.5} />
-                                                <p className="text-white font-bold text-[15px]">Select Multiple</p>
-                                            </button>
-                                            <button onClick={() => setIsMoving(true)} className="flex items-center gap-4 py-3.5 px-4 hover:bg-zinc-900 border-b border-zinc-800/40">
-                                                <FolderPlus className="text-white w-5 h-5" strokeWidth={1.5} />
-                                                <p className="text-white font-bold text-[15px]">Move to Folder</p>
-                                            </button>
-                                            <button onClick={() => handleRename(activeBook._id)} className="flex items-center gap-4 py-3.5 px-4 hover:bg-zinc-900 active:opacity-70 text-left">
-                                                <Edit3 className="text-white w-5 h-5" strokeWidth={1.5} />
-                                                <p className="text-white font-bold text-[15px]">Rename File</p>
-                                            </button>
-                                        </div>
-                                    )}
+                                        <button onClick={() => handleRename(activeBook._id)} className="flex items-center gap-4 py-3.5 px-4 hover:bg-zinc-900 active:opacity-70 text-left">
+                                            <Edit3 className="text-white w-5 h-5" strokeWidth={1.5} />
+                                            <p className="text-white font-bold text-[15px]">Rename File</p>
+                                        </button>
+                                    </div>
                                     <button onClick={() => handleAction(activeBook._id, "delete")} className="w-full flex items-center gap-4 bg-black py-3.5 px-4 rounded-2xl border border-zinc-800/40 active:opacity-70">
                                         <Trash2 className="text-red-500 w-5 h-5" strokeWidth={1.5} />
                                         <p className="text-red-500 font-bold text-[15px]">Delete</p>
@@ -401,10 +383,7 @@ export default function Library() {
                                     <h3 className="text-white font-bold text-lg">Move to Folder</h3>
                                 </div>
                                 <div className="max-h-60 overflow-y-auto space-y-1 pr-2 custom-scrollbar">
-                                    <button onClick={() => handleAction(activeBook._id, "move:none")} className="w-full flex items-center gap-3 p-4 rounded-xl bg-zinc-800/50 text-zinc-400 hover:bg-zinc-800 transition-all mb-2">
-                                        <X size={18} /><span className="font-medium text-[15px]">Remove from Folder</span>
-                                    </button>
-                                    {folders.filter(f => f !== "All").map((folder) => (
+                                    {folders.map((folder) => (
                                         <button key={folder} onClick={() => handleAction(activeBook._id, `move:${folder}`)} className="w-full flex items-center gap-3 p-4 rounded-xl hover:bg-white/5 text-zinc-300 hover:text-yellow-400 transition-all border border-transparent hover:border-white/10">
                                             <Folder size={18} strokeWidth={1.5} /><span className="font-medium text-[15px]">{folder}</span>
                                         </button>

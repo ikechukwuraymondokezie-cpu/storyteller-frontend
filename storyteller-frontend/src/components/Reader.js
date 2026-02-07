@@ -10,12 +10,14 @@ const Reader = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
+    // MATCHED BACKEND URL
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
     useEffect(() => {
         document.body.style.overflow = 'hidden';
         const fetchBook = async () => {
             try {
+                // Fetching all books to find the specific ID (as per your current logic)
                 const response = await fetch(`${BACKEND_URL}/api/books`);
                 const data = await response.json();
                 const booksArray = Array.isArray(data) ? data : (data.books || []);
@@ -33,9 +35,19 @@ const Reader = () => {
         return () => { document.body.style.overflow = 'unset'; };
     }, [id]);
 
-    // Construct the URL for the PDF file
-    // Assumes your backend stores the file path in 'book.filePath' or 'book.url'
-    const fileUrl = book ? `${BACKEND_URL}${book.filePath || book.url}` : null;
+    /* 🛠️ HELPER: CONSTRUCT FILE URL */
+    const getFileUrl = () => {
+        if (!book) return null;
+        const path = book.filePath || book.url;
+        if (!path) return null;
+        if (path.startsWith('http')) return path;
+
+        // Ensure no double slashes between URL and path
+        const cleanPath = path.startsWith('/') ? path : `/${path}`;
+        return `${BACKEND_URL}${cleanPath}`;
+    };
+
+    const fileUrl = getFileUrl();
 
     if (loading) return (
         <div style={styles.fullscreenCenter}>
@@ -74,7 +86,9 @@ const Reader = () => {
                         style={{ border: 'none' }}
                     />
                 ) : (
-                    <p style={{ color: 'white' }}>PDF link missing.</p>
+                    <div style={styles.fullscreenCenter}>
+                        <p style={{ color: 'white' }}>PDF link missing or invalid.</p>
+                    </div>
                 )}
             </div>
         </div>,
