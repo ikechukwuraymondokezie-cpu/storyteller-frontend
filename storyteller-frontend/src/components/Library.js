@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react"; // Added missing imports
 import { useNavigate } from "react-router-dom";
 import {
     MoreHorizontal, Download, Plus, FolderPlus, Trash2, X, Folder,
@@ -43,7 +44,7 @@ function FolderModal({ isOpen, onClose, onCreate }) {
 }
 
 export default function Library() {
-    // UPDATED: Production-ready API URL
+    // API URL - Ensure no trailing slash for clean path joining
     const API_URL = "https://storyteller-frontend-x65b.onrender.com";
     const navigate = useNavigate();
 
@@ -68,8 +69,11 @@ export default function Library() {
     /* 🛠️ UPDATED HELPER: Bridge local vs cloud storage URLs */
     const getCoverUrl = (cover) => {
         if (!cover) return defaultCover;
+        // If it's a Cloudinary link (starts with http), return as is
         if (cover.startsWith('http')) return cover;
-        const cleanPath = cover.startsWith('/') ? cover : `/${cover}`;
+
+        // If it's a local path, ensure it starts with /uploads/covers/
+        const cleanPath = cover.startsWith('/') ? cover : `/uploads/covers/${cover}`;
         return `${API_URL}${cleanPath}`;
     };
 
@@ -157,7 +161,7 @@ export default function Library() {
 
     const filteredBooks = (books || [])
         .filter((book) => {
-            const matchesSearch = book.title?.toLowerCase().includes(searchQuery);
+            const matchesSearch = (book.title || "").toLowerCase().includes(searchQuery);
             const matchesFolder = activeFolder === "All" || book.folder === activeFolder;
             return matchesSearch && matchesFolder;
         })

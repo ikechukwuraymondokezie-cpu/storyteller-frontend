@@ -15,16 +15,16 @@ cloudinary.config();
 
 /* -------------------- MIDDLEWARE -------------------- */
 app.use(cors({
-    origin: ["https://storyteller-b1i3.onrender.com", "http://localhost:5173"], // Added localhost for dev
+    origin: ["https://storyteller-b1i3.onrender.com", "http://localhost:5173"],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     credentials: true
 }));
 app.use(express.json());
 
 /* -------------------- UPLOADS & STATIC FILES -------------------- */
-// We define the root uploads folder and its subdirectories
 const uploadsBase = path.join(__dirname, "uploads");
-const uploadDir = path.join(uploadsBase, "pdf");
+// UPDATED: Folder name changed from 'pdf' to 'pdfs'
+const uploadDir = path.join(uploadsBase, "pdfs");
 const coversDir = path.join(uploadsBase, "covers");
 const audioDir = path.join(uploadsBase, "audio");
 
@@ -34,16 +34,31 @@ fs.ensureDirSync(coversDir);
 fs.ensureDirSync(audioDir);
 
 /**
- * STATIC SERVING FIX:
- * This tells Express to serve anything inside the "uploads" folder.
- * If the DB stores "/uploads/pdf/file.pdf", this middleware will find it.
+ * STATIC SERVING:
+ * Maps the URL /uploads to the physical folder.
  */
 app.use("/uploads", express.static(uploadsBase));
 
 /* -------------------- MONGODB -------------------- */
 const MONGO_URI = process.env.MONGO_URI;
 mongoose.connect(MONGO_URI)
-    .then(() => console.log("✅ MongoDB connected"))
+    .then(async () => {
+        console.log("✅ MongoDB connected");
+
+        /* --- AUTOMATIC DATA FIX FOR FOLDER NAME --- */
+        try {
+            const booksToFix = await Book.find({ pdfPath: { $regex: /^\/uploads\/pdf\// } });
+            if (booksToFix.length > 0) {
+                for (let book of booksToFix) {
+                    book.pdfPath = book.pdfPath.replace("/uploads/pdf/", "/uploads/pdfs/");
+                    await book.save();
+                }
+                console.log(`🛠️ Fixed ${booksToFix.length} book paths from /pdf/ to /pdfs/`);
+            }
+        } catch (err) {
+            console.error("Migration error:", err);
+        }
+    })
     .catch((err) => console.error("❌ MongoDB error:", err));
 
 /* -------------------- SCHEMAS -------------------- */
@@ -55,7 +70,7 @@ const bookSchema = new mongoose.Schema({
     title: { type: String, required: true },
     cover: String,
     pdfPath: String,
-    folder: { type: String, default: "All" }, // Standardized to "All"
+    folder: { type: String, default: "All" },
     downloads: { type: Number, default: 0 },
     ttsRequests: { type: Number, default: 0 },
 }, { timestamps: true });
@@ -87,7 +102,6 @@ const formatBook = (book) => ({
 const deleteBookFiles = async (book) => {
     try {
         if (book.pdfPath) {
-            // Remove the leading slash to join correctly with __dirname
             const relativePath = book.pdfPath.startsWith('/') ? book.pdfPath.substring(1) : book.pdfPath;
             const fullPdfPath = path.join(__dirname, relativePath);
             if (await fs.pathExists(fullPdfPath)) await fs.remove(fullPdfPath);
@@ -99,7 +113,6 @@ const deleteBookFiles = async (book) => {
 
 /* -------------------- API ROUTES -------------------- */
 
-// Get Folders
 app.get("/api/books/folders", async (_, res) => {
     try {
         const folders = await Folder.find().sort({ name: 1 });
@@ -109,7 +122,6 @@ app.get("/api/books/folders", async (_, res) => {
     }
 });
 
-// Create Folder
 app.post("/api/books/folders", async (req, res) => {
     try {
         const { name } = req.body;
@@ -121,7 +133,6 @@ app.post("/api/books/folders", async (req, res) => {
     }
 });
 
-// Get All Books
 app.get("/api/books", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
@@ -131,10 +142,6 @@ app.get("/api/books", async (_, res) => {
     }
 });
 
-/**
- * NEW: Get Single Book
- * Used by the Reader component to load the PDF URL directly
- */
 app.get("/api/books/:id", async (req, res) => {
     try {
         const book = await Book.findById(req.params.id);
@@ -152,10 +159,11 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
 
         const title = req.file.originalname.replace(/\.[^/.]+$/, "");
         const folder = req.body.folder || "All";
-        const pdfPath = `/uploads/pdf/${req.file.filename}`;
+
+        // UPDATED: Changed path to /pdfs/
+        const pdfPath = `/uploads/pdfs/${req.file.filename}`;
         const pdfFullPath = req.file.path;
 
-        // Thumbnail generation
         const baseName = path.parse(req.file.filename).name;
         const tempLocalCoverPath = path.join(coversDir, `${baseName}.png`);
         const outputPrefix = path.join(coversDir, baseName);
@@ -163,7 +171,7 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
         const generateThumbnail = () => new Promise((resolve) => {
             exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfFullPath}" "${outputPrefix}"`, async (error) => {
                 if (error) {
-                    console.error("pdftoppm error (ensure poppler-utils is installed):", error);
+                    console.error("pdftoppm error:", error);
                     return resolve(null);
                 }
                 try {
@@ -184,12 +192,11 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
 
         res.status(201).json(formatBook(book));
     } catch (err) {
-        console.error("Upload route error:", err);
+        console.error("Upload error:", err);
         res.status(500).json({ error: "Upload failed" });
     }
 });
 
-// Rename Book
 app.patch("/api/books/:id/rename", async (req, res) => {
     try {
         const { title } = req.body;
@@ -200,7 +207,6 @@ app.patch("/api/books/:id/rename", async (req, res) => {
     }
 });
 
-// Move Book to Folder
 app.patch("/api/books/:id/move", async (req, res) => {
     try {
         const { folder } = req.body;
@@ -211,7 +217,6 @@ app.patch("/api/books/:id/move", async (req, res) => {
     }
 });
 
-// Delete Single Book
 app.delete("/api/books/:id", async (req, res) => {
     try {
         const book = await Book.findById(req.params.id);
@@ -225,7 +230,6 @@ app.delete("/api/books/:id", async (req, res) => {
     }
 });
 
-// Bulk Delete
 app.post("/api/books/bulk-delete", async (req, res) => {
     try {
         const { ids } = req.body;
@@ -238,7 +242,6 @@ app.post("/api/books/bulk-delete", async (req, res) => {
     }
 });
 
-// Update Action Stats
 app.patch("/api/books/:id/actions", async (req, res) => {
     try {
         const { action } = req.body;

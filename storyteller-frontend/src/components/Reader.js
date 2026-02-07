@@ -15,34 +15,43 @@ const Reader = () => {
 
     useEffect(() => {
         document.body.style.overflow = 'hidden';
+
         const fetchBook = async () => {
             try {
-                // Fetching all books to find the specific ID (as per your current logic)
-                const response = await fetch(`${BACKEND_URL}/api/books`);
-                const data = await response.json();
-                const booksArray = Array.isArray(data) ? data : (data.books || []);
-                const foundBook = booksArray.find(b => String(b._id || b.id) === String(id));
+                // UPDATED: Fetching the specific book by ID directly
+                // This is much faster than filtering the whole library array
+                const response = await fetch(`${BACKEND_URL}/api/books/${id}`);
 
-                if (foundBook) setBook(foundBook);
-                else setError("Book not found.");
+                if (!response.ok) {
+                    throw new Error("Book not found");
+                }
+
+                const data = await response.json();
+                setBook(data);
             } catch (err) {
-                setError("Failed to load book.");
+                console.error("Reader Error:", err);
+                setError("Failed to load book details.");
             } finally {
                 setLoading(false);
             }
         };
+
         fetchBook();
         return () => { document.body.style.overflow = 'unset'; };
-    }, [id]);
+    }, [id, BACKEND_URL]);
 
     /* 🛠️ HELPER: CONSTRUCT FILE URL */
     const getFileUrl = () => {
         if (!book) return null;
-        const path = book.filePath || book.url;
+
+        // Use 'url' (which maps to pdfPath in backend) or fallback to filePath
+        const path = book.url || book.pdfPath || book.filePath;
+
         if (!path) return null;
         if (path.startsWith('http')) return path;
 
-        // Ensure no double slashes between URL and path
+        // Ensure path starts with /uploads/pdfs/ as defined in backend
+        // We clean up leading slashes to prevent double slashes in the final URL
         const cleanPath = path.startsWith('/') ? path : `/${path}`;
         return `${BACKEND_URL}${cleanPath}`;
     };
@@ -52,13 +61,14 @@ const Reader = () => {
     if (loading) return (
         <div style={styles.fullscreenCenter}>
             <Loader2 className="animate-spin text-yellow-400" size={40} />
+            <p style={{ color: 'white', marginTop: '10px', fontSize: '14px' }}>Opening Reader...</p>
         </div>
     );
 
     if (error) return (
         <div style={styles.fullscreenCenter}>
-            <p style={{ color: 'red', marginBottom: '10px' }}>{error}</p>
-            <button onClick={() => navigate(-1)} style={styles.backBtn}>Go Back</button>
+            <p style={{ color: '#ef4444', marginBottom: '16px', fontWeight: 'bold' }}>{error}</p>
+            <button onClick={() => navigate(-1)} style={styles.backBtn}>Return to Library</button>
         </div>
     );
 
@@ -79,7 +89,7 @@ const Reader = () => {
             <div style={styles.viewerWrapper}>
                 {fileUrl ? (
                     <iframe
-                        src={`${fileUrl}#toolbar=0`}
+                        src={`${fileUrl}#toolbar=0&navpanes=0`}
                         title={book?.title}
                         width="100%"
                         height="100%"
@@ -150,12 +160,14 @@ const styles = {
         textDecoration: 'none'
     },
     backBtn: {
-        padding: '10px 20px',
-        borderRadius: '8px',
+        padding: '10px 24px',
+        borderRadius: '12px',
         backgroundColor: '#eab308',
+        color: '#000',
         border: 'none',
         fontWeight: 'bold',
-        cursor: 'pointer'
+        cursor: 'pointer',
+        transition: 'transform 0.2s ease'
     }
 };
 

@@ -14,7 +14,8 @@ cloudinary.config();
 
 /* ---------------- STORAGE CONFIG ---------------- */
 const uploadsRoot = path.join(__dirname, "../uploads");
-const pdfDir = path.join(uploadsRoot, "pdf");
+// UPDATED: Folder name changed from 'pdf' to 'pdfs' to match your server reality
+const pdfDir = path.join(uploadsRoot, "pdfs");
 const coversDir = path.join(uploadsRoot, "covers");
 const audioDir = path.join(uploadsRoot, "audio");
 
@@ -90,10 +91,7 @@ router.get("/", async (_, res) => {
     }
 });
 
-/**
- * NEW: GET SINGLE BOOK
- * Added to support direct URL access for Reader.js
- */
+// GET SINGLE BOOK
 router.get("/:id", async (req, res) => {
     try {
         const book = await Book.findById(req.params.id);
@@ -123,6 +121,7 @@ router.post("/", upload.single("file"), async (req, res) => {
         const tempLocalCoverPath = `${outputPrefix}.png`;
 
         const generateCover = () => new Promise((resolve) => {
+            // pdftoppm uses the disk path to read the file
             exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfDiskPath}" "${outputPrefix}"`, async (error) => {
                 if (error) {
                     console.error("pdftoppm error:", error);
@@ -144,9 +143,10 @@ router.post("/", upload.single("file"), async (req, res) => {
 
         const coverUrl = await generateCover();
 
+        // UPDATED: Saved path reflects the 'pdfs' folder name
         const book = await Book.create({
             title: req.file.originalname.replace(/\.[^/.]+$/, ""),
-            pdfPath: `/uploads/pdf/${req.file.filename}`,
+            pdfPath: `/uploads/pdfs/${req.file.filename}`,
             cover: coverUrl,
             folder: folderName,
         });
@@ -158,6 +158,7 @@ router.post("/", upload.single("file"), async (req, res) => {
     }
 });
 
+// Rename, Move, Delete, and Actions remain consistent...
 router.patch("/:id/rename", async (req, res) => {
     try {
         const { title } = req.body;
@@ -172,11 +173,7 @@ router.patch("/:id/rename", async (req, res) => {
 router.patch("/:id/move", async (req, res) => {
     try {
         const { folder } = req.body;
-        const book = await Book.findByIdAndUpdate(
-            req.params.id,
-            { folder: folder || "All" },
-            { new: true }
-        );
+        const book = await Book.findByIdAndUpdate(req.params.id, { folder: folder || "All" }, { new: true });
         res.json(book);
     } catch (err) {
         res.status(500).json({ error: "Move failed" });
