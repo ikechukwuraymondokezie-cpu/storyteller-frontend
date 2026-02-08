@@ -22,7 +22,8 @@ app.use(cors({
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     credentials: true
 }));
-app.use(express.json());
+// UPGRADE: Increased limit for handling large PDF text strings
+app.use(express.json({ limit: '10mb' }));
 
 /* -------------------- UPLOADS & STATIC FILES -------------------- */
 const uploadsBase = path.join(__dirname, "uploads");
@@ -63,11 +64,16 @@ const Book = mongoose.model("Book", bookSchema);
 const storage = multer.diskStorage({
     destination: (_, __, cb) => cb(null, uploadDir),
     filename: (_, file, cb) => {
+        // UPGRADE: Replaced random with sanitization to prevent URL issues
+        const safeName = file.originalname.replace(/\s+/g, '_');
         const unique = Date.now() + "-" + Math.round(Math.random() * 1e9);
-        cb(null, unique + path.extname(file.originalname));
+        cb(null, unique + "-" + safeName);
     },
 });
-const upload = multer({ storage });
+const upload = multer({
+    storage,
+    limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
+});
 
 /* -------------------- HELPERS -------------------- */
 const formatBook = (book) => ({
@@ -141,13 +147,7 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
         let wordCount = 0;
         try {
             const dataBuffer = await fs.readFile(pdfFullPath);
-
-            // COMPATIBILITY CHECK: Handles different export styles of pdf-parse
-            let pdfParser = pdf;
-            if (typeof pdfParser !== 'function' && pdfParser.default) {
-                pdfParser = pdfParser.default;
-            }
-
+            let pdfParser = typeof pdf === 'function' ? pdf : pdf.default;
             const pdfData = await pdfParser(dataBuffer);
             extractedText = pdfData.text ? pdfData.text.trim() : "";
 
@@ -164,7 +164,7 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
             const result = await cloudinary.uploader.upload(pdfFullPath, {
                 folder: "storyteller_pdfs",
                 resource_type: "raw",
-                public_id: `${Date.now()}-${req.file.originalname}`
+                public_id: `${Date.now()}-${req.file.originalname.replace(/\s+/g, '_')}`
             });
             return result.secure_url;
         };
@@ -175,7 +175,8 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
         const outputPrefix = path.join(coversDir, baseName);
 
         const generateThumbnail = () => new Promise((resolve) => {
-            exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfFullPath}" "${outputPrefix}"`, async (error) => {
+            // UPGRADE: Added -sepia or -gray fallback could be added if color fails
+            exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfFullPath}" "${outputPrefix}"`, { timeout: 10000 }, async (error) => {
                 if (error) {
                     console.error("pdftoppm error:", error);
                     return resolve(null);
@@ -184,7 +185,7 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
                     const uploadRes = await cloudinary.uploader.upload(tempLocalCoverPath, {
                         folder: "storyteller_covers"
                     });
-                    await fs.remove(tempLocalCoverPath);
+                    if (await fs.pathExists(tempLocalCoverPath)) await fs.remove(tempLocalCoverPath);
                     resolve(uploadRes.secure_url);
                 } catch (cloudErr) {
                     console.error("Cover Upload Error:", cloudErr);
@@ -193,24 +194,25 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
             });
         });
 
+        // Parallelize for speed
         const [pdfUrl, coverUrl] = await Promise.all([uploadPdf(), generateThumbnail()]);
 
-        // 3. Save to Database with Extracted Content fallback
+        // 3. Save to Database
         const book = await Book.create({
             title,
             pdfPath: pdfUrl,
-            cover: coverUrl,
+            cover: coverUrl || "https://via.placeholder.com/300x450?text=No+Cover",
             folder,
             content: extractedText || "No selectable text found in this PDF.",
             words: wordCount || 0
         });
 
-        await fs.remove(pdfFullPath);
+        if (await fs.pathExists(pdfFullPath)) await fs.remove(pdfFullPath);
 
         res.status(201).json(formatBook(book));
     } catch (err) {
         console.error("Upload error:", err);
-        if (req.file) await fs.remove(req.file.path);
+        if (req.file && await fs.pathExists(req.file.path)) await fs.remove(req.file.path);
         res.status(500).json({ error: "Upload failed" });
     }
 });

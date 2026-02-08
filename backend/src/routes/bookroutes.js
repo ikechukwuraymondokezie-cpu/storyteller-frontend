@@ -29,7 +29,7 @@ fs.ensureDirSync(audioDir);
 const storage = multer.diskStorage({
     destination: (_, __, cb) => cb(null, pdfDir),
     filename: (_, file, cb) => {
-        const unique = Date.now() + "-" + Math.round(Math.random() * 1e9);
+        const unique = Date.now() + "-" + Math.round(1e9);
         cb(null, unique + path.extname(file.originalname));
     },
 });
@@ -49,7 +49,6 @@ const deleteFiles = async (book) => {
 };
 
 /* ---------------- FOLDER ROUTES ---------------- */
-
 router.get("/folders", async (_, res) => {
     try {
         const folders = await Folder.find().sort({ name: 1 });
@@ -128,30 +127,23 @@ router.post("/", upload.single("file"), async (req, res) => {
         const outputPrefix = path.join(coversDir, baseName);
         const tempLocalCoverPath = `${outputPrefix}.png`;
 
-        // --- UPDATED: SAFE EXTRACTION LOGIC ---
+        // --- UPDATE 1: TEXT EXTRACTION ---
         let extractedText = "";
         let wordCount = 0;
         try {
             const dataBuffer = await fs.readFile(pdfDiskPath);
-
-            // This bridge handles cases where the function is inside .default
-            let pdfParser = pdf;
-            if (typeof pdfParser !== 'function' && pdfParser.default) {
-                pdfParser = pdfParser.default;
-            }
-
-            const pdfData = await pdfParser(dataBuffer);
+            // Fix for pdf-parse exports
+            const pdfData = await (typeof pdf === 'function' ? pdf(dataBuffer) : pdf.default(dataBuffer));
             extractedText = pdfData.text ? pdfData.text.trim() : "";
-
             if (extractedText) {
                 wordCount = extractedText.split(/\s+/).filter(w => w.length > 0).length;
             }
         } catch (textErr) {
             console.error("Text extraction failed:", textErr);
-            extractedText = "This PDF text could not be extracted.";
+            extractedText = "Extraction Error: This PDF text could not be extracted.";
         }
 
-        // 1. Generate Cover from local PDF
+        // --- UPDATE 2: COVER GENERATION ---
         const generateCover = () => new Promise((resolve) => {
             exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfDiskPath}" "${outputPrefix}"`, async (error) => {
                 if (error) {
@@ -171,7 +163,6 @@ router.post("/", upload.single("file"), async (req, res) => {
             });
         });
 
-        // 2. Upload PDF to Cloudinary
         const uploadPdfToCloud = async () => {
             const result = await cloudinary.uploader.upload(pdfDiskPath, {
                 folder: "storyteller_pdfs",
@@ -181,22 +172,19 @@ router.post("/", upload.single("file"), async (req, res) => {
             return result.secure_url;
         };
 
-        // Run uploads in parallel
         const [coverUrl, cloudPdfUrl] = await Promise.all([generateCover(), uploadPdfToCloud()]);
 
-        // 3. Save to Database
+        // --- UPDATE 3: SAVE FIELDS ---
         const book = await Book.create({
             title: req.file.originalname.replace(/\.[^/.]+$/, ""),
             pdfPath: cloudPdfUrl,
             cover: coverUrl,
             folder: folderName,
-            content: extractedText || "No selectable text found in this PDF.",
-            words: wordCount || 0,
+            content: extractedText, // Added this field
+            words: wordCount,       // Added this field
         });
 
-        // 4. CLEAN UP
         if (await fs.pathExists(pdfDiskPath)) await fs.remove(pdfDiskPath);
-
         res.status(201).json(book);
     } catch (err) {
         console.error("Upload error:", err);
@@ -206,7 +194,6 @@ router.post("/", upload.single("file"), async (req, res) => {
 });
 
 /* ---------------- OTHER ROUTES ---------------- */
-
 router.patch("/:id/rename", async (req, res) => {
     try {
         const { title } = req.body;
