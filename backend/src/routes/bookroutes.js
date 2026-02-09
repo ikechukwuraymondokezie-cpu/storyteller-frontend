@@ -50,17 +50,20 @@ const deleteFiles = async (book) => {
     }
 };
 
-// Helper for fast per-page OCR
+// UPDATED: Helper for fast per-page OCR with unique IDs to prevent batch conflicts
 async function extractPageText(pdfPath, pageNum) {
-    const pageImg = path.join(coversDir, `tmp_${pageNum}_${Date.now()}.png`);
+    const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
+    const pageImgBase = path.join(coversDir, `tmp_${pageNum}_${uniqueId}`);
+    const pageImgFull = `${pageImgBase}.png`;
+
     try {
         await new Promise((resolve, reject) => {
-            exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImg.replace('.png', '')}"`, (err) => {
+            exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
-        const { data: { text } } = await Tesseract.recognize(pageImg, 'eng');
-        if (await fs.pathExists(pageImg)) await fs.remove(pageImg);
+        const { data: { text } } = await Tesseract.recognize(pageImgFull, 'eng');
+        if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
         return text;
     } catch (e) {
         console.error(`Error OCRing page ${pageNum}:`, e);
@@ -68,28 +71,29 @@ async function extractPageText(pdfPath, pageNum) {
     }
 }
 
-// Background Worker to handle pages 11 to END
+// Background Worker to handle pages 4 to END (sequential to save RAM)
 async function processRemainingPages(bookId, pdfPath, startPage, totalPages) {
     console.log(`🌀 Background OCR: Pages ${startPage} to ${totalPages}`);
     try {
-        const book = await Book.findById(bookId);
-        let fullContent = book.content;
-
         for (let i = startPage; i <= totalPages; i++) {
             const pageText = await extractPageText(pdfPath, i);
-            fullContent += "\n" + pageText;
 
-            // Update database every 5 pages to show progress and save state
-            if (i % 5 === 0 || i === totalPages) {
-                await Book.findByIdAndUpdate(bookId, {
-                    content: fullContent,
-                    processedPages: i,
-                    words: fullContent.split(/\s+/).filter(w => w.length > 0).length,
-                    status: i === totalPages ? 'completed' : 'processing'
-                });
-            }
+            // Use $set and findOne to append content safely
+            const currentBook = await Book.findById(bookId);
+            const newContent = (currentBook.content || "") + "\n" + pageText;
+
+            // Update database every page so user sees text as it arrives
+            await Book.findByIdAndUpdate(bookId, {
+                content: newContent,
+                processedPages: i,
+                words: newContent.split(/\s+/).filter(w => w.length > 0).length,
+                status: i === totalPages ? 'completed' : 'processing'
+            });
+
+            // Short rest to prevent CPU pinning
+            await new Promise(r => setTimeout(r, 500));
         }
-        // Final cleanup of the local PDF after full processing
+
         if (await fs.pathExists(pdfPath)) await fs.remove(pdfPath);
         console.log(`✅ Background OCR Complete for Book: ${bookId}`);
     } catch (err) {
@@ -142,7 +146,7 @@ router.get("/:id", async (req, res) => {
 });
 
 /**
- * UPLOAD BOOK: 10-Page Instant Extraction + TOC + Background Worker
+ * UPLOAD BOOK: 3-Page Instant Extraction (Sequential) + TOC + Background Worker
  */
 router.post("/", upload.single("file"), async (req, res) => {
     try {
@@ -152,20 +156,20 @@ router.post("/", upload.single("file"), async (req, res) => {
         const pdfDiskPath = req.file.path;
         const baseName = path.parse(req.file.filename).name;
         const outputPrefix = path.join(coversDir, baseName);
-        const tempLocalCoverPath = `${outputPrefix}.png`;
 
         // 1. Get Meta Info (Total Pages)
         const dataBuffer = await fs.readFile(pdfDiskPath);
         const meta = await pdf(dataBuffer);
-        const totalPages = meta.numpages;
+        const totalPages = meta.numpages || 1;
 
-        // 2. Generate Thumbnail & Upload PDF in Parallel
+        // 2. Parallel: Generate Thumbnail & Upload PDF to Cloudinary
         const generateCover = () => new Promise((resolve) => {
             exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfDiskPath}" "${outputPrefix}"`, async (error) => {
                 if (error) return resolve(null);
                 try {
-                    const uploadRes = await cloudinary.uploader.upload(tempLocalCoverPath, { folder: "storyteller_covers" });
-                    if (await fs.pathExists(tempLocalCoverPath)) await fs.remove(tempLocalCoverPath);
+                    const localPath = `${outputPrefix}.png`;
+                    const uploadRes = await cloudinary.uploader.upload(localPath, { folder: "storyteller_covers" });
+                    if (await fs.pathExists(localPath)) await fs.remove(localPath);
                     resolve(uploadRes.secure_url);
                 } catch { resolve(null); }
             });
@@ -174,24 +178,22 @@ router.post("/", upload.single("file"), async (req, res) => {
         const uploadPdfToCloud = async () => {
             const result = await cloudinary.uploader.upload(pdfDiskPath, {
                 folder: "storyteller_pdfs",
-                resource_type: "raw",
-                public_id: `${Date.now()}-${req.file.originalname}`
+                resource_type: "raw"
             });
             return result.secure_url;
         };
 
         const [coverUrl, cloudPdfUrl] = await Promise.all([generateCover(), uploadPdfToCloud()]);
 
-        // 3. INSTANT PHASE: Parallel OCR for first 10 pages
-        const instantLimit = Math.min(10, totalPages);
-        const pagePromises = [];
+        // 3. THE "INSTANT 3": Extract first 3 pages one-by-one to save RAM
+        const instantLimit = Math.min(3, totalPages);
+        let initialText = "";
         for (let i = 1; i <= instantLimit; i++) {
-            pagePromises.push(extractPageText(pdfDiskPath, i));
+            const pageText = await extractPageText(pdfDiskPath, i);
+            initialText += pageText + "\n\n";
         }
-        const pageResults = await Promise.all(pagePromises);
-        const initialText = pageResults.join("\n");
 
-        // 4. INSTANT TOC GENERATION (Regex based on Page 1-10 text)
+        // 4. INSTANT TOC GENERATION (Based on Page 1-3 text)
         const tocEntries = [];
         initialText.split('\n').forEach(line => {
             const tocMatch = line.match(/^(.*?)(?:\.{2,}|…|\s{2,})(\d+)$/);
@@ -208,15 +210,14 @@ router.post("/", upload.single("file"), async (req, res) => {
             chapters: tocEntries,
             totalPages: totalPages,
             processedPages: instantLimit,
-            status: totalPages <= 10 ? 'completed' : 'processing',
+            status: totalPages <= instantLimit ? 'completed' : 'processing',
             words: initialText.split(/\s+/).filter(w => w.length > 0).length
         });
 
-        // 6. Start Background Worker for the rest of the book
-        if (totalPages > 10) {
-            processRemainingPages(book._id, pdfDiskPath, 11, totalPages);
+        // 6. Start Background Worker for the rest of the book (starting at page 4)
+        if (totalPages > instantLimit) {
+            processRemainingPages(book._id, pdfDiskPath, instantLimit + 1, totalPages);
         } else {
-            // Cleanup local file immediately if book is small
             if (await fs.pathExists(pdfDiskPath)) await fs.remove(pdfDiskPath);
         }
 
@@ -225,7 +226,7 @@ router.post("/", upload.single("file"), async (req, res) => {
     } catch (err) {
         console.error("Upload error:", err);
         if (req.file && await fs.pathExists(req.file.path)) await fs.remove(req.file.path);
-        res.status(500).json({ error: "Upload failed" });
+        res.status(500).json({ error: "Upload failed: " + err.message });
     }
 });
 
