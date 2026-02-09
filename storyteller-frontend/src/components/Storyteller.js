@@ -14,12 +14,13 @@ const formatTimeAgo = (dateString) => {
     const diffInDays = Math.floor(diffInHours / 24);
 
     if (diffInHours < 1) return "Just now";
-    if (diffInHours < 24) return `${diffInHours} hours ago`;
-    return `${diffInDays} days ago`;
+    if (diffInHours < 24) return `${diffInHours}h ago`;
+    return `${diffInDays}d ago`;
 };
 
 export default function Storyteller() {
-    const API_URL = process.env.REACT_APP_API_URL;
+    // Ensure the API URL doesn't have a trailing slash for consistency
+    const API_URL = process.env.REACT_APP_API_URL?.replace(/\/$/, "");
     const [recentBooks, setRecentBooks] = useState([]);
     const [loading, setLoading] = useState(true);
 
@@ -49,16 +50,24 @@ export default function Storyteller() {
     /* ---------------- HANDLERS ---------------- */
     const openBook = (book) => {
         if (book.url) {
-            // Opens the PDF directly in a new browser tab
-            window.open(`${API_URL}${book.url}`, "_blank");
+            // FIXED: Handle Cloudinary (absolute) vs Local (relative) URLs
+            const finalUrl = book.url.startsWith("http")
+                ? book.url
+                : `${API_URL}${book.url}`;
+            window.open(finalUrl, "_blank");
         } else {
             alert("This book does not have a valid file URL.");
         }
     };
 
+    // Helper to resolve cover image path
+    const getCoverImg = (coverPath) => {
+        if (!coverPath) return null;
+        return coverPath.startsWith("http") ? coverPath : `${API_URL}${coverPath}`;
+    };
+
     return (
         <div className="w-full bg-bg flex flex-col min-h-screen">
-
             <main className="flex-1 flex flex-col">
                 <div className="flex flex-col space-y-6">
 
@@ -123,9 +132,10 @@ export default function Storyteller() {
                                             <div className="w-10 h-14 bg-black/10 rounded-md flex-shrink-0 overflow-hidden flex items-center justify-center shadow-inner">
                                                 {book.cover ? (
                                                     <img
-                                                        src={`${API_URL}${book.cover}`}
+                                                        src={getCoverImg(book.cover)}
                                                         className="w-full h-full object-cover"
-                                                        alt=""
+                                                        alt={book.title}
+                                                        onError={(e) => { e.target.src = "https://via.placeholder.com/40x56?text=PDF"; }}
                                                     />
                                                 ) : (
                                                     <span className="text-xl">📄</span>
@@ -137,9 +147,17 @@ export default function Storyteller() {
                                                 <h3 className="font-bold text-sm leading-tight truncate">
                                                     {book.title}
                                                 </h3>
-                                                <p className="text-[10px] mt-1 font-black uppercase tracking-widest opacity-60">
-                                                    {formatTimeAgo(book.createdAt || book.updatedAt)}
-                                                </p>
+                                                <div className="flex items-center mt-1">
+                                                    <p className="text-[10px] font-black uppercase tracking-widest opacity-60">
+                                                        {formatTimeAgo(book.createdAt || book.updatedAt)}
+                                                    </p>
+                                                    {/* NEW: PROCESSING INDICATOR */}
+                                                    {book.status === 'processing' && (
+                                                        <span className="ml-2 px-1.5 py-0.5 bg-black text-white text-[7px] font-bold rounded uppercase animate-pulse">
+                                                            Reading...
+                                                        </span>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
                                         <div className="text-xl opacity-40 font-light ml-2">›</div>
