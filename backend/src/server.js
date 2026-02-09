@@ -7,10 +7,7 @@ const path = require("path");
 const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
-
-// Standard require with stability fix
 const pdf = require("pdf-parse");
-// NEW: OCR Library for scanned PDFs
 const Tesseract = require("tesseract.js");
 
 const app = express();
@@ -24,7 +21,7 @@ app.use(cors({
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     credentials: true
 }));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' })); // Increased for large book data
 
 /* -------------------- UPLOADS & STATIC FILES -------------------- */
 const uploadsBase = path.join(__dirname, "uploads");
@@ -54,8 +51,12 @@ const bookSchema = new mongoose.Schema({
     folder: { type: String, default: "All" },
     downloads: { type: Number, default: 0 },
     ttsRequests: { type: Number, default: 0 },
-    content: { type: String },
+    content: { type: String, default: "" },
+    chapters: [{ title: String, page: Number }],
     words: { type: Number, default: 0 },
+    totalPages: { type: Number, default: 0 },
+    processedPages: { type: Number, default: 0 },
+    status: { type: String, enum: ['processing', 'completed'], default: 'processing' },
     summary: { type: String }
 }, { timestamps: true });
 
@@ -72,7 +73,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({
     storage,
-    limits: { fileSize: 50 * 1024 * 1024 }
+    limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit
 });
 
 /* -------------------- HELPERS -------------------- */
@@ -86,9 +87,64 @@ const formatBook = (book) => ({
     ttsRequests: book.ttsRequests,
     words: book.words || 0,
     content: book.content || "",
+    chapters: book.chapters || [],
+    status: book.status || "completed",
+    totalPages: book.totalPages || 0,
+    processedPages: book.processedPages || 0,
     summary: book.summary || "",
     createdAt: book.createdAt
 });
+
+// Fast per-page OCR Helper
+async function extractPageText(pdfPath, pageNum) {
+    const pageImg = path.join(coversDir, `tmp_${pageNum}_${Date.now()}.png`);
+    try {
+        // Extract page to image
+        await new Promise((resolve, reject) => {
+            exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImg.replace('.png', '')}"`, (err) => {
+                if (err) reject(err); else resolve();
+            });
+        });
+        // OCR the image
+        const { data: { text } } = await Tesseract.recognize(pageImg, 'eng');
+        if (await fs.pathExists(pageImg)) await fs.remove(pageImg);
+        return text;
+    } catch (e) {
+        console.error(`Error OCRing page ${pageNum}:`, e);
+        return "";
+    }
+}
+
+// Background Worker to finish long books
+async function processRemainingPages(bookId, pdfPath, startPage, totalPages) {
+    console.log(`🌀 Background: Processing pages ${startPage} to ${totalPages}`);
+    try {
+        let currentContent = "";
+        const book = await Book.findById(bookId);
+        currentContent = book.content;
+
+        for (let i = startPage; i <= totalPages; i++) {
+            const pageText = await extractPageText(pdfPath, i);
+            currentContent += "\n" + pageText;
+
+            // Batch update every 5 pages to save DB writes
+            if (i % 5 === 0 || i === totalPages) {
+                const wordCount = currentContent.split(/\s+/).filter(w => w.length > 0).length;
+                await Book.findByIdAndUpdate(bookId, {
+                    content: currentContent,
+                    processedPages: i,
+                    words: wordCount,
+                    status: i === totalPages ? 'completed' : 'processing'
+                });
+            }
+        }
+        // Cleanup PDF from local storage once fully processed
+        if (await fs.pathExists(pdfPath)) await fs.remove(pdfPath);
+        console.log(`✅ Background processing complete for: ${bookId}`);
+    } catch (err) {
+        console.error("❌ Background Worker Error:", err);
+    }
+}
 
 /* -------------------- API ROUTES -------------------- */
 
@@ -101,17 +157,89 @@ app.get("/api/books/folders", async (_, res) => {
     }
 });
 
-app.post("/api/books/folders", async (req, res) => {
+app.post("/api/books", upload.single("file"), async (req, res) => {
     try {
-        const { name } = req.body;
-        if (!name || name === "All") return res.status(400).json({ error: "Invalid name" });
-        const folder = await Folder.findOneAndUpdate({ name }, { name }, { upsert: true, new: true });
-        res.status(201).json(folder);
-    } catch {
-        res.status(500).json({ error: "Folder creation failed" });
+        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+        const title = req.body.title || req.file.originalname.replace(/\.[^/.]+$/, "");
+        const folder = req.body.folder || "All";
+        const pdfPath = req.file.path;
+        const baseName = path.parse(req.file.filename).name;
+        const outputPrefix = path.join(coversDir, baseName);
+        const tempLocalCoverPath = path.join(coversDir, `${baseName}.png`);
+
+        // 1. Meta Data & Thumbnail
+        const dataBuffer = await fs.readFile(pdfPath);
+        const meta = await pdf(dataBuffer);
+        const totalPages = meta.numpages;
+
+        const generateThumbnail = () => new Promise((resolve) => {
+            exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfPath}" "${outputPrefix}"`, async (error) => {
+                if (error) return resolve(null);
+                try {
+                    const uploadRes = await cloudinary.uploader.upload(tempLocalCoverPath, { folder: "storyteller_covers" });
+                    await fs.remove(tempLocalCoverPath);
+                    resolve(uploadRes.secure_url);
+                } catch { resolve(null); }
+            });
+        });
+
+        const uploadPdfToCloud = async () => {
+            const result = await cloudinary.uploader.upload(pdfPath, {
+                folder: "storyteller_pdfs",
+                resource_type: "raw"
+            });
+            return result.secure_url;
+        };
+
+        const [pdfUrl, coverUrl] = await Promise.all([uploadPdfToCloud(), generateThumbnail()]);
+
+        // 2. INSTANT PHASE: OCR First 10 Pages
+        const instantPages = Math.min(10, totalPages);
+        const pagePromises = [];
+        for (let i = 1; i <= instantPages; i++) {
+            pagePromises.push(extractPageText(pdfPath, i));
+        }
+        const pageTexts = await Promise.all(pagePromises);
+        const initialContent = pageTexts.join("\n");
+
+        // 3. INSTANT TOC GENERATION (From the 10 pages)
+        const tocEntries = [];
+        initialContent.split('\n').forEach(line => {
+            const tocMatch = line.match(/^(.*?)(?:\.{2,}|…|\s{2,})(\d+)$/);
+            if (tocMatch) tocEntries.push({ title: tocMatch[1].trim(), page: parseInt(tocMatch[2]) });
+        });
+
+        // 4. Create Database Entry
+        const book = await Book.create({
+            title,
+            cover: coverUrl || "https://via.placeholder.com/300x450?text=No+Cover",
+            pdfPath: pdfUrl,
+            folder,
+            content: initialContent,
+            chapters: tocEntries,
+            totalPages: totalPages,
+            processedPages: instantPages,
+            status: totalPages <= 10 ? 'completed' : 'processing',
+            words: initialContent.split(/\s+/).length
+        });
+
+        // 5. Trigger Background Processing for remaining pages
+        if (totalPages > 10) {
+            processRemainingPages(book._id, pdfPath, 11, totalPages);
+        } else {
+            // Cleanup PDF if it was small enough to process fully now
+            if (await fs.pathExists(pdfPath)) await fs.remove(pdfPath);
+        }
+
+        res.status(201).json(formatBook(book));
+    } catch (err) {
+        console.error("Upload error:", err);
+        res.status(500).json({ error: "Upload failed" });
     }
 });
 
+// Standard Book Routes
 app.get("/api/books", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
@@ -131,119 +259,9 @@ app.get("/api/books/:id", async (req, res) => {
     }
 });
 
-/**
- * UPLOAD BOOK (WITH HYBRID EXTRACTION: DIGITAL + OCR)
- */
-app.post("/api/books", upload.single("file"), async (req, res) => {
-    try {
-        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-
-        const title = req.body.title || req.file.originalname.replace(/\.[^/.]+$/, "");
-        const folder = req.body.folder || "All";
-        const pdfFullPath = req.file.path;
-        const baseName = path.parse(req.file.filename).name;
-        const tempLocalCoverPath = path.join(coversDir, `${baseName}.png`);
-        const outputPrefix = path.join(coversDir, baseName);
-
-        // --- 1. ATTEMPT DIGITAL TEXT EXTRACTION ---
-        let extractedText = "";
-        try {
-            const dataBuffer = await fs.readFile(pdfFullPath);
-            let pdfParser = typeof pdf === 'function' ? pdf : pdf.default;
-            const pdfData = await pdfParser(dataBuffer);
-            extractedText = pdfData.text ? pdfData.text.trim() : "";
-        } catch (textErr) {
-            console.error("Digital extraction failed, will try OCR if needed.");
-        }
-
-        // --- 2. GENERATE THUMBNAIL (Required for OCR Fallback) ---
-        const generateThumbnail = () => new Promise((resolve) => {
-            exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfFullPath}" "${outputPrefix}"`, { timeout: 15000 }, async (error) => {
-                if (error) {
-                    console.error("pdftoppm error:", error);
-                    return resolve(null);
-                }
-                try {
-                    const uploadRes = await cloudinary.uploader.upload(tempLocalCoverPath, {
-                        folder: "storyteller_covers"
-                    });
-                    // We keep the local file temporarily if we need OCR, otherwise delete
-                    resolve({ url: uploadRes.secure_url, localPath: tempLocalCoverPath });
-                } catch (cloudErr) {
-                    console.error("Cover Upload Error:", cloudErr);
-                    resolve(null);
-                }
-            });
-        });
-
-        const uploadPdf = async () => {
-            const result = await cloudinary.uploader.upload(pdfFullPath, {
-                folder: "storyteller_pdfs",
-                resource_type: "raw",
-                public_id: `${Date.now()}-${req.file.originalname.replace(/\s+/g, '_')}`
-            });
-            return result.secure_url;
-        };
-
-        // Run PDF upload and Thumbnail generation
-        const [pdfUrl, coverData] = await Promise.all([uploadPdf(), generateThumbnail()]);
-
-        // --- 3. OCR FALLBACK (If Digital Extraction returned nothing) ---
-        if ((!extractedText || extractedText.length < 50) && coverData?.localPath) {
-            console.log("📸 Scanned PDF detected. Starting OCR on first page...");
-            try {
-                const { data: { text } } = await Tesseract.recognize(coverData.localPath, 'eng');
-                extractedText = text.trim();
-                console.log("✅ OCR Successful");
-            } catch (ocrErr) {
-                console.error("OCR Failed:", ocrErr);
-                extractedText = "Extraction Error: Content could not be read.";
-            }
-        }
-
-        // Cleanup local cover after OCR is done
-        if (coverData?.localPath && await fs.pathExists(coverData.localPath)) {
-            await fs.remove(coverData.localPath);
-        }
-
-        const wordCount = extractedText.split(/\s+/).filter(word => word.length > 0).length;
-
-        // --- 4. SAVE TO DATABASE ---
-        const book = await Book.create({
-            title,
-            pdfPath: pdfUrl,
-            cover: coverData?.url || "https://via.placeholder.com/300x450?text=No+Cover",
-            folder,
-            content: extractedText || "No selectable text found.",
-            words: wordCount || 0
-        });
-
-        if (await fs.pathExists(pdfFullPath)) await fs.remove(pdfFullPath);
-
-        res.status(201).json(formatBook(book));
-    } catch (err) {
-        console.error("Upload error:", err);
-        if (req.file && await fs.pathExists(req.file.path)) await fs.remove(req.file.path);
-        res.status(500).json({ error: "Upload failed" });
-    }
-});
-
-app.patch("/api/books/:id/rename", async (req, res) => {
-    try {
-        const { title } = req.body;
-        const book = await Book.findByIdAndUpdate(req.params.id, { title }, { new: true });
-        res.json(formatBook(book));
-    } catch {
-        res.status(500).json({ error: "Rename failed" });
-    }
-});
-
 app.delete("/api/books/:id", async (req, res) => {
     try {
-        const book = await Book.findById(req.params.id);
-        if (book) {
-            await book.deleteOne();
-        }
+        await Book.findByIdAndDelete(req.params.id);
         res.json({ message: "Deleted" });
     } catch {
         res.status(500).json({ error: "Delete failed" });
