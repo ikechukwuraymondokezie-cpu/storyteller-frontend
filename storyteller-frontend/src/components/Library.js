@@ -43,6 +43,7 @@ function FolderModal({ isOpen, onClose, onCreate }) {
 }
 
 export default function Library() {
+    // PRESERVED YOUR URL
     const API_URL = "https://storyteller-frontend-x65b.onrender.com";
     const navigate = useNavigate();
 
@@ -299,7 +300,11 @@ export default function Library() {
                             </div>
                             <div className="flex-1 overflow-hidden">
                                 <p className={`text-white font-medium truncate ${viewMode === "grid" ? "mt-2 text-sm px-1 text-center" : "text-base"}`}>{book.title}</p>
-                                {viewMode === "list" && <p className="text-zinc-500 text-[10px] uppercase tracking-widest mt-0.5">{book.words ? `${book.words.toLocaleString()} words` : "Processing..."}</p>}
+
+                                {/* UPDATE: Dynamic Word Count for List AND Grid View */}
+                                <p className={`text-zinc-500 text-[10px] uppercase tracking-widest mt-0.5 ${viewMode === "grid" ? "text-center" : ""}`}>
+                                    {book.words ? `${book.words.toLocaleString()} words` : "Processing..."}
+                                </p>
                             </div>
                             {!isSelectMode && (
                                 <button onClick={(e) => { e.stopPropagation(); setActiveBook(book); setIsMoving(false); }} className={`p-1 rounded-full bg-black/40 hover:bg-zinc-700 transition flex-shrink-0 ${viewMode === "grid" ? "absolute top-2 right-2" : "ml-auto"}`}><MoreHorizontal className="w-5 h-5 text-white" /></button>
@@ -330,8 +335,10 @@ export default function Library() {
                                         <img src={getCoverUrl(activeBook.cover)} className="w-12 h-16 rounded-md object-cover shadow-md" alt="cover" onError={(e) => { e.currentTarget.src = defaultCover; }} />
                                         <div className="flex flex-col">
                                             <h3 className="text-white font-bold text-base leading-tight truncate w-48">{activeBook.title}</h3>
+
+                                            {/* UPDATE: Dynamic Word Count in Action Sheet */}
                                             <p className="text-yellow-200/70 text-[11px] font-medium uppercase tracking-wider">
-                                                {activeBook.words ? `${activeBook.words.toLocaleString()} words` : "Processing"} • PDF
+                                                {activeBook.words ? `${activeBook.words.toLocaleString()} words` : "Processing Analysis"} • PDF
                                             </p>
                                         </div>
                                     </div>

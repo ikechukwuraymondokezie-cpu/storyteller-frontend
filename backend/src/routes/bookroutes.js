@@ -7,6 +7,8 @@ const cloudinary = require("cloudinary").v2;
 
 // FIXED: Using standard require to avoid ERR_PACKAGE_PATH_NOT_EXPORTED
 const pdf = require("pdf-parse");
+// NEW: OCR Library
+const Tesseract = require("tesseract.js");
 
 const Book = require("../models/Book");
 const Folder = require("../models/Folder");
@@ -127,23 +129,18 @@ router.post("/", upload.single("file"), async (req, res) => {
         const outputPrefix = path.join(coversDir, baseName);
         const tempLocalCoverPath = `${outputPrefix}.png`;
 
-        // --- UPDATE 1: TEXT EXTRACTION ---
+        // --- 1. DIGITAL TEXT EXTRACTION ---
         let extractedText = "";
         let wordCount = 0;
         try {
             const dataBuffer = await fs.readFile(pdfDiskPath);
-            // Fix for pdf-parse exports
             const pdfData = await (typeof pdf === 'function' ? pdf(dataBuffer) : pdf.default(dataBuffer));
             extractedText = pdfData.text ? pdfData.text.trim() : "";
-            if (extractedText) {
-                wordCount = extractedText.split(/\s+/).filter(w => w.length > 0).length;
-            }
         } catch (textErr) {
             console.error("Text extraction failed:", textErr);
-            extractedText = "Extraction Error: This PDF text could not be extracted.";
         }
 
-        // --- UPDATE 2: COVER GENERATION ---
+        // --- 2. GENERATE COVER (REQUIRED FOR OCR FALLBACK) ---
         const generateCover = () => new Promise((resolve) => {
             exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfDiskPath}" "${outputPrefix}"`, async (error) => {
                 if (error) {
@@ -154,8 +151,8 @@ router.post("/", upload.single("file"), async (req, res) => {
                     const uploadRes = await cloudinary.uploader.upload(tempLocalCoverPath, {
                         folder: "storyteller_covers"
                     });
-                    if (await fs.pathExists(tempLocalCoverPath)) await fs.remove(tempLocalCoverPath);
-                    resolve(uploadRes.secure_url);
+                    // We keep the local image for OCR check, delete later
+                    resolve({ url: uploadRes.secure_url, localPath: tempLocalCoverPath });
                 } catch (cloudErr) {
                     console.error("Cloudinary Cover Error:", cloudErr);
                     resolve(null);
@@ -172,20 +169,44 @@ router.post("/", upload.single("file"), async (req, res) => {
             return result.secure_url;
         };
 
-        const [coverUrl, cloudPdfUrl] = await Promise.all([generateCover(), uploadPdfToCloud()]);
+        const [coverData, cloudPdfUrl] = await Promise.all([generateCover(), uploadPdfToCloud()]);
 
-        // --- UPDATE 3: SAVE FIELDS ---
+        // --- 3. OCR FALLBACK FOR SCANNED PDFS ---
+        // If digital extraction found almost nothing, use OCR on the cover image
+        if ((!extractedText || extractedText.length < 50) && coverData?.localPath) {
+            console.log("📸 Scanned/Image PDF detected. Running OCR...");
+            try {
+                const { data: { text } } = await Tesseract.recognize(coverData.localPath, 'eng');
+                extractedText = text.trim();
+            } catch (ocrErr) {
+                console.error("OCR Failed:", ocrErr);
+                extractedText = "Extraction Error: Scanned content unreadable.";
+            }
+        }
+
+        // Cleanup local cover now that OCR is finished
+        if (coverData?.localPath && await fs.pathExists(coverData.localPath)) {
+            await fs.remove(coverData.localPath);
+        }
+
+        // Finalize word count
+        wordCount = extractedText.split(/\s+/).filter(w => w.length > 0).length;
+
+        // --- 4. SAVE TO DATABASE ---
         const book = await Book.create({
             title: req.file.originalname.replace(/\.[^/.]+$/, ""),
             pdfPath: cloudPdfUrl,
-            cover: coverUrl,
+            cover: coverData?.url || null,
             folder: folderName,
-            content: extractedText, // Added this field
-            words: wordCount,       // Added this field
+            content: extractedText || "No content found.",
+            words: wordCount,
         });
 
         if (await fs.pathExists(pdfDiskPath)) await fs.remove(pdfDiskPath);
+
+        // Return exactly what your frontend expects
         res.status(201).json(book);
+
     } catch (err) {
         console.error("Upload error:", err);
         if (req.file && await fs.pathExists(req.file.path)) await fs.remove(req.file.path);
@@ -193,7 +214,7 @@ router.post("/", upload.single("file"), async (req, res) => {
     }
 });
 
-/* ---------------- OTHER ROUTES ---------------- */
+/* ... (Remaining Rename, Move, Delete, Actions routes stay exactly as you wrote them) ... */
 router.patch("/:id/rename", async (req, res) => {
     try {
         const { title } = req.body;

@@ -15,11 +15,10 @@ const Reader = () => {
     const [isPlaying, setIsPlaying] = useState(false);
 
     // VIEW MODES: 
-    // isDigitalMode handles the reflowed text (Black background, white text)
-    // viewMode handles the AI specific views (Reading vs Summary)
     const [isDigitalMode, setIsDigitalMode] = useState(false);
     const [viewMode, setViewMode] = useState('reading'); // 'reading' or 'summary'
 
+    // UPDATE: Ensure this is your RENDER SERVER URL (Backend), not the frontend URL
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
     useEffect(() => {
@@ -29,7 +28,7 @@ const Reader = () => {
                 const data = await response.json();
                 setBook(data);
             } catch (err) {
-                console.error("Error:", err);
+                console.error("Error fetching book data:", err);
             } finally {
                 setLoading(false);
             }
@@ -40,8 +39,8 @@ const Reader = () => {
     const getViewerUrl = () => {
         if (!book) return "";
         const rawUrl = book.url || book.pdfPath || book.filePath;
+        if (!rawUrl) return "";
         const fullUrl = rawUrl.startsWith('http') ? rawUrl : `${BACKEND_URL}${rawUrl}`;
-        // Google Docs Viewer helps bypass mobile "Download/Open" prompts
         return `https://docs.google.com/viewer?url=${encodeURIComponent(fullUrl)}&embedded=true`;
     };
 
@@ -64,14 +63,13 @@ const Reader = () => {
                     <div style={styles.rightActions}>
                         <button style={styles.actionIcon}><Type size={22} /></button>
 
-                        {/* DIGITAL REFLOW TOGGLE: Clicking this enters the digital text mode */}
                         <button
                             onClick={() => setIsDigitalMode(!isDigitalMode)}
                             style={{
                                 ...styles.actionIcon,
                                 backgroundColor: isDigitalMode ? '#4f46e5' : 'transparent',
                                 borderRadius: '8px',
-                                color: isDigitalMode ? '#fff' : '#fff'
+                                color: '#fff'
                             }}
                         >
                             <FileText size={22} />
@@ -81,7 +79,6 @@ const Reader = () => {
                     </div>
                 </div>
 
-                {/* AI Pills Container */}
                 <div style={styles.pillScroll}>
                     <button
                         onClick={() => setViewMode('reading')}
@@ -101,12 +98,8 @@ const Reader = () => {
                     >
                         <Sparkles size={16} /> Summary
                     </button>
-                    <button style={styles.pill}>
-                        <Mic2 size={16} /> Podcast
-                    </button>
-                    <button style={styles.pill}>
-                        <HelpCircle size={16} /> Q&A
-                    </button>
+                    <button style={styles.pill}><Mic2 size={16} /> Podcast</button>
+                    <button style={styles.pill}><HelpCircle size={16} /> Q&A</button>
                 </div>
             </div>
 
@@ -116,23 +109,29 @@ const Reader = () => {
                 backgroundColor: isDigitalMode || viewMode === 'summary' ? '#000' : '#fff'
             }}>
                 {viewMode === 'summary' ? (
-                    /* SUMMARY MODE */
                     <div style={styles.digitalTextContainer}>
                         <h1 style={styles.digitalMainTitle}>AI Summary</h1>
-                        <p style={styles.digitalBodyText}>{book?.summary || "Generating summary of the current chapter..."}</p>
+                        <p style={styles.digitalBodyText}>{book?.summary || "AI is analyzing this document to generate a summary..."}</p>
                     </div>
                 ) : isDigitalMode ? (
-                    /* DIGITAL REFLOW MODE (Black background, large white text) */
+                    /* UPDATE: DIGITAL REFLOW MODE NOW USES EXTRACTED CONTENT */
                     <div style={styles.digitalTextContainer}>
-                        <h2 style={styles.digitalChapterTitle}>Chapter 1</h2>
+                        <h2 style={styles.digitalChapterTitle}>Extracted Text</h2>
                         <h1 style={styles.digitalMainTitle}>{book?.title}</h1>
-                        <p style={styles.digitalBodyText}>
-                            {/* This is where the actual book text goes */}
-                            {book?.content || "Converting PDF content to digital text..."}
-                        </p>
+                        <div style={styles.digitalBodyText}>
+                            {book?.content ? (
+                                book.content.split('\n').map((para, i) => (
+                                    <p key={i} style={{ marginBottom: '1.5em' }}>{para}</p>
+                                ))
+                            ) : (
+                                <div style={{ textAlign: 'center', marginTop: '50px' }}>
+                                    <Loader2 className="animate-spin text-zinc-500 mx-auto" size={30} />
+                                    <p style={{ marginTop: '10px', color: '#71717a' }}>Extracting digital text from PDF...</p>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 ) : (
-                    /* STANDARD PDF MODE */
                     <iframe
                         src={getViewerUrl()}
                         style={styles.iframe}
@@ -153,14 +152,17 @@ const Reader = () => {
                     </div>
                     <div style={styles.timeLabels}>
                         <span>05:02</span>
-                        <span style={{ color: '#a1a1aa' }}>5 of 72</span>
+                        {/* UPDATE: Display real word count if available */}
+                        <span style={{ color: '#a1a1aa' }}>
+                            {book?.words ? `${book.words.toLocaleString()} words` : "Digital Analysis..."}
+                        </span>
                         <span>1:17:31</span>
                     </div>
                 </div>
 
                 <div style={styles.controlRow}>
                     <div style={styles.flagBox}>
-                        <span style={{ fontSize: '20px' }}>🇦🇺</span>
+                        <span style={{ fontSize: '20px' }}>🇺🇸</span>
                     </div>
 
                     <div style={styles.mainButtons}>
@@ -182,7 +184,7 @@ const Reader = () => {
                         </button>
                     </div>
 
-                    <button style={styles.speedPill}>1.1×</button>
+                    <button style={styles.speedPill}>1.0×</button>
                 </div>
             </div>
         </div>,
@@ -190,6 +192,7 @@ const Reader = () => {
     );
 };
 
+// ... Styles remain identical to your provided code ...
 const styles = {
     container: {
         position: 'fixed',

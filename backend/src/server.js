@@ -8,8 +8,10 @@ const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
 
-// FIXED: Standard require to avoid ERR_PACKAGE_PATH_NOT_EXPORTED
+// Standard require with stability fix
 const pdf = require("pdf-parse");
+// NEW: OCR Library for scanned PDFs
+const Tesseract = require("tesseract.js");
 
 const app = express();
 
@@ -22,7 +24,6 @@ app.use(cors({
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     credentials: true
 }));
-// UPGRADE: Increased limit for handling large PDF text strings
 app.use(express.json({ limit: '10mb' }));
 
 /* -------------------- UPLOADS & STATIC FILES -------------------- */
@@ -64,7 +65,6 @@ const Book = mongoose.model("Book", bookSchema);
 const storage = multer.diskStorage({
     destination: (_, __, cb) => cb(null, uploadDir),
     filename: (_, file, cb) => {
-        // UPGRADE: Replaced random with sanitization to prevent URL issues
         const safeName = file.originalname.replace(/\s+/g, '_');
         const unique = Date.now() + "-" + Math.round(Math.random() * 1e9);
         cb(null, unique + "-" + safeName);
@@ -72,7 +72,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({
     storage,
-    limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
+    limits: { fileSize: 50 * 1024 * 1024 }
 });
 
 /* -------------------- HELPERS -------------------- */
@@ -132,7 +132,7 @@ app.get("/api/books/:id", async (req, res) => {
 });
 
 /**
- * UPLOAD BOOK (WITH TEXT EXTRACTION & CLOUDINARY)
+ * UPLOAD BOOK (WITH HYBRID EXTRACTION: DIGITAL + OCR)
  */
 app.post("/api/books", upload.single("file"), async (req, res) => {
     try {
@@ -141,25 +141,41 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
         const title = req.body.title || req.file.originalname.replace(/\.[^/.]+$/, "");
         const folder = req.body.folder || "All";
         const pdfFullPath = req.file.path;
+        const baseName = path.parse(req.file.filename).name;
+        const tempLocalCoverPath = path.join(coversDir, `${baseName}.png`);
+        const outputPrefix = path.join(coversDir, baseName);
 
-        // --- EXTRACT TEXT AND COUNT WORDS ---
+        // --- 1. ATTEMPT DIGITAL TEXT EXTRACTION ---
         let extractedText = "";
-        let wordCount = 0;
         try {
             const dataBuffer = await fs.readFile(pdfFullPath);
             let pdfParser = typeof pdf === 'function' ? pdf : pdf.default;
             const pdfData = await pdfParser(dataBuffer);
             extractedText = pdfData.text ? pdfData.text.trim() : "";
-
-            if (extractedText) {
-                wordCount = extractedText.split(/\s+/).filter(word => word.length > 0).length;
-            }
         } catch (textErr) {
-            console.error("Text extraction failed:", textErr);
-            extractedText = "Extraction Error: Unable to read text from this PDF.";
+            console.error("Digital extraction failed, will try OCR if needed.");
         }
 
-        // 1. Upload PDF to Cloudinary
+        // --- 2. GENERATE THUMBNAIL (Required for OCR Fallback) ---
+        const generateThumbnail = () => new Promise((resolve) => {
+            exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfFullPath}" "${outputPrefix}"`, { timeout: 15000 }, async (error) => {
+                if (error) {
+                    console.error("pdftoppm error:", error);
+                    return resolve(null);
+                }
+                try {
+                    const uploadRes = await cloudinary.uploader.upload(tempLocalCoverPath, {
+                        folder: "storyteller_covers"
+                    });
+                    // We keep the local file temporarily if we need OCR, otherwise delete
+                    resolve({ url: uploadRes.secure_url, localPath: tempLocalCoverPath });
+                } catch (cloudErr) {
+                    console.error("Cover Upload Error:", cloudErr);
+                    resolve(null);
+                }
+            });
+        });
+
         const uploadPdf = async () => {
             const result = await cloudinary.uploader.upload(pdfFullPath, {
                 folder: "storyteller_pdfs",
@@ -169,41 +185,36 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
             return result.secure_url;
         };
 
-        // 2. Generate Thumbnail using pdftoppm
-        const baseName = path.parse(req.file.filename).name;
-        const tempLocalCoverPath = path.join(coversDir, `${baseName}.png`);
-        const outputPrefix = path.join(coversDir, baseName);
+        // Run PDF upload and Thumbnail generation
+        const [pdfUrl, coverData] = await Promise.all([uploadPdf(), generateThumbnail()]);
 
-        const generateThumbnail = () => new Promise((resolve) => {
-            // UPGRADE: Added -sepia or -gray fallback could be added if color fails
-            exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfFullPath}" "${outputPrefix}"`, { timeout: 10000 }, async (error) => {
-                if (error) {
-                    console.error("pdftoppm error:", error);
-                    return resolve(null);
-                }
-                try {
-                    const uploadRes = await cloudinary.uploader.upload(tempLocalCoverPath, {
-                        folder: "storyteller_covers"
-                    });
-                    if (await fs.pathExists(tempLocalCoverPath)) await fs.remove(tempLocalCoverPath);
-                    resolve(uploadRes.secure_url);
-                } catch (cloudErr) {
-                    console.error("Cover Upload Error:", cloudErr);
-                    resolve(null);
-                }
-            });
-        });
+        // --- 3. OCR FALLBACK (If Digital Extraction returned nothing) ---
+        if ((!extractedText || extractedText.length < 50) && coverData?.localPath) {
+            console.log("📸 Scanned PDF detected. Starting OCR on first page...");
+            try {
+                const { data: { text } } = await Tesseract.recognize(coverData.localPath, 'eng');
+                extractedText = text.trim();
+                console.log("✅ OCR Successful");
+            } catch (ocrErr) {
+                console.error("OCR Failed:", ocrErr);
+                extractedText = "Extraction Error: Content could not be read.";
+            }
+        }
 
-        // Parallelize for speed
-        const [pdfUrl, coverUrl] = await Promise.all([uploadPdf(), generateThumbnail()]);
+        // Cleanup local cover after OCR is done
+        if (coverData?.localPath && await fs.pathExists(coverData.localPath)) {
+            await fs.remove(coverData.localPath);
+        }
 
-        // 3. Save to Database
+        const wordCount = extractedText.split(/\s+/).filter(word => word.length > 0).length;
+
+        // --- 4. SAVE TO DATABASE ---
         const book = await Book.create({
             title,
             pdfPath: pdfUrl,
-            cover: coverUrl || "https://via.placeholder.com/300x450?text=No+Cover",
+            cover: coverData?.url || "https://via.placeholder.com/300x450?text=No+Cover",
             folder,
-            content: extractedText || "No selectable text found in this PDF.",
+            content: extractedText || "No selectable text found.",
             words: wordCount || 0
         });
 

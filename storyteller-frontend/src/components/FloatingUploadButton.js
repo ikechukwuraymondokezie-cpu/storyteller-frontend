@@ -7,10 +7,11 @@ import {
     Cloud,
 } from "lucide-react";
 
-export default function FloatingUploadButton() {
+export default function FloatingUploadButton({ onUploadSuccess }) { // <-- Accept the refresh prop
     const [open, setOpen] = useState(false);
+    const [isUploading, setIsUploading] = useState(false); // Track upload state
     const sheetRef = useRef(null);
-    const fileInputRef = useRef(null); // <-- hidden file input
+    const fileInputRef = useRef(null);
 
     const API_URL = process.env.REACT_APP_API_URL;
 
@@ -27,21 +28,27 @@ export default function FloatingUploadButton() {
         formData.append("file", file);
 
         try {
+            setIsUploading(true);
             const res = await fetch(`${API_URL}/api/books/upload`, {
                 method: "POST",
                 body: formData,
             });
 
             if (res.ok) {
-                alert("Book uploaded successfully!");
                 setOpen(false);
                 e.target.value = ""; // reset input
+
+                // TRIGGER REFRESH: This tells App.js to update the Library
+                if (onUploadSuccess) onUploadSuccess();
+
             } else {
                 alert("Upload failed!");
             }
         } catch (err) {
             console.error("Upload error:", err);
             alert("Upload failed!");
+        } finally {
+            setIsUploading(false);
         }
     };
 
@@ -123,7 +130,7 @@ export default function FloatingUploadButton() {
             {open && (
                 <div
                     className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center"
-                    onClick={() => setOpen(false)}
+                    onClick={() => !isUploading && setOpen(false)} // Prevent closing during upload
                 >
                     <div
                         ref={sheetRef}
@@ -143,16 +150,16 @@ export default function FloatingUploadButton() {
 
                         {/* HEADER */}
                         <h2 className="text-white text-xl font-semibold mb-6">
-                            Storytime
+                            {isUploading ? "Uploading Analysis..." : "Storytime"}
                         </h2>
 
                         {/* ACTIONS */}
-                        <div className="space-y-3">
+                        <div className={`space-y-3 ${isUploading ? "opacity-50 pointer-events-none" : ""}`}>
                             <Action
                                 icon={<Upload className="w-5 h-5" />}
                                 title="Upload files"
                                 subtitle="PDF, DOCX, TXT"
-                                onClick={handleUploadClick} // <-- attach handler
+                                onClick={handleUploadClick}
                             />
                             <Action
                                 icon={<ScanText className="w-5 h-5" />}
@@ -174,7 +181,6 @@ export default function FloatingUploadButton() {
                 </div>
             )}
 
-            {/* SLIDE UP ANIMATION */}
             <style>{`
         @keyframes slideUp {
           from { transform: translateY(100%); }

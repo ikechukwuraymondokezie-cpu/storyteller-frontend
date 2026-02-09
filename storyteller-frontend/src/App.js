@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { useState } from "react"; // Added for state management
 
 import TopNav from "./components/TopNav";
 import BottomNav from "./components/BottomNav";
@@ -10,6 +11,13 @@ import Profile from "./components/Profile";
 import Reader from "./components/Reader";
 
 function App() {
+  // We use a simple counter to trigger re-fetches across components
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const triggerRefresh = () => {
+    setRefreshKey(prev => prev + 1);
+  };
+
   return (
     <BrowserRouter>
       <div className="App min-h-screen flex flex-col md:flex-row bg-bg">
@@ -23,15 +31,16 @@ function App() {
             {/* Home/Feed View */}
             <Route path="/" element={<Storyteller />} />
 
-            {/* User Library View */}
-            <Route path="/library" element={<Library />} />
+            {/* User Library View - Pass the refreshKey so it re-fetches on upload */}
+            <Route
+              path="/library"
+              element={<Library key={refreshKey} />}
+            />
 
             {/* User Profile View */}
             <Route path="/profile" element={<Profile />} />
 
-            {/* Dynamic Reader Route: 
-               The :id allows Reader.js to use useParams() to fetch the correct PDF 
-            */}
+            {/* Dynamic Reader Route */}
             <Route path="/reader/:id" element={<Reader />} />
 
             {/* Catch-all redirect to Home */}
@@ -44,8 +53,10 @@ function App() {
           <BottomNav />
         </div>
 
-        {/* Global Floating upload button */}
-        <FloatingUploadButton />
+        {/* Global Floating upload button 
+            Pass the triggerRefresh function so the library updates after a successful upload
+        */}
+        <FloatingUploadButton onUploadSuccess={triggerRefresh} />
       </div>
     </BrowserRouter>
   );
