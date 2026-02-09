@@ -181,7 +181,10 @@ export default function Library() {
             const res = await fetch(`${API_URL}/api/books`, { method: "POST", body: formData });
             const data = await res.json();
             if (data?._id) setBooks((prev) => [data, ...prev]);
-        } catch (err) { console.error("❌ Upload failed:", err); } finally { setUploading(false); }
+        } catch (err) {
+            console.error("❌ Upload failed:", err);
+            alert("Upload failed. Your server might be restarting or the file is too large.");
+        } finally { setUploading(false); }
     };
 
     const handleBulkDelete = async () => {
@@ -215,9 +218,9 @@ export default function Library() {
             return;
         }
 
-        if (action === "download" && activeBook?.url) {
+        if (action === "download" && activeBook) {
             const link = document.createElement('a');
-            link.href = getPdfUrl(activeBook.url);
+            link.href = getPdfUrl(activeBook.pdfPath); // Use pdfPath from your model
             link.download = `${activeBook.title}.pdf`;
             document.body.appendChild(link);
             link.click();
@@ -300,10 +303,8 @@ export default function Library() {
                             </div>
                             <div className="flex-1 overflow-hidden">
                                 <p className={`text-white font-medium truncate ${viewMode === "grid" ? "mt-2 text-sm px-1 text-center" : "text-base"}`}>{book.title}</p>
-
-                                {/* UPDATE: Dynamic Word Count for List AND Grid View */}
                                 <p className={`text-zinc-500 text-[10px] uppercase tracking-widest mt-0.5 ${viewMode === "grid" ? "text-center" : ""}`}>
-                                    {book.words ? `${book.words.toLocaleString()} words` : "Processing..."}
+                                    {book.words ? `${book.words.toLocaleString()} words` : "New Book"}
                                 </p>
                             </div>
                             {!isSelectMode && (
@@ -335,10 +336,8 @@ export default function Library() {
                                         <img src={getCoverUrl(activeBook.cover)} className="w-12 h-16 rounded-md object-cover shadow-md" alt="cover" onError={(e) => { e.currentTarget.src = defaultCover; }} />
                                         <div className="flex flex-col">
                                             <h3 className="text-white font-bold text-base leading-tight truncate w-48">{activeBook.title}</h3>
-
-                                            {/* UPDATE: Dynamic Word Count in Action Sheet */}
                                             <p className="text-yellow-200/70 text-[11px] font-medium uppercase tracking-wider">
-                                                {activeBook.words ? `${activeBook.words.toLocaleString()} words` : "Processing Analysis"} • PDF
+                                                {activeBook.words ? `${activeBook.words.toLocaleString()} words` : "PDF Analysis"} • PDF
                                             </p>
                                         </div>
                                     </div>
