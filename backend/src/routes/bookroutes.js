@@ -5,8 +5,9 @@ const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
 const axios = require("axios");
-// FIX: Correct import for pdf-parse to avoid "is not a function" crash
-const pdf = require("pdf-parse/lib/pdf-parse.js");
+
+// FIX: Standard import (the subpath import caused the crash)
+const pdf = require("pdf-parse");
 const vision = require('@google-cloud/vision');
 
 const Book = require("../models/Book");
@@ -15,7 +16,6 @@ const Folder = require("../models/Folder");
 const router = express.Router();
 
 /* ---------------- GOOGLE VISION CONFIG ---------------- */
-// Safety check: If JSON is invalid, the server won't crash on start
 let visionClient;
 try {
     const creds = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
@@ -32,6 +32,7 @@ try {
 }
 
 /* ---------------- STORAGE CONFIG ---------------- */
+// Ensure paths are correct relative to the 'routes' folder
 const uploadsRoot = path.join(__dirname, "../uploads");
 const pdfDir = path.join(uploadsRoot, "pdfs");
 const coversDir = path.join(uploadsRoot, "covers");
@@ -55,7 +56,6 @@ const upload = multer({
 /* ---------------- HELPERS ---------------- */
 
 async function extractPageTextGoogle(pdfPath, pageNum) {
-    // Prevent crash if client isn't ready
     if (!visionClient) return "[OCR Error: Vision Client not initialized]";
 
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
@@ -95,7 +95,6 @@ router.get("/:id/load-pages", async (req, res) => {
 
         tempPath = path.join(pdfDir, `temp_load_${book._id}.pdf`);
 
-        // Download from Cloudinary
         const response = await axios({ url: book.pdfPath, method: 'GET', responseType: 'stream' });
         const writer = fs.createWriteStream(tempPath);
         response.data.pipe(writer);
@@ -114,20 +113,20 @@ router.get("/:id/load-pages", async (req, res) => {
         const updatedContent = book.content + "\n" + newText;
         const finalStatus = endPage >= book.totalPages ? 'completed' : 'processing';
 
-        const updatedBook = await Book.findByIdAndUpdate(req.params.id, {
+        await Book.findByIdAndUpdate(req.params.id, {
             content: updatedContent,
             processedPages: endPage,
             status: finalStatus,
             words: updatedContent.split(/\s+/).filter(w => w.length > 0).length
-        }, { new: true });
-
-        if (await fs.pathExists(tempPath)) await fs.remove(tempPath);
+        });
 
         res.json({ addedText: newText, processedPages: endPage, status: finalStatus });
     } catch (err) {
         console.error("Lazy Load Error:", err);
-        if (tempPath && await fs.pathExists(tempPath)) await fs.remove(tempPath);
         res.status(500).json({ error: "Lazy load failed" });
+    } finally {
+        // Safe cleanup
+        if (tempPath && await fs.pathExists(tempPath)) await fs.remove(tempPath);
     }
 });
 
@@ -140,8 +139,10 @@ router.post("/", upload.single("file"), async (req, res) => {
         const outputPrefix = path.join(coversDir, baseName);
 
         const dataBuffer = await fs.readFile(pdfDiskPath);
-        const meta = await pdf(dataBuffer); // Now safe to call
-        const totalPages = meta.numpages || 1;
+
+        // FIX: Check if pdf is a function or if it's on .default (CommonJS wrapper)
+        const pdfData = typeof pdf === 'function' ? await pdf(dataBuffer) : await pdf.default(dataBuffer);
+        const totalPages = pdfData.numpages || 1;
 
         const generateCover = () => new Promise((resolve) => {
             exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfDiskPath}" "${outputPrefix}"`, async (error) => {

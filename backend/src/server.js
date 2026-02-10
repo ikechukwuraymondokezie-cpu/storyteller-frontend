@@ -8,8 +8,8 @@ const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
 
-// FIX: Correct import for pdf-parse
-const pdf = require("pdf-parse/lib/pdf-parse.js");
+// FIX: Standard import to avoid ERR_PACKAGE_PATH_NOT_EXPORTED
+const pdf = require("pdf-parse");
 const vision = require('@google-cloud/vision');
 
 const app = express();
@@ -18,13 +18,13 @@ const app = express();
 let visionClient;
 try {
     const credsEnv = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
-    if (credsEnv) {
+    if (credsEnv && credsEnv.trim().startsWith('{')) {
         visionClient = new vision.ImageAnnotatorClient({
             credentials: JSON.parse(credsEnv)
         });
         console.log("✅ Google Vision Client Initialized");
     } else {
-        console.warn("⚠️ GOOGLE_APPLICATION_CREDENTIALS_JSON is missing");
+        console.warn("⚠️ GOOGLE_APPLICATION_CREDENTIALS_JSON missing or invalid");
     }
 } catch (e) {
     console.error("❌ Google Vision Init Error:", e.message);
@@ -141,6 +141,7 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
 // Lazy Load Endpoint
 app.get("/api/books/:id/load-pages", async (req, res) => {
+    let tempPdfPath = "";
     try {
         const book = await Book.findById(req.params.id);
         if (!book) return res.status(404).json({ error: "Book not found" });
@@ -150,7 +151,7 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
 
         if (startPage > book.totalPages) return res.json({ message: "End", addedText: "" });
 
-        const tempPdfPath = path.join(uploadDir, `temp_load_${book._id}.pdf`);
+        tempPdfPath = path.join(uploadDir, `temp_load_${book._id}.pdf`);
         const response = await fetch(book.pdfPath);
         const arrayBuffer = await response.arrayBuffer();
         await fs.writeFile(tempPdfPath, Buffer.from(arrayBuffer));
@@ -161,19 +162,21 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
             newText += text + "\n\n";
         }
 
-        await fs.remove(tempPdfPath);
-
         const updatedContent = book.content + "\n" + newText;
-        const updatedBook = await Book.findByIdAndUpdate(req.params.id, {
+        await Book.findByIdAndUpdate(req.params.id, {
             content: updatedContent,
             processedPages: endPage,
             status: endPage === book.totalPages ? 'completed' : 'processing',
             words: updatedContent.split(/\s+/).filter(w => w.length > 0).length
-        }, { new: true });
+        });
 
         res.json({ addedText: newText, processedPages: endPage });
     } catch (err) {
+        console.error("Lazy load error:", err);
         res.status(500).json({ error: "Lazy load failed" });
+    } finally {
+        // CLEANUP: Ensure disk is cleared even if OCR fails
+        if (tempPdfPath && await fs.pathExists(tempPdfPath)) await fs.remove(tempPdfPath);
     }
 });
 
@@ -189,8 +192,10 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
         const outputPrefix = path.join(coversDir, baseName);
 
         const dataBuffer = await fs.readFile(pdfPath);
-        const meta = await pdf(dataBuffer);
-        const totalPages = meta.numpages || 1;
+
+        // FIX: Handles potential .default wrapper in new Node versions
+        const pdfData = typeof pdf === 'function' ? await pdf(dataBuffer) : await pdf.default(dataBuffer);
+        const totalPages = pdfData.numpages || 1;
 
         const generateThumbnail = () => new Promise((resolve) => {
             exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfPath}" "${outputPrefix}"`, async (error) => {
@@ -237,48 +242,40 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
 
         res.status(201).json(formatBook(book));
     } catch (err) {
-        console.error(err);
+        console.error("Upload error:", err);
+        if (req.file && await fs.pathExists(req.file.path)) await fs.remove(req.file.path);
         res.status(500).json({ error: "Upload failed" });
     }
 });
 
-/* --- FOLDER ROUTES --- */
+/* --- REST OF ROUTES --- */
 app.get("/api/books/folders", async (_, res) => {
     try {
         const folders = await Folder.find().sort({ name: 1 });
         res.json(["All", ...folders.map(f => f.name)]);
-    } catch {
-        res.status(500).json({ error: "Failed to fetch folders" });
-    }
+    } catch { res.status(500).json({ error: "Failed" }); }
 });
 
 app.post("/api/books/folders", async (req, res) => {
     try {
         const folder = await Folder.create({ name: req.body.name });
         res.status(201).json(folder);
-    } catch (err) {
-        res.status(400).json({ error: "Folder exists or invalid name" });
-    }
+    } catch { res.status(400).json({ error: "Exists" }); }
 });
 
 app.delete("/api/books/folders/:name", async (req, res) => {
     try {
         await Folder.findOneAndDelete({ name: req.params.name });
         await Book.updateMany({ folder: req.params.name }, { folder: "All" });
-        res.json({ message: "Folder deleted" });
-    } catch {
-        res.status(500).json({ error: "Failed to delete folder" });
-    }
+        res.json({ message: "Deleted" });
+    } catch { res.status(500).json({ error: "Failed" }); }
 });
 
-/* --- BOOK MANAGEMENT ROUTES --- */
 app.get("/api/books", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
         res.json(books.map(formatBook));
-    } catch {
-        res.status(500).json({ error: "Failed to fetch books" });
-    }
+    } catch { res.status(500).json({ error: "Failed" }); }
 });
 
 app.get("/api/books/:id", async (req, res) => {
@@ -286,30 +283,23 @@ app.get("/api/books/:id", async (req, res) => {
         const book = await Book.findById(req.params.id);
         if (!book) return res.status(404).json({ error: "Book not found" });
         res.json(formatBook(book));
-    } catch {
-        res.status(500).json({ error: "Error fetching book" });
-    }
+    } catch { res.status(500).json({ error: "Error" }); }
 });
 
 app.patch("/api/books/:id", async (req, res) => {
     try {
         const book = await Book.findByIdAndUpdate(req.params.id, req.body, { new: true });
         res.json(formatBook(book));
-    } catch {
-        res.status(500).json({ error: "Update failed" });
-    }
+    } catch { res.status(500).json({ error: "Failed" }); }
 });
 
 app.delete("/api/books/:id", async (req, res) => {
     try {
         await Book.findByIdAndDelete(req.params.id);
         res.json({ message: "Deleted" });
-    } catch {
-        res.status(500).json({ error: "Delete failed" });
-    }
+    } catch { res.status(500).json({ error: "Failed" }); }
 });
 
-/* --- SERVER START --- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
     console.log(`✅ Server running on port ${PORT}`);
