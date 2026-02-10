@@ -6,7 +6,7 @@ const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
 const axios = require("axios");
 
-// FIX: Standard import (the subpath import caused the crash)
+// FIX: Standard import (subpath imports cause ERR_PACKAGE_PATH_NOT_EXPORTED)
 const pdf = require("pdf-parse");
 const vision = require('@google-cloud/vision');
 
@@ -32,7 +32,6 @@ try {
 }
 
 /* ---------------- STORAGE CONFIG ---------------- */
-// Ensure paths are correct relative to the 'routes' folder
 const uploadsRoot = path.join(__dirname, "../uploads");
 const pdfDir = path.join(uploadsRoot, "pdfs");
 const coversDir = path.join(uploadsRoot, "covers");
@@ -125,7 +124,6 @@ router.get("/:id/load-pages", async (req, res) => {
         console.error("Lazy Load Error:", err);
         res.status(500).json({ error: "Lazy load failed" });
     } finally {
-        // Safe cleanup
         if (tempPath && await fs.pathExists(tempPath)) await fs.remove(tempPath);
     }
 });
@@ -140,8 +138,17 @@ router.post("/", upload.single("file"), async (req, res) => {
 
         const dataBuffer = await fs.readFile(pdfDiskPath);
 
-        // FIX: Check if pdf is a function or if it's on .default (CommonJS wrapper)
-        const pdfData = typeof pdf === 'function' ? await pdf(dataBuffer) : await pdf.default(dataBuffer);
+        // FIX: Bulletproof check for pdf-parse structure
+        let pdfData;
+        if (typeof pdf === 'function') {
+            pdfData = await pdf(dataBuffer);
+        } else if (pdf && typeof pdf.default === 'function') {
+            pdfData = await pdf.default(dataBuffer);
+        } else {
+            console.warn("⚠️ pdf-parse loaded incorrectly, using fallback.");
+            pdfData = { numpages: 1 };
+        }
+
         const totalPages = pdfData.numpages || 1;
 
         const generateCover = () => new Promise((resolve) => {

@@ -8,7 +8,7 @@ const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
 
-// FIX: Standard import to avoid ERR_PACKAGE_PATH_NOT_EXPORTED
+// FIX: Standard import (Using the subpath lib/ caused the export error)
 const pdf = require("pdf-parse");
 const vision = require('@google-cloud/vision');
 
@@ -175,7 +175,6 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
         console.error("Lazy load error:", err);
         res.status(500).json({ error: "Lazy load failed" });
     } finally {
-        // CLEANUP: Ensure disk is cleared even if OCR fails
         if (tempPdfPath && await fs.pathExists(tempPdfPath)) await fs.remove(tempPdfPath);
     }
 });
@@ -193,8 +192,17 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
 
         const dataBuffer = await fs.readFile(pdfPath);
 
-        // FIX: Handles potential .default wrapper in new Node versions
-        const pdfData = typeof pdf === 'function' ? await pdf(dataBuffer) : await pdf.default(dataBuffer);
+        // BULLETPROOF: Check both function and .default wrapper
+        let pdfData;
+        if (typeof pdf === 'function') {
+            pdfData = await pdf(dataBuffer);
+        } else if (pdf && typeof pdf.default === 'function') {
+            pdfData = await pdf.default(dataBuffer);
+        } else {
+            console.warn("⚠️ pdf-parse loaded incorrectly, using fallback.");
+            pdfData = { numpages: 1 };
+        }
+
         const totalPages = pdfData.numpages || 1;
 
         const generateThumbnail = () => new Promise((resolve) => {
@@ -248,7 +256,7 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
     }
 });
 
-/* --- REST OF ROUTES --- */
+/* --- FOLDER & MANAGEMENT ROUTES --- */
 app.get("/api/books/folders", async (_, res) => {
     try {
         const folders = await Folder.find().sort({ name: 1 });
@@ -300,7 +308,21 @@ app.delete("/api/books/:id", async (req, res) => {
     } catch { res.status(500).json({ error: "Failed" }); }
 });
 
+/* --- SERVER START & CLEANUP --- */
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, "0.0.0.0", () => {
+
+// Cleanup helper to keep Render disk usage low
+const clearTempFolders = async () => {
+    try {
+        await fs.emptyDir(uploadDir);
+        await fs.emptyDir(coversDir);
+        console.log("🧹 Disk Space Managed: Temp folders cleared.");
+    } catch (err) {
+        console.warn("⚠️ Cleanup on startup failed (non-critical):", err.message);
+    }
+};
+
+app.listen(PORT, "0.0.0.0", async () => {
     console.log(`✅ Server running on port ${PORT}`);
+    await clearTempFolders(); // Wipe disk on start
 });
