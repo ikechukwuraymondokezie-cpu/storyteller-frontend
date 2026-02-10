@@ -4,9 +4,10 @@ const path = require("path");
 const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
-const axios = require("axios"); // Added for temporary PDF downloading
-const pdf = require("pdf-parse");
-const vision = require('@google-cloud/vision'); // Added Google Vision
+const axios = require("axios");
+// FIX: Correct import for pdf-parse to avoid "is not a function" crash
+const pdf = require("pdf-parse/lib/pdf-parse.js");
+const vision = require('@google-cloud/vision');
 
 const Book = require("../models/Book");
 const Folder = require("../models/Folder");
@@ -14,10 +15,21 @@ const Folder = require("../models/Folder");
 const router = express.Router();
 
 /* ---------------- GOOGLE VISION CONFIG ---------------- */
-// Uses the JSON string you added to Render Environment Variables
-const visionClient = new vision.ImageAnnotatorClient({
-    credentials: JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON)
-});
+// Safety check: If JSON is invalid, the server won't crash on start
+let visionClient;
+try {
+    const creds = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+    if (creds && creds.trim().startsWith('{')) {
+        visionClient = new vision.ImageAnnotatorClient({
+            credentials: JSON.parse(creds)
+        });
+        console.log("✅ Vision Client Ready");
+    } else {
+        console.warn("⚠️ Vision credentials missing or invalid in Environment Variables");
+    }
+} catch (err) {
+    console.error("❌ Google Vision Parse Error:", err.message);
+}
 
 /* ---------------- STORAGE CONFIG ---------------- */
 const uploadsRoot = path.join(__dirname, "../uploads");
@@ -42,25 +54,24 @@ const upload = multer({
 
 /* ---------------- HELPERS ---------------- */
 
-// NEW: Google Vision OCR Helper (RAM Efficient)
 async function extractPageTextGoogle(pdfPath, pageNum) {
+    // Prevent crash if client isn't ready
+    if (!visionClient) return "[OCR Error: Vision Client not initialized]";
+
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
     const pageImgBase = path.join(coversDir, `google_tmp_${pageNum}_${uniqueId}`);
     const pageImgFull = `${pageImgBase}.png`;
 
     try {
-        // 1. Convert PDF page to PNG
         await new Promise((resolve, reject) => {
             exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
 
-        // 2. OCR via Google Cloud
         const [result] = await visionClient.textDetection(pageImgFull);
         const text = result.fullTextAnnotation ? result.fullTextAnnotation.text : "";
 
-        // 3. Cleanup image
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
         return text;
     } catch (e) {
@@ -71,10 +82,6 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
 /* ---------------- BOOK ROUTES ---------------- */
 
-/**
- * NEW: LAZY LOAD ROUTE
- * Triggers on the frontend when the user reaches the current end of text.
- */
 router.get("/:id/load-pages", async (req, res) => {
     let tempPath = "";
     try {
@@ -82,48 +89,48 @@ router.get("/:id/load-pages", async (req, res) => {
         if (!book) return res.status(404).json({ error: "Book not found" });
 
         const startPage = book.processedPages + 1;
-        const endPage = Math.min(startPage + 4, book.totalPages); // Fetch 5 pages
+        const endPage = Math.min(startPage + 4, book.totalPages);
 
         if (startPage > book.totalPages) return res.json({ addedText: "", status: "completed" });
 
-        // 1. Download PDF from Cloudinary to process
         tempPath = path.join(pdfDir, `temp_load_${book._id}.pdf`);
+
+        // Download from Cloudinary
         const response = await axios({ url: book.pdfPath, method: 'GET', responseType: 'stream' });
         const writer = fs.createWriteStream(tempPath);
         response.data.pipe(writer);
-        await new Promise((resolve, reject) => { writer.on('finish', resolve); writer.on('error', reject); });
 
-        // 2. OCR the requested pages
+        await new Promise((resolve, reject) => {
+            writer.on('finish', resolve);
+            writer.on('error', reject);
+        });
+
         let newText = "";
         for (let i = startPage; i <= endPage; i++) {
             const text = await extractPageTextGoogle(tempPath, i);
             newText += text + "\n\n";
         }
 
-        // 3. Update DB
         const updatedContent = book.content + "\n" + newText;
         const finalStatus = endPage >= book.totalPages ? 'completed' : 'processing';
 
-        await Book.findByIdAndUpdate(req.params.id, {
+        const updatedBook = await Book.findByIdAndUpdate(req.params.id, {
             content: updatedContent,
             processedPages: endPage,
             status: finalStatus,
             words: updatedContent.split(/\s+/).filter(w => w.length > 0).length
-        });
+        }, { new: true });
 
-        // 4. Cleanup temp PDF
         if (await fs.pathExists(tempPath)) await fs.remove(tempPath);
 
         res.json({ addedText: newText, processedPages: endPage, status: finalStatus });
     } catch (err) {
+        console.error("Lazy Load Error:", err);
         if (tempPath && await fs.pathExists(tempPath)) await fs.remove(tempPath);
         res.status(500).json({ error: "Lazy load failed" });
     }
 });
 
-/**
- * UPLOAD BOOK: Now limited to initial 5 pages via Google
- */
 router.post("/", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file" });
@@ -133,17 +140,18 @@ router.post("/", upload.single("file"), async (req, res) => {
         const outputPrefix = path.join(coversDir, baseName);
 
         const dataBuffer = await fs.readFile(pdfDiskPath);
-        const meta = await pdf(dataBuffer);
+        const meta = await pdf(dataBuffer); // Now safe to call
         const totalPages = meta.numpages || 1;
 
-        // Cover & PDF Cloudinary Upload
         const generateCover = () => new Promise((resolve) => {
             exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfDiskPath}" "${outputPrefix}"`, async (error) => {
                 if (error) return resolve(null);
                 const localPath = `${outputPrefix}.png`;
-                const uploadRes = await cloudinary.uploader.upload(localPath, { folder: "storyteller_covers" });
-                await fs.remove(localPath);
-                resolve(uploadRes.secure_url);
+                try {
+                    const uploadRes = await cloudinary.uploader.upload(localPath, { folder: "storyteller_covers" });
+                    await fs.remove(localPath);
+                    resolve(uploadRes.secure_url);
+                } catch { resolve(null); }
             });
         });
 
@@ -157,7 +165,6 @@ router.post("/", upload.single("file"), async (req, res) => {
 
         const [coverUrl, cloudPdfUrl] = await Promise.all([generateCover(), uploadPdfToCloud()]);
 
-        // OCR exactly first 5 pages
         const instantLimit = Math.min(5, totalPages);
         let initialText = "";
         for (let i = 1; i <= instantLimit; i++) {
@@ -168,7 +175,7 @@ router.post("/", upload.single("file"), async (req, res) => {
         const book = await Book.create({
             title: req.file.originalname.replace(/\.[^/.]+$/, ""),
             pdfPath: cloudPdfUrl,
-            cover: coverUrl,
+            cover: coverUrl || "https://via.placeholder.com/300x450?text=No+Cover",
             folder: req.body.folder || "All",
             content: initialText,
             totalPages: totalPages,
@@ -177,16 +184,14 @@ router.post("/", upload.single("file"), async (req, res) => {
             words: initialText.split(/\s+/).filter(w => w.length > 0).length
         });
 
-        // Cleanup local file immediately
         if (await fs.pathExists(pdfDiskPath)) await fs.remove(pdfDiskPath);
 
         res.status(201).json(book);
     } catch (err) {
+        console.error("Upload Error:", err);
         if (req.file && await fs.pathExists(req.file.path)) await fs.remove(req.file.path);
         res.status(500).json({ error: "Upload failed" });
     }
 });
-
-/* ... Rest of your Folder and Action routes stay exactly as they were ... */
 
 module.exports = router;

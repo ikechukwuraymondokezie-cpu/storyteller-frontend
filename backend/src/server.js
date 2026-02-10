@@ -7,15 +7,28 @@ const path = require("path");
 const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
-const pdf = require("pdf-parse");
-const vision = require('@google-cloud/vision'); // Added Google Vision
+
+// FIX: Correct import for pdf-parse
+const pdf = require("pdf-parse/lib/pdf-parse.js");
+const vision = require('@google-cloud/vision');
 
 const app = express();
 
 /* -------------------- GOOGLE VISION CONFIG -------------------- */
-const visionClient = new vision.ImageAnnotatorClient({
-    credentials: JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON)
-});
+let visionClient;
+try {
+    const credsEnv = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+    if (credsEnv) {
+        visionClient = new vision.ImageAnnotatorClient({
+            credentials: JSON.parse(credsEnv)
+        });
+        console.log("✅ Google Vision Client Initialized");
+    } else {
+        console.warn("⚠️ GOOGLE_APPLICATION_CREDENTIALS_JSON is missing");
+    }
+} catch (e) {
+    console.error("❌ Google Vision Init Error:", e.message);
+}
 
 /* -------------------- CLOUDINARY CONFIG -------------------- */
 cloudinary.config();
@@ -52,7 +65,7 @@ const Folder = mongoose.model("Folder", new mongoose.Schema({
 const bookSchema = new mongoose.Schema({
     title: { type: String, required: true },
     cover: String,
-    pdfPath: String, // This is the Cloudinary URL
+    pdfPath: String,
     folder: { type: String, default: "All" },
     downloads: { type: Number, default: 0 },
     ttsRequests: { type: Number, default: 0 },
@@ -100,25 +113,22 @@ const formatBook = (book) => ({
     createdAt: book.createdAt
 });
 
-// NEW: Google Vision OCR Helper (Memory Efficient)
 async function extractPageTextGoogle(pdfPath, pageNum) {
+    if (!visionClient) return "";
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
     const pageImgBase = path.join(coversDir, `tmp_google_${pageNum}_${uniqueId}`);
     const pageImgFull = `${pageImgBase}.png`;
 
     try {
-        // 1. Extract page to image using pdftoppm
         await new Promise((resolve, reject) => {
             exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
 
-        // 2. OCR with Google Vision
         const [result] = await visionClient.textDetection(pageImgFull);
         const text = result.fullTextAnnotation ? result.fullTextAnnotation.text : "";
 
-        // 3. Cleanup
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
         return text;
     } catch (e) {
@@ -129,29 +139,29 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
 /* -------------------- API ROUTES -------------------- */
 
-// NEW: Lazy Load Endpoint (Fetch next 5 pages)
+// Lazy Load Endpoint
 app.get("/api/books/:id/load-pages", async (req, res) => {
     try {
         const book = await Book.findById(req.params.id);
         if (!book) return res.status(404).json({ error: "Book not found" });
 
         const startPage = book.processedPages + 1;
-        const endPage = Math.min(startPage + 4, book.totalPages); // Get next 5 pages
+        const endPage = Math.min(startPage + 4, book.totalPages);
 
-        if (startPage > book.totalPages) {
-            return res.json({ message: "Already at the end", addedText: "" });
-        }
+        if (startPage > book.totalPages) return res.json({ message: "End", addedText: "" });
 
-        console.log(`🔍 Lazy Loading: Book ${book.title} pages ${startPage} to ${endPage}`);
+        const tempPdfPath = path.join(uploadDir, `temp_load_${book._id}.pdf`);
+        const response = await fetch(book.pdfPath);
+        const arrayBuffer = await response.arrayBuffer();
+        await fs.writeFile(tempPdfPath, Buffer.from(arrayBuffer));
 
         let newText = "";
         for (let i = startPage; i <= endPage; i++) {
-            // Note: For Lazy Loading, we need the local file. 
-            // In a production environment, you'd download the PDF from Cloudinary here.
-            // For now, we assume the file might still be in uploads if recently uploaded.
-            const text = await extractPageTextGoogle(book.pdfPath, i);
+            const text = await extractPageTextGoogle(tempPdfPath, i);
             newText += text + "\n\n";
         }
+
+        await fs.remove(tempPdfPath);
 
         const updatedContent = book.content + "\n" + newText;
         const updatedBook = await Book.findByIdAndUpdate(req.params.id, {
@@ -167,6 +177,7 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
     }
 });
 
+// Book Upload
 app.post("/api/books", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -181,7 +192,6 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
         const meta = await pdf(dataBuffer);
         const totalPages = meta.numpages || 1;
 
-        // 1. Parallel Thumbnail & PDF Cloud Upload
         const generateThumbnail = () => new Promise((resolve) => {
             exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfPath}" "${outputPrefix}"`, async (error) => {
                 if (error) return resolve(null);
@@ -204,7 +214,6 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
 
         const [pdfUrl, coverUrl] = await Promise.all([uploadPdfToCloud(), generateThumbnail()]);
 
-        // 2. THE "INSTANT 5": Extract exactly 5 pages via Google
         const instantLimit = Math.min(5, totalPages);
         let initialContent = "";
         for (let i = 1; i <= instantLimit; i++) {
@@ -212,7 +221,6 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
             initialContent += text + "\n\n";
         }
 
-        // 3. Create DB Entry (Note: pdfPath stores the Cloudinary URL for permanent reference)
         const book = await Book.create({
             title,
             cover: coverUrl || "https://via.placeholder.com/300x450?text=No+Cover",
@@ -225,17 +233,16 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
             words: initialContent.split(/\s+/).filter(w => w.length > 0).length
         });
 
-        // Cleanup local file immediately to save Render disk space
         if (await fs.pathExists(pdfPath)) await fs.remove(pdfPath);
 
         res.status(201).json(formatBook(book));
     } catch (err) {
-        console.error("Upload error:", err);
+        console.error(err);
         res.status(500).json({ error: "Upload failed" });
     }
 });
 
-/* ... Rest of your Standard Book Routes (GET folders, GET all, DELETE, etc.) ... */
+/* --- FOLDER ROUTES --- */
 app.get("/api/books/folders", async (_, res) => {
     try {
         const folders = await Folder.find().sort({ name: 1 });
@@ -245,6 +252,26 @@ app.get("/api/books/folders", async (_, res) => {
     }
 });
 
+app.post("/api/books/folders", async (req, res) => {
+    try {
+        const folder = await Folder.create({ name: req.body.name });
+        res.status(201).json(folder);
+    } catch (err) {
+        res.status(400).json({ error: "Folder exists or invalid name" });
+    }
+});
+
+app.delete("/api/books/folders/:name", async (req, res) => {
+    try {
+        await Folder.findOneAndDelete({ name: req.params.name });
+        await Book.updateMany({ folder: req.params.name }, { folder: "All" });
+        res.json({ message: "Folder deleted" });
+    } catch {
+        res.status(500).json({ error: "Failed to delete folder" });
+    }
+});
+
+/* --- BOOK MANAGEMENT ROUTES --- */
 app.get("/api/books", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
@@ -264,6 +291,15 @@ app.get("/api/books/:id", async (req, res) => {
     }
 });
 
+app.patch("/api/books/:id", async (req, res) => {
+    try {
+        const book = await Book.findByIdAndUpdate(req.params.id, req.body, { new: true });
+        res.json(formatBook(book));
+    } catch {
+        res.status(500).json({ error: "Update failed" });
+    }
+});
+
 app.delete("/api/books/:id", async (req, res) => {
     try {
         await Book.findByIdAndDelete(req.params.id);
@@ -273,6 +309,7 @@ app.delete("/api/books/:id", async (req, res) => {
     }
 });
 
+/* --- SERVER START --- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
     console.log(`✅ Server running on port ${PORT}`);
