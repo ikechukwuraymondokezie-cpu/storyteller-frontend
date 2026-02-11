@@ -8,7 +8,7 @@ const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
 
-// FIX: Standard import
+// Standard imports
 const pdf = require("pdf-parse");
 const vision = require('@google-cloud/vision');
 
@@ -70,8 +70,7 @@ const bookSchema = new mongoose.Schema({
     downloads: { type: Number, default: 0 },
     ttsRequests: { type: Number, default: 0 },
     content: { type: String, default: "" },
-    chapters: [{ title: String, page: Number }],
-    words: { type: Number, default: 0 }, // This will now store the FULL document word count
+    words: { type: Number, default: 0 },
     totalPages: { type: Number, default: 0 },
     processedPages: { type: Number, default: 0 },
     status: { type: String, enum: ['processing', 'completed'], default: 'processing' },
@@ -105,7 +104,6 @@ const formatBook = (book) => ({
     ttsRequests: book.ttsRequests,
     words: book.words || 0,
     content: book.content || "",
-    chapters: book.chapters || [],
     status: book.status || "completed",
     totalPages: book.totalPages || 0,
     processedPages: book.processedPages || 0,
@@ -120,14 +118,12 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
     const pageImgFull = `${pageImgBase}.png`;
 
     try {
-        console.log(`[OCR] Page ${pageNum}: Extracting image...`);
         await new Promise((resolve, reject) => {
             exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
 
-        console.log(`[OCR] Page ${pageNum}: Sending to Google Vision...`);
         const [result] = await visionClient.textDetection(pageImgFull);
         const text = result.fullTextAnnotation ? result.fullTextAnnotation.text : "";
 
@@ -141,7 +137,7 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
 /* -------------------- API ROUTES -------------------- */
 
-// Lazy Load Endpoint
+// LAZY LOAD
 app.get("/api/books/:id/load-pages", async (req, res) => {
     let tempPdfPath = "";
     try {
@@ -170,7 +166,6 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
             content: updatedContent,
             processedPages: endPage,
             status: endPage === book.totalPages ? 'completed' : 'processing'
-            // NOTE: We don't recalculate 'words' here because it's already set to the full total in upload
         });
 
         res.json({ addedText: newText, processedPages: endPage });
@@ -182,97 +177,81 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
     }
 });
 
-// Book Upload
+// UPLOAD (Speechify Version: Instant Response + Background Processing)
 app.post("/api/books", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-        const title = req.body.title || req.file.originalname.replace(/\.[^/.]+$/, "");
-        const folder = req.body.folder || "All";
         const pdfPath = req.file.path;
-        const baseName = path.parse(req.file.filename).name;
-        const outputPrefix = path.join(coversDir, baseName);
-
         const dataBuffer = await fs.readFile(pdfPath);
 
-        /* --- WORD COUNT ADJUSTMENT --- */
+        // 1. Instant Stats & Estimates
         let pdfData;
         try {
-            if (typeof pdf === 'function') {
-                pdfData = await pdf(dataBuffer);
-            } else if (pdf && typeof pdf.default === 'function') {
-                pdfData = await pdf.default(dataBuffer);
-            } else {
-                pdfData = { numpages: 1, text: "" };
-            }
-        } catch (pdfErr) {
-            console.warn("⚠️ PDF Parse failed, falling back to 0 words", pdfErr.message);
-            pdfData = { numpages: 1, text: "" };
-        }
+            pdfData = typeof pdf === 'function' ? await pdf(dataBuffer) : await pdf.default(dataBuffer);
+        } catch { pdfData = { numpages: 1, text: "" }; }
 
-        // Calculate EXACT word count for the entire book immediately
-        const fullBookText = pdfData.text || "";
-        const totalWordCount = fullBookText.split(/\s+/).filter(w => w.length > 0).length;
         const totalPages = pdfData.numpages || 1;
+        const rawWords = pdfData.text ? pdfData.text.split(/\s+/).filter(w => w.length > 0).length : 0;
+        const estimatedWords = rawWords > 50 ? rawWords : (totalPages * 350);
 
-        console.log(`📖 Uploading "${title}" - Pages: ${totalPages}, Total Words: ${totalWordCount}`);
-
-        const generateThumbnail = () => new Promise((resolve) => {
-            exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfPath}" "${outputPrefix}"`, async (error) => {
-                if (error) return resolve(null);
-                try {
-                    const localPath = `${outputPrefix}.png`;
-                    const uploadRes = await cloudinary.uploader.upload(localPath, { folder: "storyteller_covers" });
-                    await fs.remove(localPath);
-                    resolve(uploadRes.secure_url);
-                } catch { resolve(null); }
-            });
-        });
-
-        const uploadPdfToCloud = async () => {
-            const result = await cloudinary.uploader.upload(pdfPath, {
-                folder: "storyteller_pdfs",
-                resource_type: "raw"
-            });
-            return result.secure_url;
-        };
-
-        const [pdfUrl, coverUrl] = await Promise.all([uploadPdfToCloud(), generateThumbnail()]);
-
-        // PARALLEL PROCESSING: Fire first 5 pages for instant reading
-        const instantLimit = Math.min(5, totalPages);
-        const pagePromises = [];
-        for (let i = 1; i <= instantLimit; i++) {
-            pagePromises.push(extractPageTextGoogle(pdfPath, i));
-        }
-
-        const pagesResults = await Promise.all(pagePromises);
-        const initialContent = pagesResults.join("\n\n");
-
+        // 2. Create Placeholder
         const book = await Book.create({
-            title,
-            cover: coverUrl || "https://via.placeholder.com/300x450?text=No+Cover",
-            pdfPath: pdfUrl,
-            folder,
-            content: initialContent,
+            title: req.body.title || req.file.originalname.replace(/\.[^/.]+$/, ""),
+            folder: req.body.folder || "All",
+            pdfPath: "pending",
+            cover: "https://via.placeholder.com/300x450?text=Processing...",
+            content: "Scanning first pages...",
             totalPages,
-            processedPages: instantLimit,
-            status: totalPages <= instantLimit ? 'completed' : 'processing',
-            words: totalWordCount // SAVED: The exact number from the whole PDF
+            words: estimatedWords,
+            status: 'processing'
         });
 
-        if (await fs.pathExists(pdfPath)) await fs.remove(pdfPath);
-        console.log(`✅ Book created with ${totalWordCount} exact words.`);
+        // 3. RESPOND IMMEDIATELY (Kills the "Upload Failed" error)
         res.status(201).json(formatBook(book));
+
+        // 4. BACKGROUND WORKER
+        (async () => {
+            try {
+                const baseName = path.parse(req.file.filename).name;
+                const outputPrefix = path.join(coversDir, baseName);
+
+                const [pdfUrl, coverUrl] = await Promise.all([
+                    cloudinary.uploader.upload(pdfPath, { folder: "storyteller_pdfs", resource_type: "raw" }).then(r => r.secure_url),
+                    new Promise((resolve) => {
+                        exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfPath}" "${outputPrefix}"`, async (err) => {
+                            if (err) return resolve(null);
+                            const uploadRes = await cloudinary.uploader.upload(`${outputPrefix}.png`, { folder: "storyteller_covers" });
+                            await fs.remove(`${outputPrefix}.png`);
+                            resolve(uploadRes.secure_url);
+                        });
+                    })
+                ]);
+
+                await Book.findByIdAndUpdate(book._id, { pdfPath: pdfUrl, cover: coverUrl });
+
+                let runningContent = "";
+                const limit = Math.min(5, totalPages);
+                for (let i = 1; i <= limit; i++) {
+                    const pageText = await extractPageTextGoogle(pdfPath, i);
+                    runningContent += pageText + "\n\n";
+                    await Book.findByIdAndUpdate(book._id, {
+                        content: runningContent,
+                        processedPages: i,
+                        status: i >= totalPages ? 'completed' : 'processing'
+                    });
+                }
+                if (await fs.pathExists(pdfPath)) await fs.remove(pdfPath);
+            } catch (bgErr) { console.error("BG Error:", bgErr); }
+        })();
 
     } catch (err) {
         console.error("Upload error:", err);
-        if (req.file && await fs.pathExists(req.file.path)) await fs.remove(req.file.path);
         res.status(500).json({ error: "Upload failed" });
     }
 });
 
-/* --- FOLDER & MANAGEMENT ROUTES --- */
+/* --- FOLDER ROUTES --- */
 app.get("/api/books/folders", async (_, res) => {
     try {
         const folders = await Folder.find().sort({ name: 1 });
@@ -295,6 +274,7 @@ app.delete("/api/books/folders/:name", async (req, res) => {
     } catch { res.status(500).json({ error: "Failed" }); }
 });
 
+/* --- MANAGEMENT ROUTES --- */
 app.get("/api/books", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
@@ -305,7 +285,7 @@ app.get("/api/books", async (_, res) => {
 app.get("/api/books/:id", async (req, res) => {
     try {
         const book = await Book.findById(req.params.id);
-        if (!book) return res.status(404).json({ error: "Book not found" });
+        if (!book) return res.status(404).json({ error: "Not found" });
         res.json(formatBook(book));
     } catch { res.status(500).json({ error: "Error" }); }
 });
@@ -324,20 +304,12 @@ app.delete("/api/books/:id", async (req, res) => {
     } catch { res.status(500).json({ error: "Failed" }); }
 });
 
-/* --- SERVER START & CLEANUP --- */
+/* --- START --- */
 const PORT = process.env.PORT || 10000;
-
-const clearTempFolders = async () => {
+app.listen(PORT, "0.0.0.0", async () => {
+    console.log(`✅ Server running on port ${PORT}`);
     try {
         await fs.emptyDir(uploadDir);
         await fs.emptyDir(coversDir);
-        console.log("🧹 Disk Space Managed: Temp folders cleared.");
-    } catch (err) {
-        console.warn("⚠️ Cleanup on startup failed:", err.message);
-    }
-};
-
-app.listen(PORT, "0.0.0.0", async () => {
-    console.log(`✅ Server running on port ${PORT}`);
-    await clearTempFolders();
+    } catch (e) { console.warn("Cleanup failed"); }
 });

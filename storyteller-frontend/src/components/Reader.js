@@ -12,27 +12,46 @@ const Reader = () => {
     const { id } = useParams();
     const navigate = useNavigate();
     const scrollRef = useRef(null);
-    const bottomObserverRef = useRef(null); // Ref for the scroll-trigger
+    const bottomObserverRef = useRef(null);
 
     const [book, setBook] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [loadingMore, setLoadingMore] = useState(false); // Tracking lazy load status
+    const [loadingMore, setLoadingMore] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
     const [isDigitalMode, setIsDigitalMode] = useState(false);
     const [viewMode, setViewMode] = useState('reading');
     const [menuOpen, setMenuOpen] = useState(false);
     const [activeView, setActiveView] = useState('main');
 
+    // TTS State
+    const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
+    const synth = window.speechSynthesis;
+    const utteranceRef = useRef(null);
+
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
-    // 1. Initial Fetch
+    // 1. Initial Fetch + Polling for Background Worker
     useEffect(() => {
+        let pollInterval;
+
         const fetchBook = async () => {
             try {
                 const response = await fetch(`${BACKEND_URL}/api/books/${id}`);
                 if (!response.ok) throw new Error("Failed to fetch");
                 const data = await response.json();
                 setBook(data);
+
+                // Start polling if book is still processing initial scan
+                if (data.status === 'processing' && (!data.content || data.content.length < 100)) {
+                    pollInterval = setInterval(async () => {
+                        const res = await fetch(`${BACKEND_URL}/api/books/${id}`);
+                        const updated = await res.json();
+                        setBook(updated);
+                        if (updated.content?.length > 100 || updated.status === 'completed') {
+                            clearInterval(pollInterval);
+                        }
+                    }, 3000);
+                }
             } catch (err) {
                 console.error("Error fetching book data:", err);
             } finally {
@@ -40,12 +59,36 @@ const Reader = () => {
             }
         };
         fetchBook();
+        return () => {
+            clearInterval(pollInterval);
+            synth.cancel(); // Stop speech when leaving
+        };
     }, [id]);
 
-    // 2. Lazy Loading Logic (Infinite Scroll)
+    // 2. TTS Controller
+    useEffect(() => {
+        if (isPlaying) {
+            if (synth.paused) {
+                synth.resume();
+            } else {
+                synth.cancel();
+                const textToRead = viewMode === 'summary' ? book?.summary : book?.content;
+                if (textToRead) {
+                    const utterance = new SpeechSynthesisUtterance(textToRead);
+                    utterance.rate = playbackSpeed;
+                    utterance.onend = () => setIsPlaying(false);
+                    utteranceRef.current = utterance;
+                    synth.speak(utterance);
+                }
+            }
+        } else {
+            if (synth.speaking) synth.pause();
+        }
+    }, [isPlaying, book?.content, book?.summary, viewMode]);
+
+    // 3. Lazy Loading Logic (Infinite Scroll)
     const loadMorePages = async () => {
         if (loadingMore || !book || book.status === 'completed') return;
-
         setLoadingMore(true);
         try {
             const response = await fetch(`${BACKEND_URL}/api/books/${id}/load-pages`);
@@ -57,7 +100,6 @@ const Reader = () => {
                 content: prev.content + "\n" + data.addedText,
                 processedPages: data.processedPages,
                 status: data.status,
-                // Recalculate word count locally for immediate UI update
                 words: (prev.content + data.addedText).split(/\s+/).filter(w => w.length > 0).length
             }));
         } catch (err) {
@@ -67,24 +109,18 @@ const Reader = () => {
         }
     };
 
-    // 3. Set up Intersection Observer for the bottom of the text
+    // 4. Intersection Observer for bottom trigger
     useEffect(() => {
         if (!isDigitalMode || viewMode !== 'reading') return;
-
         const observer = new IntersectionObserver(
             (entries) => {
-                if (entries[0].isIntersecting && book?.status === 'processing') {
-                    console.log("Bottom reached! Loading more...");
+                if (entries[0].isIntersecting && book?.status === 'processing' && !loadingMore) {
                     loadMorePages();
                 }
             },
             { threshold: 0.1 }
         );
-
-        if (bottomObserverRef.current) {
-            observer.observe(bottomObserverRef.current);
-        }
-
+        if (bottomObserverRef.current) observer.observe(bottomObserverRef.current);
         return () => observer.disconnect();
     }, [isDigitalMode, viewMode, book?.status, loadingMore]);
 
@@ -100,6 +136,17 @@ const Reader = () => {
         setMenuOpen(false);
         if (isDigitalMode && scrollRef.current) {
             scrollRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    };
+
+    const toggleSpeed = () => {
+        const speeds = [1.0, 1.5, 2.0, 0.75];
+        const nextSpeed = speeds[(speeds.indexOf(playbackSpeed) + 1) % speeds.length];
+        setPlaybackSpeed(nextSpeed);
+        if (isPlaying) {
+            synth.cancel();
+            setIsPlaying(false);
+            setTimeout(() => setIsPlaying(true), 100);
         }
     };
 
@@ -180,8 +227,6 @@ const Reader = () => {
                                     {book.content.split('\n').map((para, i) => (
                                         <p key={i} style={{ marginBottom: '1.5em' }}>{para}</p>
                                     ))}
-
-                                    {/* TRIGGER ELEMENT FOR LAZY LOAD */}
                                     <div ref={bottomObserverRef} style={styles.loadingTrigger}>
                                         {book.status === 'processing' ? (
                                             <div style={styles.loadingMoreBox}>
@@ -243,13 +288,13 @@ const Reader = () => {
                 <div style={styles.controlRow}>
                     <div style={styles.flagBox}><span style={{ fontSize: '20px' }}>🇺🇸</span></div>
                     <div style={styles.mainButtons}>
-                        <button style={styles.skipBtn}><RotateCcw size={30} /><span style={styles.skipNum}>10</span></button>
+                        <button style={styles.skipBtn} onClick={() => { synth.cancel(); setIsPlaying(false); }}><RotateCcw size={30} /><span style={styles.skipNum}>R</span></button>
                         <button onClick={() => setIsPlaying(!isPlaying)} style={styles.playBtn}>
                             {isPlaying ? <Pause size={30} fill="white" /> : <Play size={30} fill="white" style={{ marginLeft: '4px' }} />}
                         </button>
-                        <button style={styles.skipBtn}><RotateCw size={30} /><span style={styles.skipNum}>10</span></button>
+                        <button style={styles.skipBtn} onClick={() => { if (isPlaying) { synth.cancel(); setIsPlaying(false); setTimeout(() => setIsPlaying(true), 50); } }}><RotateCw size={30} /><span style={styles.skipNum}>S</span></button>
                     </div>
-                    <button style={styles.speedPill}>1.0×</button>
+                    <button onClick={toggleSpeed} style={styles.speedPill}>{playbackSpeed}×</button>
                 </div>
             </footer>
 
@@ -313,7 +358,7 @@ const MenuOption = ({ icon, label, sub, toggle, active, onClick }) => (
             {sub && <div style={styles.optionSub}>{sub}</div>}
         </div>
         {toggle && (
-            <div style={{ ...styles.toggleBase, backgroundColor: active ? '#4f46e5' : '#3f3f46' }}>
+            <div style={{ ...styles.toggleBase, backgroundColor: active ? '#4f46e5' : '#3f3f3f' }}>
                 <div style={{ ...styles.toggleCircle, left: active ? '22px' : '2px' }} />
             </div>
         )}

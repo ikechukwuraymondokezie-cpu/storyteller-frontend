@@ -5,8 +5,6 @@ const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
 const axios = require("axios");
-
-// FIX: Standard import
 const pdf = require("pdf-parse");
 const vision = require('@google-cloud/vision');
 
@@ -24,8 +22,6 @@ try {
             credentials: JSON.parse(creds)
         });
         console.log("✅ Vision Client Ready");
-    } else {
-        console.warn("⚠️ Vision credentials missing or invalid");
     }
 } catch (err) {
     console.error("❌ Google Vision Parse Error:", err.message);
@@ -55,8 +51,7 @@ const upload = multer({
 /* ---------------- HELPERS ---------------- */
 
 async function extractPageTextGoogle(pdfPath, pageNum) {
-    if (!visionClient) return "";
-
+    if (!visionClient) return "[OCR Error: Vision Client not initialized]";
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
     const pageImgBase = path.join(coversDir, `google_tmp_${pageNum}_${uniqueId}`);
     const pageImgFull = `${pageImgBase}.png`;
@@ -70,17 +65,17 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
         const [result] = await visionClient.textDetection(pageImgFull);
         const text = result.fullTextAnnotation ? result.fullTextAnnotation.text : "";
-
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
         return text;
     } catch (e) {
-        console.error(`❌ Google OCR Error on page ${pageNum}:`, e.message);
+        console.error(`Google OCR Error on page ${pageNum}:`, e);
         return "";
     }
 }
 
 /* ---------------- BOOK ROUTES ---------------- */
 
+// LAZY LOAD ROUTE (Triggered by frontend scrolling)
 router.get("/:id/load-pages", async (req, res) => {
     let tempPath = "";
     try {
@@ -103,12 +98,13 @@ router.get("/:id/load-pages", async (req, res) => {
             writer.on('error', reject);
         });
 
+        // Parallel processing for efficiency
         const pagePromises = [];
         for (let i = startPage; i <= endPage; i++) {
             pagePromises.push(extractPageTextGoogle(tempPath, i));
         }
-        const results = await Promise.all(pagePromises);
-        const newText = results.join("\n\n");
+        const pagesResults = await Promise.all(pagePromises);
+        const newText = pagesResults.join("\n\n");
 
         const updatedContent = book.content + "\n" + newText;
         const finalStatus = endPage >= book.totalPages ? 'completed' : 'processing';
@@ -116,8 +112,9 @@ router.get("/:id/load-pages", async (req, res) => {
         await Book.findByIdAndUpdate(req.params.id, {
             content: updatedContent,
             processedPages: endPage,
-            status: finalStatus
-            // words is NOT updated here because we already have the EXACT total from upload
+            status: finalStatus,
+            // Re-calc words as we go for accuracy
+            words: updatedContent.split(/\s+/).filter(w => w.length > 0).length
         });
 
         res.json({ addedText: newText, processedPages: endPage, status: finalStatus });
@@ -129,82 +126,90 @@ router.get("/:id/load-pages", async (req, res) => {
     }
 });
 
+// UPLOAD ROUTE (The Fast "Speechify" Version)
 router.post("/", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file" });
 
         const pdfDiskPath = req.file.path;
-        const baseName = path.parse(req.file.filename).name;
-        const outputPrefix = path.join(coversDir, baseName);
-
         const dataBuffer = await fs.readFile(pdfDiskPath);
 
-        /* --- EXACT WORD COUNT ADJUSTMENT --- */
+        // 1. INSTANT EXTRACTION & ESTIMATE
         let pdfData;
-        if (typeof pdf === 'function') {
-            pdfData = await pdf(dataBuffer);
-        } else if (pdf && typeof pdf.default === 'function') {
-            pdfData = await pdf.default(dataBuffer);
-        } else {
+        try {
+            pdfData = typeof pdf === 'function' ? await pdf(dataBuffer) : await pdf.default(dataBuffer);
+        } catch (e) {
             pdfData = { numpages: 1, text: "" };
         }
 
-        // 1. Get exact word count for the WHOLE book immediately
-        const fullRawText = pdfData.text || "";
-        const exactTotalWords = fullRawText.split(/\s+/).filter(w => w.length > 0).length;
         const totalPages = pdfData.numpages || 1;
 
-        console.log(`📖 Total word count for "${req.file.originalname}": ${exactTotalWords}`);
+        // Word count estimate logic
+        const rawWords = pdfData.text ? pdfData.text.split(/\s+/).filter(w => w.length > 0).length : 0;
+        const estimatedWords = rawWords > 50 ? rawWords : (totalPages * 300);
 
-        const generateCover = () => new Promise((resolve) => {
-            exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfDiskPath}" "${outputPrefix}"`, async (error) => {
-                if (error) return resolve(null);
-                const localPath = `${outputPrefix}.png`;
-                try {
-                    const uploadRes = await cloudinary.uploader.upload(localPath, { folder: "storyteller_covers" });
-                    await fs.remove(localPath);
-                    resolve(uploadRes.secure_url);
-                } catch { resolve(null); }
-            });
-        });
-
-        const uploadPdfToCloud = async () => {
-            const result = await cloudinary.uploader.upload(pdfDiskPath, {
-                folder: "storyteller_pdfs",
-                resource_type: "raw"
-            });
-            return result.secure_url;
-        };
-
-        const [coverUrl, cloudPdfUrl] = await Promise.all([generateCover(), uploadPdfToCloud()]);
-
-        // 2. High-quality OCR for just the first 5 pages
-        const instantLimit = Math.min(5, totalPages);
-        const pagePromises = [];
-        for (let i = 1; i <= instantLimit; i++) {
-            pagePromises.push(extractPageTextGoogle(pdfDiskPath, i));
-        }
-
-        const pagesResults = await Promise.all(pagePromises);
-        const initialText = pagesResults.join("\n\n");
-
+        // 2. CREATE BOOK IMMEDIATELY
         const book = await Book.create({
             title: req.file.originalname.replace(/\.[^/.]+$/, ""),
-            pdfPath: cloudPdfUrl,
-            cover: coverUrl || "https://via.placeholder.com/300x450?text=No+Cover",
+            pdfPath: "pending",
+            cover: "https://via.placeholder.com/300x450?text=Processing...",
             folder: req.body.folder || "All",
-            content: initialText,
+            content: "Scanning first pages...",
             totalPages: totalPages,
-            processedPages: instantLimit,
-            status: totalPages <= instantLimit ? 'completed' : 'processing',
-            words: exactTotalWords // Storing the EXACT total here
+            processedPages: 0,
+            status: 'processing',
+            words: estimatedWords
         });
 
-        if (await fs.pathExists(pdfDiskPath)) await fs.remove(pdfDiskPath);
+        // 3. RESPOND TO USER NOW (No more timeouts!)
         res.status(201).json(book);
+
+        // 4. BACKGROUND PROCESSOR (Async Worker)
+        (async () => {
+            try {
+                const baseName = path.parse(req.file.filename).name;
+                const outputPrefix = path.join(coversDir, baseName);
+
+                // Step A: Background Cloudinary Uploads
+                const [cloudPdfUrl, coverUrl] = await Promise.all([
+                    cloudinary.uploader.upload(pdfDiskPath, { folder: "storyteller_pdfs", resource_type: "raw" }).then(r => r.secure_url),
+                    new Promise((resolve) => {
+                        exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfDiskPath}" "${outputPrefix}"`, async (err) => {
+                            if (err) return resolve(null);
+                            const uploadRes = await cloudinary.uploader.upload(`${outputPrefix}.png`, { folder: "storyteller_covers" });
+                            await fs.remove(`${outputPrefix}.png`);
+                            resolve(uploadRes.secure_url);
+                        });
+                    })
+                ]);
+
+                // Update metadata so cover shows up in Library
+                await Book.findByIdAndUpdate(book._id, { pdfPath: cloudPdfUrl, cover: coverUrl });
+
+                // Step B: Initial OCR (First 5 pages)
+                let highQualText = "";
+                const instantLimit = Math.min(5, totalPages);
+
+                for (let i = 1; i <= instantLimit; i++) {
+                    const pageText = await extractPageTextGoogle(pdfDiskPath, i);
+                    highQualText += pageText + "\n\n";
+
+                    // Update live page-by-page
+                    await Book.findByIdAndUpdate(book._id, {
+                        content: highQualText,
+                        processedPages: i,
+                        status: i >= totalPages ? 'completed' : 'processing'
+                    });
+                }
+
+                if (await fs.pathExists(pdfDiskPath)) await fs.remove(pdfDiskPath);
+            } catch (bgErr) {
+                console.error("Background Worker Error:", bgErr);
+            }
+        })();
+
     } catch (err) {
-        console.error("Upload Error:", err);
-        if (req.file && await fs.pathExists(req.file.path)) await fs.remove(req.file.path);
+        console.error("Critical Upload Error:", err);
         res.status(500).json({ error: "Upload failed" });
     }
 });
