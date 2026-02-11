@@ -4,7 +4,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
     ChevronLeft, Loader2, MoreHorizontal, Type, List,
     RotateCcw, RotateCw, Play, Pause, MessageSquare,
-    Sparkles, Mic2, FileText, Download, Settings, ChevronUp, Scroll
+    Sparkles, Mic2, FileText, Download, Settings, ChevronUp,
+    Scroll, Share2, Search, Crop, FastForward, MessageCircle
 } from 'lucide-react';
 
 const Reader = () => {
@@ -20,20 +21,17 @@ const Reader = () => {
     const [isDigitalMode, setIsDigitalMode] = useState(false);
     const [viewMode, setViewMode] = useState('reading');
     const [menuOpen, setMenuOpen] = useState(false);
-    const [activeView, setActiveView] = useState('main');
 
     // TTS State
     const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
     const synth = window.speechSynthesis;
     const utteranceRef = useRef(null);
 
-    // Updated to match your backend port/URL
-    const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
+    const BACKEND_URL = "https://storyteller-b1i3.onrender.com";
 
-    // 1. Initial Fetch + Polling for Background Worker
+    // 1. Initial Fetch + Polling
     useEffect(() => {
         let pollInterval;
-
         const fetchBook = async () => {
             try {
                 const response = await fetch(`${BACKEND_URL}/api/books/${id}`);
@@ -41,19 +39,16 @@ const Reader = () => {
                 const data = await response.json();
                 setBook(data);
 
-                // Start polling if book is still in the "Scanning first pages" stage
-                if (data.status === 'processing' && (!data.content || data.content.length < 50)) {
+                if (data.status === 'processing') {
                     pollInterval = setInterval(async () => {
                         const res = await fetch(`${BACKEND_URL}/api/books/${id}`);
                         const updated = await res.json();
                         setBook(updated);
-                        if (updated.content?.length > 50 || updated.status === 'completed') {
-                            clearInterval(pollInterval);
-                        }
-                    }, 3000);
+                        if (updated.status === 'completed') clearInterval(pollInterval);
+                    }, 5000);
                 }
             } catch (err) {
-                console.error("Error fetching book data:", err);
+                console.error("Error fetching book:", err);
             } finally {
                 setLoading(false);
             }
@@ -67,49 +62,48 @@ const Reader = () => {
 
     // 2. TTS Controller
     useEffect(() => {
-        if (isPlaying) {
-            if (synth.paused) {
-                synth.resume();
-            } else {
-                synth.cancel();
-                const textToRead = viewMode === 'summary' ? book?.summary : book?.content;
-                if (textToRead) {
-                    const utterance = new SpeechSynthesisUtterance(textToRead);
-                    utterance.rate = playbackSpeed;
-                    utterance.onend = () => setIsPlaying(false);
-                    utteranceRef.current = utterance;
-                    synth.speak(utterance);
+        const handleSpeech = () => {
+            if (isPlaying) {
+                if (synth.paused) {
+                    synth.resume();
+                } else {
+                    synth.cancel();
+                    const textToRead = viewMode === 'summary' ? book?.summary : book?.content;
+                    if (textToRead?.trim()) {
+                        const utterance = new SpeechSynthesisUtterance(textToRead);
+                        utterance.rate = playbackSpeed;
+                        const voices = synth.getVoices();
+                        utterance.voice = voices.find(v => v.lang.includes('en-US')) || voices[0];
+                        utterance.onend = () => { if (!synth.speaking) setIsPlaying(false); };
+                        utteranceRef.current = utterance;
+                        synth.speak(utterance);
+                    }
                 }
+            } else {
+                if (synth.speaking) synth.pause();
             }
-        } else {
-            if (synth.speaking) synth.pause();
-        }
+        };
+        handleSpeech();
     }, [isPlaying, book?.content, book?.summary, viewMode, playbackSpeed]);
 
-    // 3. Lazy Loading Logic
+    // 3. Lazy Loading
     const loadMorePages = async () => {
         if (loadingMore || !book || book.status === 'completed') return;
-
         setLoadingMore(true);
         try {
             const response = await fetch(`${BACKEND_URL}/api/books/${id}/load-pages`);
-            if (!response.ok) throw new Error("Failed to load more pages");
             const data = await response.json();
-
             if (data.addedText) {
                 setBook(prev => {
-                    const newContent = prev.content + "\n\n" + data.addedText;
+                    const newContent = (prev.content || "") + "\n\n" + data.addedText;
                     return {
                         ...prev,
                         content: newContent,
                         processedPages: data.processedPages,
                         status: data.status,
-                        // Re-calculate words accurately
                         words: newContent.split(/\s+/).filter(w => w.length > 0).length
                     };
                 });
-            } else if (data.status === 'completed') {
-                setBook(prev => ({ ...prev, status: 'completed' }));
             }
         } catch (err) {
             console.error("Lazy load error:", err);
@@ -118,35 +112,22 @@ const Reader = () => {
         }
     };
 
-    // 4. Interaction Observer (The trigger for the bottom of the page)
+    // 4. Interaction Observer
     useEffect(() => {
         if (!isDigitalMode || viewMode !== 'reading' || book?.status === 'completed') return;
-
         const observer = new IntersectionObserver(
-            (entries) => {
-                if (entries[0].isIntersecting && !loadingMore) {
-                    loadMorePages();
-                }
-            },
-            { threshold: 0.1, rootMargin: '200px' } // Trigger 200px before reaching absolute bottom
+            (entries) => { if (entries[0].isIntersecting && !loadingMore) loadMorePages(); },
+            { threshold: 0.1, rootMargin: '200px' }
         );
-
         if (bottomObserverRef.current) observer.observe(bottomObserverRef.current);
         return () => observer.disconnect();
     }, [isDigitalMode, viewMode, book?.status, loadingMore]);
 
     const viewerUrl = useMemo(() => {
-        if (!book) return "";
-        const rawUrl = book.url || book.pdfPath;
+        const rawUrl = book?.url || book?.pdfPath;
         if (!rawUrl || rawUrl === "pending") return "";
         return `https://docs.google.com/viewer?url=${encodeURIComponent(rawUrl)}&embedded=true`;
     }, [book]);
-
-    const toggleSpeed = () => {
-        const speeds = [1.0, 1.5, 2.0, 0.75];
-        const nextSpeed = speeds[(speeds.indexOf(playbackSpeed) + 1) % speeds.length];
-        setPlaybackSpeed(nextSpeed);
-    };
 
     if (loading) return (
         <div style={styles.fullscreenCenter}>
@@ -161,7 +142,6 @@ const Reader = () => {
                     <button onClick={() => navigate(-1)} style={styles.backIcon}>
                         <ChevronLeft size={32} strokeWidth={2.5} />
                     </button>
-
                     <div style={styles.rightActions}>
                         <button style={styles.actionIcon}><Type size={22} /></button>
                         <button
@@ -174,39 +154,20 @@ const Reader = () => {
                         >
                             <FileText size={22} color="#fff" />
                         </button>
-                        <button
-                            onClick={() => { setActiveView('main'); setMenuOpen(true); }}
-                            style={styles.actionIcon}
-                        >
+                        <button onClick={() => setMenuOpen(true)} style={styles.actionIcon}>
                             <MoreHorizontal size={22} />
                         </button>
                     </div>
                 </div>
 
                 <nav style={styles.pillScroll}>
-                    <PillButton
-                        active={viewMode === 'reading'}
-                        onClick={() => setViewMode('reading')}
-                        icon={<MessageSquare size={16} fill={viewMode === 'reading' ? "white" : "none"} />}
-                        label="AI Chat"
-                    />
-                    <PillButton
-                        active={viewMode === 'summary'}
-                        onClick={() => setViewMode('summary')}
-                        icon={<Sparkles size={16} />}
-                        label="Summary"
-                    />
+                    <PillButton active={viewMode === 'reading'} onClick={() => setViewMode('reading')} icon={<MessageSquare size={16} />} label="AI Chat" />
+                    <PillButton active={viewMode === 'summary'} onClick={() => setViewMode('summary')} icon={<Sparkles size={16} />} label="Summary" />
                     <PillButton icon={<Mic2 size={16} />} label="Podcast" />
                 </nav>
             </header>
 
-            <main
-                ref={scrollRef}
-                style={{
-                    ...styles.viewerContainer,
-                    backgroundColor: isDigitalMode || viewMode === 'summary' ? '#000' : '#fff'
-                }}
-            >
+            <main ref={scrollRef} style={{ ...styles.viewerContainer, backgroundColor: isDigitalMode || viewMode === 'summary' ? '#000' : '#fff' }}>
                 {viewMode === 'summary' ? (
                     <div style={styles.digitalTextContainer}>
                         <h1 style={styles.digitalMainTitle}>AI Summary</h1>
@@ -216,66 +177,40 @@ const Reader = () => {
                     <div style={styles.digitalTextContainer}>
                         <h1 style={styles.digitalMainTitle}>{book?.title}</h1>
                         <div style={styles.digitalBodyText}>
-                            {book?.content?.split('\n').map((para, i) => (
-                                <p key={i} style={{ marginBottom: '1.5em' }}>{para}</p>
-                            ))}
-
-                            {/* Observer Target */}
+                            {book?.content?.split('\n').map((para, i) => <p key={i} style={{ marginBottom: '1.5em' }}>{para}</p>)}
                             <div ref={bottomObserverRef} style={styles.loadingTrigger}>
                                 {book?.status !== 'completed' ? (
-                                    <div style={styles.loadingMoreBox}>
-                                        <Loader2 className="animate-spin" size={20} />
-                                        <span>Loading page {book?.processedPages + 1} of {book?.totalPages}...</span>
-                                    </div>
-                                ) : (
-                                    <div style={styles.endOfBook}>• END OF DOCUMENT •</div>
-                                )}
+                                    <div style={styles.loadingMoreBox}><Loader2 className="animate-spin" size={20} /><span>Loading...</span></div>
+                                ) : <div style={styles.endOfBook}>• END OF DOCUMENT •</div>}
                             </div>
                         </div>
                     </div>
-                ) : (
-                    <iframe
-                        src={viewerUrl}
-                        style={styles.iframe}
-                        title="Document Viewer"
-                    />
-                )}
-
-                <button style={styles.floatingUpBtn} onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}>
-                    <ChevronUp size={24} />
-                </button>
+                ) : <iframe src={viewerUrl} style={styles.iframe} title="Viewer" />}
             </main>
 
             {menuOpen && (
                 <div style={styles.overlay} onClick={() => setMenuOpen(false)}>
                     <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.dragHandle} />
-                        <MainMenu book={book} setActiveView={setActiveView} />
+                        <MainMenu book={book} />
                     </div>
                 </div>
             )}
 
             <footer style={styles.bottomPlayer}>
-                <div style={styles.progressBarWrapper}>
-                    <div style={styles.progressBase}>
-                        <div style={{ ...styles.progressFill, width: `${(book?.processedPages / book?.totalPages) * 100}%` }} />
-                    </div>
-                    <div style={styles.timeLabels}>
-                        <span>{book?.processedPages} / {book?.totalPages} pages</span>
-                        <span style={{ color: '#a1a1aa' }}>{book?.words?.toLocaleString()} words</span>
-                    </div>
+                <div style={styles.progressBase}>
+                    <div style={{ ...styles.progressFill, width: `${(book?.processedPages / book?.totalPages) * 100}%` }} />
                 </div>
-
                 <div style={styles.controlRow}>
                     <div style={styles.flagBox}>🇺🇸</div>
                     <div style={styles.mainButtons}>
-                        <button style={styles.skipBtn} onClick={() => { synth.cancel(); setIsPlaying(false); }}><RotateCcw size={30} /><span style={styles.skipNum}>R</span></button>
+                        <button style={styles.skipBtn} onClick={() => synth.cancel()}><RotateCcw size={30} /></button>
                         <button onClick={() => setIsPlaying(!isPlaying)} style={styles.playBtn}>
-                            {isPlaying ? <Pause size={30} fill="white" /> : <Play size={30} fill="white" style={{ marginLeft: '4px' }} />}
+                            {isPlaying ? <Pause size={30} fill="white" /> : <Play size={30} fill="white" />}
                         </button>
-                        <button style={styles.skipBtn}><RotateCw size={30} /><span style={styles.skipNum}>S</span></button>
+                        <button style={styles.skipBtn}><RotateCw size={30} /></button>
                     </div>
-                    <button onClick={toggleSpeed} style={styles.speedPill}>{playbackSpeed}×</button>
+                    <button onClick={() => setPlaybackSpeed(p => p === 2 ? 0.75 : p + 0.25)} style={styles.speedPill}>{playbackSpeed}×</button>
                 </div>
             </footer>
         </div>,
@@ -283,33 +218,52 @@ const Reader = () => {
     );
 };
 
-// ... (PillButton, MainMenu, MenuOption components remain the same as your original)
-
 const PillButton = ({ active, onClick, icon, label }) => (
-    <button
-        onClick={onClick}
-        style={{ ...styles.pill, backgroundColor: active ? '#4f46e5' : '#27272a' }}
-    >
+    <button onClick={onClick} style={{ ...styles.pill, backgroundColor: active ? '#4f46e5' : '#27272a' }}>
         {icon} {label}
     </button>
 );
 
-const MainMenu = ({ book }) => (
-    <div style={styles.menuContent}>
-        <div style={styles.bookInfoCard}>
-            <div style={styles.miniCover}><FileText size={24} color="#6366f1" /></div>
-            <div style={{ flex: 1 }}>
-                <div style={styles.bookTitleSmall}>{book?.title}</div>
-                <div style={styles.bookMetaSmall}>{book?.totalPages} pages • PDF</div>
+const MainMenu = ({ book }) => {
+    const [autoHide, setAutoHide] = useState(false);
+    const [autoScroll, setAutoScroll] = useState(true);
+
+    return (
+        <div style={styles.menuContent}>
+            <div style={styles.menuHeader}>
+                <div style={styles.bookInfoCard}>
+                    <div style={styles.miniCover}><FileText size={24} color="#6366f1" /></div>
+                    <div style={{ flex: 1 }}>
+                        <div style={styles.bookTitleSmall}>{book?.title || "Untitled"}</div>
+                        <div style={styles.bookMetaSmall}>{(book?.words / 1000).toFixed(1)}k words • {book?.totalPages} pages</div>
+                    </div>
+                </div>
+                <button style={styles.shareBtn}><Share2 size={24} color="#fff" /></button>
             </div>
-            <Download size={20} color="#a1a1aa" />
+
+            <div style={styles.optionsContainer}>
+                <div style={styles.optionGroup}>
+                    <MenuOption icon={<List size={22} />} label="Table of Contents" />
+                </div>
+                <div style={styles.optionGroup}>
+                    <MenuOption icon={<Download size={22} />} label="Download Audio" sub="Listen with the best voices offline" />
+                </div>
+                <div style={styles.optionGroup}>
+                    <MenuOption icon={<Crop size={22} />} label="Adjust Document" sub="Crop, columns and more" />
+                    <MenuOption icon={<Search size={22} />} label="Search Document" />
+                    <MenuOption icon={<FastForward size={22} />} label="Auto skip content" sub="Headers, footers, citations, etc." />
+                </div>
+                <div style={styles.optionGroup}>
+                    <MenuOption icon={<Settings size={22} />} label="Auto-Hide Player" toggle active={autoHide} onClick={() => setAutoHide(!autoHide)} />
+                    <MenuOption icon={<Scroll size={22} />} label="Auto-Scroll" toggle active={autoScroll} onClick={() => setAutoScroll(!autoScroll)} />
+                </div>
+                <div style={styles.optionGroup}>
+                    <MenuOption icon={<MessageCircle size={22} />} label="Submit Feedback" />
+                </div>
+            </div>
         </div>
-        <div style={styles.optionsList}>
-            <MenuOption icon={<List size={20} />} label="Table of Contents" />
-            <MenuOption icon={<Scroll size={20} />} label="Auto-Scroll" toggle={true} active={true} />
-        </div>
-    </div>
-);
+    );
+};
 
 const MenuOption = ({ icon, label, sub, toggle, active, onClick }) => (
     <button style={styles.optionBtn} onClick={onClick}>
@@ -319,55 +273,53 @@ const MenuOption = ({ icon, label, sub, toggle, active, onClick }) => (
             {sub && <div style={styles.optionSub}>{sub}</div>}
         </div>
         {toggle && (
-            <div style={{ ...styles.toggleBase, backgroundColor: active ? '#4f46e5' : '#3f3f3f' }}>
-                <div style={{ ...styles.toggleCircle, left: active ? '22px' : '2px' }} />
+            <div style={{ ...styles.toggleBase, backgroundColor: active ? '#5865F2' : '#3F3F46' }}>
+                <div style={{ ...styles.toggleCircle, transform: active ? 'translateX(20px)' : 'translateX(0px)' }} />
             </div>
         )}
     </button>
 );
 
-// Styles (mostly same, ensuring loading triggers look good)
 const styles = {
     fullscreenCenter: { height: '100vh', backgroundColor: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center' },
     container: { position: 'fixed', inset: 0, backgroundColor: '#000', display: 'flex', flexDirection: 'column', zIndex: 9999 },
     topNav: { paddingTop: '10px', paddingBottom: '12px' },
     navRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 12px' },
-    backIcon: { background: 'none', border: 'none', color: '#fff', padding: '4px' },
+    backIcon: { background: 'none', border: 'none', color: '#fff' },
     rightActions: { display: 'flex', gap: '12px' },
-    actionIcon: { background: 'none', border: 'none', color: '#fff', padding: '8px', display: 'flex', alignItems: 'center' },
+    actionIcon: { background: 'none', border: 'none', color: '#fff', padding: '8px' },
     pillScroll: { display: 'flex', gap: '8px', overflowX: 'auto', padding: '12px 16px' },
-    pill: { display: 'flex', alignItems: 'center', gap: '6px', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '12px', fontSize: '14px', whiteSpace: 'nowrap' },
-    viewerContainer: { flex: 1, position: 'relative', overflowY: 'auto' },
+    pill: { display: 'flex', alignItems: 'center', gap: '6px', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '20px', fontSize: '14px', whiteSpace: 'nowrap' },
+    viewerContainer: { flex: 1, overflowY: 'auto' },
     iframe: { width: '100%', height: '100%', border: 'none' },
     digitalTextContainer: { padding: '40px 24px', color: '#fff' },
-    digitalMainTitle: { fontSize: '28px', fontWeight: 'bold', marginBottom: '24px' },
-    digitalBodyText: { fontSize: '19px', lineHeight: '1.6', color: '#e4e4e7' },
-    loadingTrigger: { padding: '60px 0', display: 'flex', justifyContent: 'center' },
-    loadingMoreBox: { display: 'flex', alignItems: 'center', gap: '10px', color: '#71717a' },
-    endOfBook: { color: '#3f3f46', fontSize: '12px', letterSpacing: '2px' },
-    floatingUpBtn: { position: 'absolute', bottom: '20px', right: '20px', backgroundColor: '#27272a', color: '#fff', padding: '12px', borderRadius: '14px', border: 'none' },
-    overlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', zIndex: 10000, display: 'flex', alignItems: 'end' },
-    sheet: { width: '100%', backgroundColor: '#1c1c1e', borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '20px' },
-    dragHandle: { width: '40px', height: '4px', backgroundColor: '#3f3f46', borderRadius: '2px', margin: '0 auto 20px' },
-    bookInfoCard: { display: 'flex', gap: '12px', padding: '12px', backgroundColor: '#27272a', borderRadius: '12px' },
-    miniCover: { width: '40px', height: '56px', backgroundColor: '#000', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-    bookTitleSmall: { color: '#fff', fontSize: '14px', fontWeight: '600' },
-    bookMetaSmall: { color: '#71717a', fontSize: '12px' },
-    optionBtn: { display: 'flex', alignItems: 'center', gap: '12px', width: '100%', padding: '12px 0', background: 'none', border: 'none' },
-    optionIcon: { color: '#71717a' },
+    digitalMainTitle: { fontSize: '24px', fontWeight: 'bold', marginBottom: '20px' },
+    digitalBodyText: { fontSize: '18px', lineHeight: '1.6', color: '#e4e4e7' },
+    overlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'end' },
+    sheet: { width: '100%', backgroundColor: '#18181B', borderTopLeftRadius: '28px', borderTopRightRadius: '28px', padding: '12px 16px 40px', maxHeight: '85vh', overflowY: 'auto' },
+    dragHandle: { width: '36px', height: '4px', backgroundColor: '#3F3F46', borderRadius: '2px', margin: '0 auto 16px' },
+    menuHeader: { display: 'flex', alignItems: 'center', marginBottom: '20px' },
+    bookInfoCard: { display: 'flex', flex: 1, gap: '12px', alignItems: 'center' },
+    miniCover: { width: '44px', height: '56px', backgroundColor: '#27272A', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+    bookTitleSmall: { color: '#fff', fontSize: '15px', fontWeight: '600' },
+    bookMetaSmall: { color: '#A1A1AA', fontSize: '12px' },
+    shareBtn: { background: 'none', border: 'none' },
+    optionsContainer: { display: 'flex', flexDirection: 'column', gap: '12px' },
+    optionGroup: { backgroundColor: '#27272A', borderRadius: '16px', overflow: 'hidden' },
+    optionBtn: { display: 'flex', alignItems: 'center', gap: '16px', width: '100%', padding: '16px', background: 'none', border: 'none' },
+    optionIcon: { color: '#E4E4E7' },
     optionLabel: { color: '#fff', fontSize: '16px' },
-    toggleBase: { width: '44px', height: '24px', borderRadius: '12px', position: 'relative' },
-    toggleCircle: { width: '20px', height: '20px', backgroundColor: '#fff', borderRadius: '50%', position: 'absolute', top: '2px' },
+    optionSub: { color: '#A1A1AA', fontSize: '12px' },
+    toggleBase: { width: '44px', height: '24px', borderRadius: '12px', padding: '2px' },
+    toggleCircle: { width: '20px', height: '20px', backgroundColor: '#fff', borderRadius: '50%', transition: '0.2s' },
     bottomPlayer: { backgroundColor: '#000', padding: '20px 24px 40px' },
     progressBase: { height: '4px', backgroundColor: '#27272a', borderRadius: '2px' },
-    progressFill: { height: '100%', backgroundColor: '#4f46e5', borderRadius: '2px' },
-    timeLabels: { display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '12px', color: '#71717a' },
+    progressFill: { height: '100%', backgroundColor: '#4f46e5' },
     controlRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' },
     flagBox: { padding: '8px', backgroundColor: '#1c1c1e', borderRadius: '8px' },
     mainButtons: { display: 'flex', alignItems: 'center', gap: '24px' },
     playBtn: { width: '56px', height: '56px', backgroundColor: '#4f46e5', borderRadius: '28px', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-    skipBtn: { background: 'none', border: 'none', color: '#fff', position: 'relative' },
-    skipNum: { position: 'absolute', top: '10px', fontSize: '10px', width: '100%', textAlign: 'center', fontWeight: 'bold' },
+    skipBtn: { background: 'none', border: 'none', color: '#fff' },
     speedPill: { color: '#fff', backgroundColor: '#1c1c1e', padding: '6px 12px', borderRadius: '12px', border: 'none', fontWeight: 'bold' }
 };
 
