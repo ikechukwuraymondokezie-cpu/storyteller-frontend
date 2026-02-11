@@ -86,22 +86,31 @@ const Reader = () => {
         }
     }, [isPlaying, book?.content, book?.summary, viewMode]);
 
-    // 3. Lazy Loading Logic (Infinite Scroll)
+    // 3. Lazy Loading Logic (Infinite Scroll) - FIXED to force load
     const loadMorePages = async () => {
-        if (loadingMore || !book || book.status === 'completed') return;
+        // Only stop if we are ALREADY loading or if there is no book data.
+        // We ignore "status === completed" here because the status might be wrong.
+        if (loadingMore || !book) return;
+
         setLoadingMore(true);
         try {
             const response = await fetch(`${BACKEND_URL}/api/books/${id}/load-pages`);
             if (!response.ok) throw new Error("Failed to load more pages");
             const data = await response.json();
 
-            setBook(prev => ({
-                ...prev,
-                content: prev.content + "\n" + data.addedText,
-                processedPages: data.processedPages,
-                status: data.status,
-                words: (prev.content + data.addedText).split(/\s+/).filter(w => w.length > 0).length
-            }));
+            // Only append if the backend actually sent new text
+            if (data.addedText && data.addedText.trim().length > 0) {
+                setBook(prev => ({
+                    ...prev,
+                    content: prev.content + "\n" + data.addedText,
+                    processedPages: data.processedPages,
+                    status: data.status,
+                    words: (prev.content + data.addedText).split(/\s+/).filter(w => w.length > 0).length
+                }));
+            } else {
+                // If backend sent nothing, we can safely mark as completed locally
+                setBook(prev => ({ ...prev, status: 'completed' }));
+            }
         } catch (err) {
             console.error("Lazy load error:", err);
         } finally {
@@ -109,12 +118,14 @@ const Reader = () => {
         }
     };
 
-    // 4. Intersection Observer for bottom trigger
+    // 4. Intersection Observer for bottom trigger - FIXED status condition
     useEffect(() => {
         if (!isDigitalMode || viewMode !== 'reading') return;
         const observer = new IntersectionObserver(
             (entries) => {
-                if (entries[0].isIntersecting && book?.status === 'processing' && !loadingMore) {
+                // Trigger load if user sees the bottom AND we aren't already loading 
+                // AND the local state doesn't show it's truly completed.
+                if (entries[0].isIntersecting && !loadingMore && book?.status !== 'completed') {
                     loadMorePages();
                 }
             },
@@ -228,7 +239,7 @@ const Reader = () => {
                                         <p key={i} style={{ marginBottom: '1.5em' }}>{para}</p>
                                     ))}
                                     <div ref={bottomObserverRef} style={styles.loadingTrigger}>
-                                        {book.status === 'processing' ? (
+                                        {book.status !== 'completed' ? (
                                             <div style={styles.loadingMoreBox}>
                                                 <Loader2 className="animate-spin" size={20} />
                                                 <span>Loading more pages ({book.processedPages} / {book.totalPages})</span>

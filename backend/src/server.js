@@ -137,7 +137,7 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
 /* -------------------- API ROUTES -------------------- */
 
-// LAZY LOAD
+// LAZY LOAD - Updated to handle file checking and range validation
 app.get("/api/books/:id/load-pages", async (req, res) => {
     let tempPdfPath = "";
     try {
@@ -147,34 +147,47 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
         const startPage = book.processedPages + 1;
         const endPage = Math.min(startPage + 4, book.totalPages);
 
-        if (startPage > book.totalPages) return res.json({ message: "End", addedText: "" });
+        if (startPage > book.totalPages) {
+            return res.json({ message: "End", addedText: "", status: 'completed' });
+        }
 
         tempPdfPath = path.join(uploadDir, `temp_load_${book._id}.pdf`);
-        const response = await fetch(book.pdfPath);
-        const arrayBuffer = await response.arrayBuffer();
-        await fs.writeFile(tempPdfPath, Buffer.from(arrayBuffer));
+
+        // Cache management: Check if the file already exists locally to speed up processing
+        if (!(await fs.pathExists(tempPdfPath))) {
+            const response = await fetch(book.pdfPath);
+            if (!response.ok) throw new Error("Could not fetch PDF from storage");
+            const arrayBuffer = await response.arrayBuffer();
+            await fs.writeFile(tempPdfPath, Buffer.from(arrayBuffer));
+        }
 
         const pagePromises = [];
         for (let i = startPage; i <= endPage; i++) {
             pagePromises.push(extractPageTextGoogle(tempPdfPath, i));
         }
+
         const results = await Promise.all(pagePromises);
-        const newText = results.join("\n\n");
+        const newText = results.filter(t => t).join("\n\n");
 
         const updatedContent = book.content + "\n" + newText;
-        await Book.findByIdAndUpdate(req.params.id, {
+        const isFinished = endPage >= book.totalPages;
+
+        const updatedBook = await Book.findByIdAndUpdate(req.params.id, {
             content: updatedContent,
             processedPages: endPage,
-            status: endPage === book.totalPages ? 'completed' : 'processing'
-        });
+            status: isFinished ? 'completed' : 'processing'
+        }, { new: true });
 
-        res.json({ addedText: newText, processedPages: endPage });
+        res.json({
+            addedText: newText,
+            processedPages: endPage,
+            status: updatedBook.status
+        });
     } catch (err) {
         console.error("Lazy load error:", err);
         res.status(500).json({ error: "Lazy load failed" });
-    } finally {
-        if (tempPdfPath && await fs.pathExists(tempPdfPath)) await fs.remove(tempPdfPath);
     }
+    // We do not delete the file here so the next chunk is processed faster
 });
 
 // UPLOAD (Speechify Version: Instant Response + Background Processing)
