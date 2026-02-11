@@ -28,7 +28,7 @@ const Reader = () => {
     const utteranceRef = useRef(null);
 
     // Updated to match your backend port/URL
-    const BACKEND_URL = "https://storyteller-b1i3.onrender.com";
+    const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
     // 1. Initial Fetch + Polling for Background Worker
     useEffect(() => {

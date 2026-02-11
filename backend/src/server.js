@@ -7,9 +7,9 @@ const path = require("path");
 const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
+const axios = require("axios"); // Added for reliable PDF fetching
 
 // Standard imports
-const pdf = require("pdf-parse");
 const vision = require('@google-cloud/vision');
 
 const app = express();
@@ -111,7 +111,6 @@ const formatBook = (book) => ({
     createdAt: book.createdAt
 });
 
-// Robust Page Counting Helper
 function getPageCount(pdfPath) {
     return new Promise((resolve) => {
         exec(`pdfinfo "${pdfPath}" | grep Pages: | awk '{print $2}'`, (err, stdout) => {
@@ -148,7 +147,7 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
 /* -------------------- API ROUTES -------------------- */
 
-// LAZY LOAD
+// LAZY LOAD ADJUSTED
 app.get("/api/books/:id/load-pages", async (req, res) => {
     let tempPdfPath = "";
     try {
@@ -164,11 +163,10 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
 
         tempPdfPath = path.join(uploadDir, `temp_load_${book._id}.pdf`);
 
+        // Use Axios for arraybuffer download (more stable on Render)
         if (!(await fs.pathExists(tempPdfPath))) {
-            const response = await fetch(book.pdfPath);
-            if (!response.ok) throw new Error("Could not fetch PDF");
-            const arrayBuffer = await response.arrayBuffer();
-            await fs.writeFile(tempPdfPath, Buffer.from(arrayBuffer));
+            const response = await axios.get(book.pdfPath, { responseType: 'arraybuffer' });
+            await fs.writeFile(tempPdfPath, Buffer.from(response.data));
         }
 
         const pagePromises = [];
@@ -179,7 +177,7 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
         const results = await Promise.all(pagePromises);
         const newText = results.filter(t => t).join("\n\n");
 
-        const updatedContent = book.content + "\n\n" + newText;
+        const updatedContent = (book.content || "") + "\n\n" + newText;
         const newWordCount = updatedContent.split(/\s+/).filter(w => w.length > 0).length;
         const isFinished = endPage >= book.totalPages;
 
@@ -190,44 +188,45 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
             status: isFinished ? 'completed' : 'processing'
         }, { new: true });
 
+        // Cleanup temp file ONLY when fully finished
+        if (isFinished && await fs.pathExists(tempPdfPath)) {
+            await fs.remove(tempPdfPath);
+        }
+
         res.json({
             addedText: newText,
             processedPages: endPage,
             status: updatedBook.status
         });
     } catch (err) {
-        console.error("Lazy load error:", err);
+        console.error("Lazy load error:", err.message);
         res.status(500).json({ error: "Lazy load failed" });
     }
 });
 
-// UPLOAD
+// UPLOAD ADJUSTED
 app.post("/api/books", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
         const pdfPath = req.file.path;
-
-        // 1. Get Real Page Count
         const totalPages = await getPageCount(pdfPath);
         console.log(`✅ File: ${req.file.originalname} | Total Pages: ${totalPages}`);
 
-        // 2. Create Placeholder with real page count but estimated words
         const book = await Book.create({
             title: req.body.title || req.file.originalname.replace(/\.[^/.]+$/, ""),
             folder: req.body.folder || "All",
             pdfPath: "pending",
             cover: "https://via.placeholder.com/300x450?text=Processing...",
-            content: "Scanning first pages...",
+            content: "Scanning initial pages...",
             totalPages,
-            words: totalPages * 300,
+            words: 0,
             status: 'processing'
         });
 
-        // 3. Respond Immediately
         res.status(201).json(formatBook(book));
 
-        // 4. Background Worker
+        // Background Worker
         (async () => {
             try {
                 const baseName = path.parse(req.file.filename).name;
@@ -252,8 +251,6 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
                 for (let i = 1; i <= limit; i++) {
                     const pageText = await extractPageTextGoogle(pdfPath, i);
                     runningContent += pageText + "\n\n";
-
-                    // RECALCULATE REAL WORDS
                     const actualWords = runningContent.split(/\s+/).filter(w => w.length > 0).length;
 
                     await Book.findByIdAndUpdate(book._id, {
@@ -264,10 +261,11 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
                     });
                 }
 
-                // Only delete when the initial batch is finished
                 if (await fs.pathExists(pdfPath)) await fs.remove(pdfPath);
-                console.log(`✅ Finished processing initial pages for ${book.title}`);
-            } catch (bgErr) { console.error("BG Error:", bgErr); }
+                console.log(`✅ Initial batch complete for: ${book.title}`);
+            } catch (bgErr) {
+                console.error("BG Worker Error:", bgErr.message);
+            }
         })();
 
     } catch (err) {
@@ -276,7 +274,7 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
     }
 });
 
-/* --- FOLDER ROUTES --- */
+/* --- OTHER ROUTES --- */
 app.get("/api/books/folders", async (_, res) => {
     try {
         const folders = await Folder.find().sort({ name: 1 });
@@ -299,7 +297,6 @@ app.delete("/api/books/folders/:name", async (req, res) => {
     } catch { res.status(500).json({ error: "Failed" }); }
 });
 
-/* --- MANAGEMENT ROUTES --- */
 app.get("/api/books", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
@@ -334,7 +331,8 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", async () => {
     console.log(`✅ Server running on port ${PORT}`);
     try {
+        // Clear temp files on restart
         await fs.emptyDir(uploadDir);
         await fs.emptyDir(coversDir);
-    } catch (e) { console.warn("Cleanup failed"); }
+    } catch (e) { console.warn("Initial cleanup failed"); }
 });
