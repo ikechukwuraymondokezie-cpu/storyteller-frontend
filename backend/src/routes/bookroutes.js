@@ -6,7 +6,7 @@ const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
 const axios = require("axios");
 
-// FIX: Standard import (subpath imports cause ERR_PACKAGE_PATH_NOT_EXPORTED)
+// FIX: Standard import
 const pdf = require("pdf-parse");
 const vision = require('@google-cloud/vision');
 
@@ -25,7 +25,7 @@ try {
         });
         console.log("✅ Vision Client Ready");
     } else {
-        console.warn("⚠️ Vision credentials missing or invalid in Environment Variables");
+        console.warn("⚠️ Vision credentials missing or invalid");
     }
 } catch (err) {
     console.error("❌ Google Vision Parse Error:", err.message);
@@ -55,26 +55,28 @@ const upload = multer({
 /* ---------------- HELPERS ---------------- */
 
 async function extractPageTextGoogle(pdfPath, pageNum) {
-    if (!visionClient) return "[OCR Error: Vision Client not initialized]";
+    if (!visionClient) return "";
 
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
     const pageImgBase = path.join(coversDir, `google_tmp_${pageNum}_${uniqueId}`);
     const pageImgFull = `${pageImgBase}.png`;
 
     try {
+        console.log(`[OCR] Page ${pageNum}: Extracting image...`);
         await new Promise((resolve, reject) => {
             exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
 
+        console.log(`[OCR] Page ${pageNum}: Sending to Google Vision...`);
         const [result] = await visionClient.textDetection(pageImgFull);
         const text = result.fullTextAnnotation ? result.fullTextAnnotation.text : "";
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
         return text;
     } catch (e) {
-        console.error(`Google OCR Error on page ${pageNum}:`, e);
+        console.error(`❌ Google OCR Error on page ${pageNum}:`, e.message);
         return "";
     }
 }
@@ -103,11 +105,13 @@ router.get("/:id/load-pages", async (req, res) => {
             writer.on('error', reject);
         });
 
-        let newText = "";
+        // Parallel processing for lazy load
+        const pagePromises = [];
         for (let i = startPage; i <= endPage; i++) {
-            const text = await extractPageTextGoogle(tempPath, i);
-            newText += text + "\n\n";
+            pagePromises.push(extractPageTextGoogle(tempPath, i));
         }
+        const results = await Promise.all(pagePromises);
+        const newText = results.join("\n\n");
 
         const updatedContent = book.content + "\n" + newText;
         const finalStatus = endPage >= book.totalPages ? 'completed' : 'processing';
@@ -138,18 +142,17 @@ router.post("/", upload.single("file"), async (req, res) => {
 
         const dataBuffer = await fs.readFile(pdfDiskPath);
 
-        // FIX: Bulletproof check for pdf-parse structure
         let pdfData;
         if (typeof pdf === 'function') {
             pdfData = await pdf(dataBuffer);
         } else if (pdf && typeof pdf.default === 'function') {
             pdfData = await pdf.default(dataBuffer);
         } else {
-            console.warn("⚠️ pdf-parse loaded incorrectly, using fallback.");
             pdfData = { numpages: 1 };
         }
 
         const totalPages = pdfData.numpages || 1;
+        console.log(`📖 Uploading "${req.file.originalname}" - ${totalPages} pages.`);
 
         const generateCover = () => new Promise((resolve) => {
             exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfDiskPath}" "${outputPrefix}"`, async (error) => {
@@ -173,12 +176,18 @@ router.post("/", upload.single("file"), async (req, res) => {
 
         const [coverUrl, cloudPdfUrl] = await Promise.all([generateCover(), uploadPdfToCloud()]);
 
+        // PARALLEL OCR: Processing first 5 pages at once
         const instantLimit = Math.min(5, totalPages);
-        let initialText = "";
+        console.log(`⚡ Processing first ${instantLimit} pages in parallel...`);
+
+        const pagePromises = [];
         for (let i = 1; i <= instantLimit; i++) {
-            const text = await extractPageTextGoogle(pdfDiskPath, i);
-            initialText += text + "\n\n";
+            pagePromises.push(extractPageTextGoogle(pdfDiskPath, i));
         }
+
+        const pagesResults = await Promise.all(pagePromises);
+        const initialText = pagesResults.join("\n\n");
+        const wordCount = initialText.split(/\s+/).filter(w => w.length > 0).length;
 
         const book = await Book.create({
             title: req.file.originalname.replace(/\.[^/.]+$/, ""),
@@ -189,10 +198,11 @@ router.post("/", upload.single("file"), async (req, res) => {
             totalPages: totalPages,
             processedPages: instantLimit,
             status: totalPages <= instantLimit ? 'completed' : 'processing',
-            words: initialText.split(/\s+/).filter(w => w.length > 0).length
+            words: wordCount
         });
 
         if (await fs.pathExists(pdfDiskPath)) await fs.remove(pdfDiskPath);
+        console.log(`✅ Upload Successful: ${wordCount} words extracted.`);
 
         res.status(201).json(book);
     } catch (err) {

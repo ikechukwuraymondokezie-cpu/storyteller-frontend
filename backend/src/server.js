@@ -120,19 +120,21 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
     const pageImgFull = `${pageImgBase}.png`;
 
     try {
+        console.log(`[OCR] Page ${pageNum}: Extracting image...`);
         await new Promise((resolve, reject) => {
             exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
 
+        console.log(`[OCR] Page ${pageNum}: Sending to Google Vision...`);
         const [result] = await visionClient.textDetection(pageImgFull);
         const text = result.fullTextAnnotation ? result.fullTextAnnotation.text : "";
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
         return text;
     } catch (e) {
-        console.error(`Google OCR Error on page ${pageNum}:`, e);
+        console.error(`❌ Google OCR Error on page ${pageNum}:`, e.message);
         return "";
     }
 }
@@ -156,11 +158,13 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
         const arrayBuffer = await response.arrayBuffer();
         await fs.writeFile(tempPdfPath, Buffer.from(arrayBuffer));
 
-        let newText = "";
+        // Process these in parallel as well for speed
+        const pagePromises = [];
         for (let i = startPage; i <= endPage; i++) {
-            const text = await extractPageTextGoogle(tempPdfPath, i);
-            newText += text + "\n\n";
+            pagePromises.push(extractPageTextGoogle(tempPdfPath, i));
         }
+        const results = await Promise.all(pagePromises);
+        const newText = results.join("\n\n");
 
         const updatedContent = book.content + "\n" + newText;
         await Book.findByIdAndUpdate(req.params.id, {
@@ -192,18 +196,17 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
 
         const dataBuffer = await fs.readFile(pdfPath);
 
-        // BULLETPROOF: Check both function and .default wrapper
         let pdfData;
         if (typeof pdf === 'function') {
             pdfData = await pdf(dataBuffer);
         } else if (pdf && typeof pdf.default === 'function') {
             pdfData = await pdf.default(dataBuffer);
         } else {
-            console.warn("⚠️ pdf-parse loaded incorrectly, using fallback.");
             pdfData = { numpages: 1 };
         }
 
         const totalPages = pdfData.numpages || 1;
+        console.log(`📖 Uploading "${title}" - ${totalPages} total pages.`);
 
         const generateThumbnail = () => new Promise((resolve) => {
             exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfPath}" "${outputPrefix}"`, async (error) => {
@@ -227,12 +230,18 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
 
         const [pdfUrl, coverUrl] = await Promise.all([uploadPdfToCloud(), generateThumbnail()]);
 
+        // PARALLEL PROCESSING: Fire all 5 OCR requests at once
         const instantLimit = Math.min(5, totalPages);
-        let initialContent = "";
+        console.log(`⚡ Processing first ${instantLimit} pages in parallel...`);
+
+        const pagePromises = [];
         for (let i = 1; i <= instantLimit; i++) {
-            const text = await extractPageTextGoogle(pdfPath, i);
-            initialContent += text + "\n\n";
+            pagePromises.push(extractPageTextGoogle(pdfPath, i));
         }
+
+        const pagesResults = await Promise.all(pagePromises);
+        const initialContent = pagesResults.join("\n\n");
+        const wordCount = initialContent.split(/\s+/).filter(w => w.length > 0).length;
 
         const book = await Book.create({
             title,
@@ -243,12 +252,13 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
             totalPages,
             processedPages: instantLimit,
             status: totalPages <= instantLimit ? 'completed' : 'processing',
-            words: initialContent.split(/\s+/).filter(w => w.length > 0).length
+            words: wordCount
         });
 
         if (await fs.pathExists(pdfPath)) await fs.remove(pdfPath);
-
+        console.log(`✅ Book created with ${wordCount} words.`);
         res.status(201).json(formatBook(book));
+
     } catch (err) {
         console.error("Upload error:", err);
         if (req.file && await fs.pathExists(req.file.path)) await fs.remove(req.file.path);
@@ -311,18 +321,17 @@ app.delete("/api/books/:id", async (req, res) => {
 /* --- SERVER START & CLEANUP --- */
 const PORT = process.env.PORT || 10000;
 
-// Cleanup helper to keep Render disk usage low
 const clearTempFolders = async () => {
     try {
         await fs.emptyDir(uploadDir);
         await fs.emptyDir(coversDir);
         console.log("🧹 Disk Space Managed: Temp folders cleared.");
     } catch (err) {
-        console.warn("⚠️ Cleanup on startup failed (non-critical):", err.message);
+        console.warn("⚠️ Cleanup on startup failed:", err.message);
     }
 };
 
 app.listen(PORT, "0.0.0.0", async () => {
     console.log(`✅ Server running on port ${PORT}`);
-    await clearTempFolders(); // Wipe disk on start
+    await clearTempFolders();
 });
