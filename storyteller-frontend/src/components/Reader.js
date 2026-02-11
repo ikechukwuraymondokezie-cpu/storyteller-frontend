@@ -12,9 +12,11 @@ const Reader = () => {
     const { id } = useParams();
     const navigate = useNavigate();
     const scrollRef = useRef(null);
+    const bottomObserverRef = useRef(null); // Ref for the scroll-trigger
 
     const [book, setBook] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false); // Tracking lazy load status
     const [isPlaying, setIsPlaying] = useState(false);
     const [isDigitalMode, setIsDigitalMode] = useState(false);
     const [viewMode, setViewMode] = useState('reading');
@@ -23,6 +25,7 @@ const Reader = () => {
 
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
+    // 1. Initial Fetch
     useEffect(() => {
         const fetchBook = async () => {
             try {
@@ -39,7 +42,52 @@ const Reader = () => {
         fetchBook();
     }, [id]);
 
-    // Memoize the URL to prevent iframe reloads on every state change
+    // 2. Lazy Loading Logic (Infinite Scroll)
+    const loadMorePages = async () => {
+        if (loadingMore || !book || book.status === 'completed') return;
+
+        setLoadingMore(true);
+        try {
+            const response = await fetch(`${BACKEND_URL}/api/books/${id}/load-pages`);
+            if (!response.ok) throw new Error("Failed to load more pages");
+            const data = await response.json();
+
+            setBook(prev => ({
+                ...prev,
+                content: prev.content + "\n" + data.addedText,
+                processedPages: data.processedPages,
+                status: data.status,
+                // Recalculate word count locally for immediate UI update
+                words: (prev.content + data.addedText).split(/\s+/).filter(w => w.length > 0).length
+            }));
+        } catch (err) {
+            console.error("Lazy load error:", err);
+        } finally {
+            setLoadingMore(false);
+        }
+    };
+
+    // 3. Set up Intersection Observer for the bottom of the text
+    useEffect(() => {
+        if (!isDigitalMode || viewMode !== 'reading') return;
+
+        const observer = new IntersectionObserver(
+            (entries) => {
+                if (entries[0].isIntersecting && book?.status === 'processing') {
+                    console.log("Bottom reached! Loading more...");
+                    loadMorePages();
+                }
+            },
+            { threshold: 0.1 }
+        );
+
+        if (bottomObserverRef.current) {
+            observer.observe(bottomObserverRef.current);
+        }
+
+        return () => observer.disconnect();
+    }, [isDigitalMode, viewMode, book?.status, loadingMore]);
+
     const viewerUrl = useMemo(() => {
         if (!book) return "";
         const rawUrl = book.url || book.pdfPath || book.filePath;
@@ -63,7 +111,6 @@ const Reader = () => {
 
     return ReactDOM.createPortal(
         <div style={styles.container}>
-            {/* Top Navigation */}
             <header style={styles.topNav}>
                 <div style={styles.navRow}>
                     <button onClick={() => navigate(-1)} style={styles.backIcon} aria-label="Go back">
@@ -81,7 +128,7 @@ const Reader = () => {
                             }}
                             aria-label="Toggle Digital Mode"
                         >
-                            <FileText size={22} color={isDigitalMode ? "#fff" : "#fff"} />
+                            <FileText size={22} color="#fff" />
                         </button>
                         <button
                             onClick={() => { setActiveView('main'); setMenuOpen(true); }}
@@ -111,7 +158,6 @@ const Reader = () => {
                 </nav>
             </header>
 
-            {/* Main Content Area */}
             <main
                 ref={scrollRef}
                 style={{
@@ -130,9 +176,23 @@ const Reader = () => {
                         <h1 style={styles.digitalMainTitle}>{book?.title}</h1>
                         <div style={styles.digitalBodyText}>
                             {book?.content ? (
-                                book.content.split('\n').map((para, i) => (
-                                    <p key={i} style={{ marginBottom: '1.5em' }}>{para}</p>
-                                ))
+                                <>
+                                    {book.content.split('\n').map((para, i) => (
+                                        <p key={i} style={{ marginBottom: '1.5em' }}>{para}</p>
+                                    ))}
+
+                                    {/* TRIGGER ELEMENT FOR LAZY LOAD */}
+                                    <div ref={bottomObserverRef} style={styles.loadingTrigger}>
+                                        {book.status === 'processing' ? (
+                                            <div style={styles.loadingMoreBox}>
+                                                <Loader2 className="animate-spin" size={20} />
+                                                <span>Loading more pages ({book.processedPages} / {book.totalPages})</span>
+                                            </div>
+                                        ) : (
+                                            <div style={styles.endOfBook}>• End of Document •</div>
+                                        )}
+                                    </div>
+                                </>
                             ) : (
                                 <div style={styles.emptyState}>
                                     <Loader2 className="animate-spin text-zinc-500" size={30} />
@@ -155,7 +215,6 @@ const Reader = () => {
                 </button>
             </main>
 
-            {/* Modal Overlay / Menu */}
             {menuOpen && (
                 <div style={styles.overlay} onClick={() => setMenuOpen(false)}>
                     <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
@@ -169,16 +228,15 @@ const Reader = () => {
                 </div>
             )}
 
-            {/* Player Controls */}
             <footer style={styles.bottomPlayer}>
                 <div style={styles.progressBarWrapper}>
                     <div style={styles.progressBase}>
-                        <div style={{ ...styles.progressFill, width: '15%' }} />
+                        <div style={{ ...styles.progressFill, width: `${(book?.processedPages / book?.totalPages) * 100}%` }} />
                     </div>
                     <div style={styles.timeLabels}>
-                        <span>05:02</span>
-                        <span style={{ color: '#a1a1aa' }}>{book?.words?.toLocaleString() || '---'} words</span>
-                        <span>1:17:31</span>
+                        <span>{book?.processedPages} pages loaded</span>
+                        <span style={{ color: '#a1a1aa' }}>{book?.words?.toLocaleString() || '0'} words</span>
+                        <span>Total: {book?.totalPages}</span>
                     </div>
                 </div>
 
@@ -204,8 +262,6 @@ const Reader = () => {
     );
 };
 
-// --- Sub-Components for cleaner code ---
-
 const PillButton = ({ active, onClick, icon, label }) => (
     <button
         onClick={onClick}
@@ -221,7 +277,7 @@ const MainMenu = ({ book, setActiveView }) => (
             <div style={styles.miniCover}><FileText size={24} color="#6366f1" /></div>
             <div style={{ flex: 1 }}>
                 <div style={styles.bookTitleSmall}>{book?.title}</div>
-                <div style={styles.bookMetaSmall}>{book?.pages || '72'} pages • PDF</div>
+                <div style={styles.bookMetaSmall}>{book?.totalPages || '--'} pages • PDF</div>
             </div>
             <Download size={20} color="#a1a1aa" />
         </div>
@@ -265,9 +321,10 @@ const MenuOption = ({ icon, label, sub, toggle, active, onClick }) => (
 );
 
 const styles = {
-    // ... all your existing styles remain the same ...
     emptyState: { textAlign: 'center', marginTop: '50px', display: 'flex', flexDirection: 'column', alignItems: 'center' },
-    // Ensuring the container stays on top of everything
+    loadingTrigger: { padding: '40px 0', display: 'flex', justifyContent: 'center', alignItems: 'center', width: '100%' },
+    loadingMoreBox: { display: 'flex', alignItems: 'center', gap: '10px', color: '#a1a1aa', fontSize: '14px' },
+    endOfBook: { color: '#3f3f46', fontSize: '14px', letterSpacing: '2px' },
     container: { position: 'fixed', inset: 0, backgroundColor: '#000', display: 'flex', flexDirection: 'column', zIndex: 9999, fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif' },
     topNav: { paddingTop: '10px', paddingBottom: '12px', backgroundColor: '#000' },
     navRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 12px' },
@@ -304,7 +361,7 @@ const styles = {
     bottomPlayer: { backgroundColor: '#000', padding: '20px 24px 40px 24px', borderTop: '1px solid #18181b' },
     progressBarWrapper: { marginBottom: '20px' },
     progressBase: { height: '4px', backgroundColor: '#27272a', borderRadius: '2px' },
-    progressFill: { height: '100%', backgroundColor: '#6366f1', borderRadius: '2px' },
+    progressFill: { height: '100%', backgroundColor: '#6366f1', borderRadius: '2px', transition: 'width 0.5s ease' },
     timeLabels: { display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '12px', color: '#71717a' },
     controlRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
     flagBox: { padding: '4px 10px', backgroundColor: '#18181b', borderRadius: '8px', border: '1px solid #27272a' },
