@@ -111,6 +111,17 @@ const formatBook = (book) => ({
     createdAt: book.createdAt
 });
 
+// Robust Page Counting Helper
+function getPageCount(pdfPath) {
+    return new Promise((resolve) => {
+        exec(`pdfinfo "${pdfPath}" | grep Pages: | awk '{print $2}'`, (err, stdout) => {
+            if (err) return resolve(1);
+            const count = parseInt(stdout.trim());
+            resolve(isNaN(count) ? 1 : count);
+        });
+    });
+}
+
 async function extractPageTextGoogle(pdfPath, pageNum) {
     if (!visionClient) return "";
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
@@ -137,7 +148,7 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
 /* -------------------- API ROUTES -------------------- */
 
-// LAZY LOAD - Updated to handle file checking and range validation
+// LAZY LOAD
 app.get("/api/books/:id/load-pages", async (req, res) => {
     let tempPdfPath = "";
     try {
@@ -153,10 +164,9 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
 
         tempPdfPath = path.join(uploadDir, `temp_load_${book._id}.pdf`);
 
-        // Cache management: Check if the file already exists locally to speed up processing
         if (!(await fs.pathExists(tempPdfPath))) {
             const response = await fetch(book.pdfPath);
-            if (!response.ok) throw new Error("Could not fetch PDF from storage");
+            if (!response.ok) throw new Error("Could not fetch PDF");
             const arrayBuffer = await response.arrayBuffer();
             await fs.writeFile(tempPdfPath, Buffer.from(arrayBuffer));
         }
@@ -169,12 +179,14 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
         const results = await Promise.all(pagePromises);
         const newText = results.filter(t => t).join("\n\n");
 
-        const updatedContent = book.content + "\n" + newText;
+        const updatedContent = book.content + "\n\n" + newText;
+        const newWordCount = updatedContent.split(/\s+/).filter(w => w.length > 0).length;
         const isFinished = endPage >= book.totalPages;
 
         const updatedBook = await Book.findByIdAndUpdate(req.params.id, {
             content: updatedContent,
             processedPages: endPage,
+            words: newWordCount,
             status: isFinished ? 'completed' : 'processing'
         }, { new: true });
 
@@ -187,28 +199,20 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
         console.error("Lazy load error:", err);
         res.status(500).json({ error: "Lazy load failed" });
     }
-    // We do not delete the file here so the next chunk is processed faster
 });
 
-// UPLOAD (Speechify Version: Instant Response + Background Processing)
+// UPLOAD
 app.post("/api/books", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
         const pdfPath = req.file.path;
-        const dataBuffer = await fs.readFile(pdfPath);
 
-        // 1. Instant Stats & Estimates
-        let pdfData;
-        try {
-            pdfData = typeof pdf === 'function' ? await pdf(dataBuffer) : await pdf.default(dataBuffer);
-        } catch { pdfData = { numpages: 1, text: "" }; }
+        // 1. Get Real Page Count
+        const totalPages = await getPageCount(pdfPath);
+        console.log(`✅ File: ${req.file.originalname} | Total Pages: ${totalPages}`);
 
-        const totalPages = pdfData.numpages || 1;
-        const rawWords = pdfData.text ? pdfData.text.split(/\s+/).filter(w => w.length > 0).length : 0;
-        const estimatedWords = rawWords > 50 ? rawWords : (totalPages * 350);
-
-        // 2. Create Placeholder
+        // 2. Create Placeholder with real page count but estimated words
         const book = await Book.create({
             title: req.body.title || req.file.originalname.replace(/\.[^/.]+$/, ""),
             folder: req.body.folder || "All",
@@ -216,14 +220,14 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
             cover: "https://via.placeholder.com/300x450?text=Processing...",
             content: "Scanning first pages...",
             totalPages,
-            words: estimatedWords,
+            words: totalPages * 300,
             status: 'processing'
         });
 
-        // 3. RESPOND IMMEDIATELY (Kills the "Upload Failed" error)
+        // 3. Respond Immediately
         res.status(201).json(formatBook(book));
 
-        // 4. BACKGROUND WORKER
+        // 4. Background Worker
         (async () => {
             try {
                 const baseName = path.parse(req.file.filename).name;
@@ -248,13 +252,21 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
                 for (let i = 1; i <= limit; i++) {
                     const pageText = await extractPageTextGoogle(pdfPath, i);
                     runningContent += pageText + "\n\n";
+
+                    // RECALCULATE REAL WORDS
+                    const actualWords = runningContent.split(/\s+/).filter(w => w.length > 0).length;
+
                     await Book.findByIdAndUpdate(book._id, {
                         content: runningContent,
                         processedPages: i,
+                        words: actualWords,
                         status: i >= totalPages ? 'completed' : 'processing'
                     });
                 }
+
+                // Only delete when the initial batch is finished
                 if (await fs.pathExists(pdfPath)) await fs.remove(pdfPath);
+                console.log(`✅ Finished processing initial pages for ${book.title}`);
             } catch (bgErr) { console.error("BG Error:", bgErr); }
         })();
 
