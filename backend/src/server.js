@@ -8,7 +8,7 @@ const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
 
-// FIX: Standard import (Using the subpath lib/ caused the export error)
+// FIX: Standard import
 const pdf = require("pdf-parse");
 const vision = require('@google-cloud/vision');
 
@@ -71,7 +71,7 @@ const bookSchema = new mongoose.Schema({
     ttsRequests: { type: Number, default: 0 },
     content: { type: String, default: "" },
     chapters: [{ title: String, page: Number }],
-    words: { type: Number, default: 0 },
+    words: { type: Number, default: 0 }, // This will now store the FULL document word count
     totalPages: { type: Number, default: 0 },
     processedPages: { type: Number, default: 0 },
     status: { type: String, enum: ['processing', 'completed'], default: 'processing' },
@@ -158,7 +158,6 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
         const arrayBuffer = await response.arrayBuffer();
         await fs.writeFile(tempPdfPath, Buffer.from(arrayBuffer));
 
-        // Process these in parallel as well for speed
         const pagePromises = [];
         for (let i = startPage; i <= endPage; i++) {
             pagePromises.push(extractPageTextGoogle(tempPdfPath, i));
@@ -170,8 +169,8 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
         await Book.findByIdAndUpdate(req.params.id, {
             content: updatedContent,
             processedPages: endPage,
-            status: endPage === book.totalPages ? 'completed' : 'processing',
-            words: updatedContent.split(/\s+/).filter(w => w.length > 0).length
+            status: endPage === book.totalPages ? 'completed' : 'processing'
+            // NOTE: We don't recalculate 'words' here because it's already set to the full total in upload
         });
 
         res.json({ addedText: newText, processedPages: endPage });
@@ -196,17 +195,27 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
 
         const dataBuffer = await fs.readFile(pdfPath);
 
+        /* --- WORD COUNT ADJUSTMENT --- */
         let pdfData;
-        if (typeof pdf === 'function') {
-            pdfData = await pdf(dataBuffer);
-        } else if (pdf && typeof pdf.default === 'function') {
-            pdfData = await pdf.default(dataBuffer);
-        } else {
-            pdfData = { numpages: 1 };
+        try {
+            if (typeof pdf === 'function') {
+                pdfData = await pdf(dataBuffer);
+            } else if (pdf && typeof pdf.default === 'function') {
+                pdfData = await pdf.default(dataBuffer);
+            } else {
+                pdfData = { numpages: 1, text: "" };
+            }
+        } catch (pdfErr) {
+            console.warn("⚠️ PDF Parse failed, falling back to 0 words", pdfErr.message);
+            pdfData = { numpages: 1, text: "" };
         }
 
+        // Calculate EXACT word count for the entire book immediately
+        const fullBookText = pdfData.text || "";
+        const totalWordCount = fullBookText.split(/\s+/).filter(w => w.length > 0).length;
         const totalPages = pdfData.numpages || 1;
-        console.log(`📖 Uploading "${title}" - ${totalPages} total pages.`);
+
+        console.log(`📖 Uploading "${title}" - Pages: ${totalPages}, Total Words: ${totalWordCount}`);
 
         const generateThumbnail = () => new Promise((resolve) => {
             exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfPath}" "${outputPrefix}"`, async (error) => {
@@ -230,10 +239,8 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
 
         const [pdfUrl, coverUrl] = await Promise.all([uploadPdfToCloud(), generateThumbnail()]);
 
-        // PARALLEL PROCESSING: Fire all 5 OCR requests at once
+        // PARALLEL PROCESSING: Fire first 5 pages for instant reading
         const instantLimit = Math.min(5, totalPages);
-        console.log(`⚡ Processing first ${instantLimit} pages in parallel...`);
-
         const pagePromises = [];
         for (let i = 1; i <= instantLimit; i++) {
             pagePromises.push(extractPageTextGoogle(pdfPath, i));
@@ -241,7 +248,6 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
 
         const pagesResults = await Promise.all(pagePromises);
         const initialContent = pagesResults.join("\n\n");
-        const wordCount = initialContent.split(/\s+/).filter(w => w.length > 0).length;
 
         const book = await Book.create({
             title,
@@ -252,11 +258,11 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
             totalPages,
             processedPages: instantLimit,
             status: totalPages <= instantLimit ? 'completed' : 'processing',
-            words: wordCount
+            words: totalWordCount // SAVED: The exact number from the whole PDF
         });
 
         if (await fs.pathExists(pdfPath)) await fs.remove(pdfPath);
-        console.log(`✅ Book created with ${wordCount} words.`);
+        console.log(`✅ Book created with ${totalWordCount} exact words.`);
         res.status(201).json(formatBook(book));
 
     } catch (err) {

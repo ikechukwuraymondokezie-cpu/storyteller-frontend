@@ -62,14 +62,12 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
     const pageImgFull = `${pageImgBase}.png`;
 
     try {
-        console.log(`[OCR] Page ${pageNum}: Extracting image...`);
         await new Promise((resolve, reject) => {
             exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
 
-        console.log(`[OCR] Page ${pageNum}: Sending to Google Vision...`);
         const [result] = await visionClient.textDetection(pageImgFull);
         const text = result.fullTextAnnotation ? result.fullTextAnnotation.text : "";
 
@@ -105,7 +103,6 @@ router.get("/:id/load-pages", async (req, res) => {
             writer.on('error', reject);
         });
 
-        // Parallel processing for lazy load
         const pagePromises = [];
         for (let i = startPage; i <= endPage; i++) {
             pagePromises.push(extractPageTextGoogle(tempPath, i));
@@ -119,8 +116,8 @@ router.get("/:id/load-pages", async (req, res) => {
         await Book.findByIdAndUpdate(req.params.id, {
             content: updatedContent,
             processedPages: endPage,
-            status: finalStatus,
-            words: updatedContent.split(/\s+/).filter(w => w.length > 0).length
+            status: finalStatus
+            // words is NOT updated here because we already have the EXACT total from upload
         });
 
         res.json({ addedText: newText, processedPages: endPage, status: finalStatus });
@@ -142,17 +139,22 @@ router.post("/", upload.single("file"), async (req, res) => {
 
         const dataBuffer = await fs.readFile(pdfDiskPath);
 
+        /* --- EXACT WORD COUNT ADJUSTMENT --- */
         let pdfData;
         if (typeof pdf === 'function') {
             pdfData = await pdf(dataBuffer);
         } else if (pdf && typeof pdf.default === 'function') {
             pdfData = await pdf.default(dataBuffer);
         } else {
-            pdfData = { numpages: 1 };
+            pdfData = { numpages: 1, text: "" };
         }
 
+        // 1. Get exact word count for the WHOLE book immediately
+        const fullRawText = pdfData.text || "";
+        const exactTotalWords = fullRawText.split(/\s+/).filter(w => w.length > 0).length;
         const totalPages = pdfData.numpages || 1;
-        console.log(`📖 Uploading "${req.file.originalname}" - ${totalPages} pages.`);
+
+        console.log(`📖 Total word count for "${req.file.originalname}": ${exactTotalWords}`);
 
         const generateCover = () => new Promise((resolve) => {
             exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfDiskPath}" "${outputPrefix}"`, async (error) => {
@@ -176,10 +178,8 @@ router.post("/", upload.single("file"), async (req, res) => {
 
         const [coverUrl, cloudPdfUrl] = await Promise.all([generateCover(), uploadPdfToCloud()]);
 
-        // PARALLEL OCR: Processing first 5 pages at once
+        // 2. High-quality OCR for just the first 5 pages
         const instantLimit = Math.min(5, totalPages);
-        console.log(`⚡ Processing first ${instantLimit} pages in parallel...`);
-
         const pagePromises = [];
         for (let i = 1; i <= instantLimit; i++) {
             pagePromises.push(extractPageTextGoogle(pdfDiskPath, i));
@@ -187,7 +187,6 @@ router.post("/", upload.single("file"), async (req, res) => {
 
         const pagesResults = await Promise.all(pagePromises);
         const initialText = pagesResults.join("\n\n");
-        const wordCount = initialText.split(/\s+/).filter(w => w.length > 0).length;
 
         const book = await Book.create({
             title: req.file.originalname.replace(/\.[^/.]+$/, ""),
@@ -198,12 +197,10 @@ router.post("/", upload.single("file"), async (req, res) => {
             totalPages: totalPages,
             processedPages: instantLimit,
             status: totalPages <= instantLimit ? 'completed' : 'processing',
-            words: wordCount
+            words: exactTotalWords // Storing the EXACT total here
         });
 
         if (await fs.pathExists(pdfDiskPath)) await fs.remove(pdfDiskPath);
-        console.log(`✅ Upload Successful: ${wordCount} words extracted.`);
-
         res.status(201).json(book);
     } catch (err) {
         console.error("Upload Error:", err);
