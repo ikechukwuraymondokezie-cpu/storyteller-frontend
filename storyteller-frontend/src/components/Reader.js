@@ -25,15 +25,16 @@ const Reader = () => {
     const [currentWordIndex, setCurrentWordIndex] = useState(-1);
     const [audioProgress, setAudioProgress] = useState(0);
 
+    // Using a ref for synth to avoid re-renders if the window object shifts
     const synth = window.speechSynthesis;
     const utteranceRef = useRef(null);
 
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
-    // 1. SMART WELDER LOGIC WITH SAFETY CHECK
+    // 1. SMART WELDER LOGIC - Added safety for undefined content
     const cleanContent = useMemo(() => {
-        if (!book) return ""; // Safety: check if book exists
-        const text = viewMode === 'summary' ? book?.summary : book?.content;
+        if (!book) return "";
+        const text = viewMode === 'summary' ? book.summary : book.content;
         if (!text) return "";
 
         return text
@@ -43,7 +44,7 @@ const Reader = () => {
     }, [book, viewMode]);
 
     const wordsArray = useMemo(() => {
-        if (!cleanContent) return []; // Safety: ensure we have text
+        if (!cleanContent) return [];
         return cleanContent.split(/(\s+)/);
     }, [cleanContent]);
 
@@ -55,6 +56,7 @@ const Reader = () => {
                 const response = await fetch(`${BACKEND_URL}/api/books/${id}`);
                 const data = await response.json();
                 setBook(data);
+
                 if (data.status === 'processing') {
                     pollInterval = setInterval(async () => {
                         const res = await fetch(`${BACKEND_URL}/api/books/${id}`);
@@ -70,7 +72,10 @@ const Reader = () => {
             }
         };
         fetchBook();
-        return () => { clearInterval(pollInterval); synth.cancel(); };
+        return () => {
+            clearInterval(pollInterval);
+            if (synth) synth.cancel();
+        };
     }, [id]);
 
     // 3. AUTO-SCROLL
@@ -85,6 +90,7 @@ const Reader = () => {
 
     // 4. PLAYBACK CONTROLLER
     const handleTogglePlay = () => {
+        if (!synth) return;
         if (isPlaying) { synth.pause(); setIsPlaying(false); return; }
         if (synth.paused && synth.speaking) { synth.resume(); setIsPlaying(true); return; }
 
@@ -115,67 +121,41 @@ const Reader = () => {
         }, 100);
     };
 
-    const loadMorePages = async () => {
-        if (loadingMore || !book || book.status === 'completed') return;
-        setLoadingMore(true);
-        try {
-            const response = await fetch(`${BACKEND_URL}/api/books/${id}/load-pages`);
-            const data = await response.json();
-            if (data.addedText) {
-                setBook(prev => ({
-                    ...prev,
-                    content: (prev.content || "") + "\n\n" + data.addedText,
-                    processedPages: data.processedPages,
-                    status: data.status
-                }));
-            }
-        } catch (err) { console.error(err); } finally { setLoadingMore(false); }
-    };
+    if (loading) return (
+        <div style={styles.fullscreenCenter}>
+            <Loader2 className="animate-spin" size={40} />
+        </div>
+    );
 
-    useEffect(() => {
-        if (!isDigitalMode || viewMode !== 'reading' || book?.status === 'completed') return;
-        const observer = new IntersectionObserver(
-            (entries) => { if (entries[0].isIntersecting && !loadingMore) loadMorePages(); },
-            { threshold: 0.1, rootMargin: '200px' }
-        );
-        if (bottomObserverRef.current) observer.observe(bottomObserverRef.current);
-        return () => observer.disconnect();
-    }, [isDigitalMode, viewMode, book?.status, loadingMore]);
+    if (!book) return <div style={{ color: 'white', padding: '20px' }}>Error: Book not found.</div>;
 
-    const viewerUrl = useMemo(() => {
-        if (!book) return "";
-        const rawUrl = book.url || book.pdfPath;
-        const fullUrl = rawUrl?.startsWith('http') ? rawUrl : `${BACKEND_URL}/${rawUrl}`;
-        return `https://docs.google.com/viewer?url=${encodeURIComponent(fullUrl)}&embedded=true`;
-    }, [book]);
-
-    if (loading) return <div style={styles.fullscreenCenter}><Loader2 className="animate-spin" size={40} /></div>;
-
-    // REMOVED ReactDOM.createPortal. Returning standard JSX for App.js compatibility.
     return (
         <div style={styles.container}>
             <header style={styles.topNav}>
                 <div style={styles.navRow}>
                     <button onClick={() => navigate(-1)} style={styles.backIcon}><ChevronLeft size={32} /></button>
                     <div style={styles.rightActions}>
-                        <button style={styles.actionIcon}><Type size={22} /></button>
-                        <button onClick={() => setIsDigitalMode(!isDigitalMode)} style={{ ...styles.actionIcon, backgroundColor: isDigitalMode ? '#4f46e5' : 'transparent', borderRadius: '8px' }}><FileText size={22} /></button>
-                        <button onClick={() => setMenuOpen(true)} style={styles.actionIcon}><MoreHorizontal size={22} /></button>
+                        <button style={styles.actionIcon}><Type size={20} /></button>
+                        <button
+                            onClick={() => setIsDigitalMode(!isDigitalMode)}
+                            style={{ ...styles.actionIcon, backgroundColor: isDigitalMode ? '#4f46e5' : 'transparent', borderRadius: '8px' }}
+                        >
+                            <FileText size={20} />
+                        </button>
+                        <button onClick={() => setMenuOpen(true)} style={styles.actionIcon}><MoreHorizontal size={20} /></button>
                     </div>
                 </div>
+                {/* SMALL PILLS AS REQUESTED */}
                 <nav style={styles.pillScroll}>
-                    <PillButton active={viewMode === 'reading'} onClick={() => setViewMode('reading')} icon={<MessageSquare size={16} />} label="AI Chat" />
-                    <PillButton active={viewMode === 'summary'} onClick={() => setViewMode('summary')} icon={<Sparkles size={16} />} label="Summary" />
-                    <PillButton icon={<Mic2 size={16} />} label="Podcast" />
+                    <PillButton active={viewMode === 'reading'} onClick={() => setViewMode('reading')} icon={<MessageSquare size={14} />} label="AI Chat" />
+                    <PillButton active={viewMode === 'summary'} onClick={() => setViewMode('summary')} icon={<Sparkles size={14} />} label="Summary" />
+                    <PillButton icon={<Mic2 size={14} />} label="Podcast" />
                 </nav>
             </header>
 
             <main ref={scrollRef} style={{ ...styles.viewerContainer, backgroundColor: isDigitalMode || viewMode === 'summary' ? '#000' : '#fff' }}>
                 {isDigitalMode || viewMode === 'summary' ? (
                     <div style={styles.digitalTextContainer}>
-                        {viewMode === 'summary' && <h1 style={styles.digitalMainTitle}>AI Summary</h1>}
-                        {viewMode === 'reading' && <h1 style={styles.digitalMainTitle}>{book?.title}</h1>}
-
                         <div style={styles.digitalBodyText}>
                             {(() => {
                                 let charCount = 0;
@@ -183,9 +163,7 @@ const Reader = () => {
                                     const startChar = charCount;
                                     charCount += word.length;
                                     const isCurrent = currentWordIndex >= startChar && currentWordIndex < charCount && word.trim() !== "";
-
                                     if (word.includes('\n')) return <br key={i} />;
-
                                     return (
                                         <span
                                             key={i}
@@ -193,8 +171,7 @@ const Reader = () => {
                                             style={{
                                                 backgroundColor: isCurrent ? 'rgba(79, 70, 229, 0.4)' : 'transparent',
                                                 color: isCurrent ? '#fff' : 'inherit',
-                                                borderRadius: '4px',
-                                                transition: 'background-color 0.1s'
+                                                borderRadius: '4px'
                                             }}
                                         >
                                             {word}
@@ -202,14 +179,11 @@ const Reader = () => {
                                     );
                                 });
                             })()}
-                            {viewMode === 'reading' && (
-                                <div ref={bottomObserverRef} style={styles.loadingTrigger}>
-                                    {book?.status !== 'completed' ? <Loader2 className="animate-spin" /> : "• END •"}
-                                </div>
-                            )}
                         </div>
                     </div>
-                ) : <iframe src={viewerUrl} style={styles.iframe} title="Viewer" />}
+                ) : (
+                    <iframe src={viewerUrl} style={styles.iframe} title="Viewer" />
+                )}
             </main>
 
             <PlaybackSheet
@@ -232,25 +206,33 @@ const Reader = () => {
 };
 
 const PillButton = ({ active, onClick, icon, label }) => (
-    <button onClick={onClick} style={{ ...styles.pill, backgroundColor: active ? '#4f46e5' : '#27272a' }}>{icon} {label}</button>
+    <button
+        onClick={onClick}
+        style={{
+            ...styles.pill,
+            backgroundColor: active ? '#4f46e5' : '#27272a',
+            fontSize: '12px', // Made label smaller
+            padding: '6px 12px' // Made pill smaller
+        }}
+    >
+        {icon} {label}
+    </button>
 );
 
 const styles = {
     fullscreenCenter: { height: '100vh', backgroundColor: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' },
-    container: { position: 'fixed', inset: 0, backgroundColor: '#000', display: 'flex', flexDirection: 'column', zIndex: 9999 },
-    topNav: { paddingTop: '10px', paddingBottom: '12px' },
+    container: { position: 'fixed', inset: 0, backgroundColor: '#000', display: 'flex', flexDirection: 'column', zIndex: 1000 },
+    topNav: { paddingTop: '10px' },
     navRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 12px' },
-    backIcon: { background: 'none', border: 'none', color: '#fff' },
-    rightActions: { display: 'flex', gap: '12px' },
-    actionIcon: { background: 'none', border: 'none', color: '#fff', padding: '8px' },
-    pillScroll: { display: 'flex', gap: '8px', overflowX: 'auto', padding: '12px 16px' },
-    pill: { display: 'flex', alignItems: 'center', gap: '6px', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '20px', fontSize: '14px' },
-    viewerContainer: { flex: 1, overflowY: 'auto', position: 'relative' },
+    backIcon: { background: 'none', border: 'none', color: '#fff', cursor: 'pointer' },
+    rightActions: { display: 'flex', gap: '8px' },
+    actionIcon: { background: 'none', border: 'none', color: '#fff', padding: '6px', cursor: 'pointer' },
+    pillScroll: { display: 'flex', gap: '6px', overflowX: 'auto', padding: '10px 16px' },
+    pill: { display: 'flex', alignItems: 'center', gap: '4px', color: '#fff', border: 'none', borderRadius: '20px', cursor: 'pointer', whiteSpace: 'nowrap' },
+    viewerContainer: { flex: 1, overflowY: 'auto' },
     iframe: { width: '100%', height: '100%', border: 'none' },
-    digitalTextContainer: { padding: '40px 24px', color: '#fff' },
-    digitalMainTitle: { fontSize: '24px', fontWeight: 'bold', marginBottom: '24px' },
-    digitalBodyText: { fontSize: '18px', lineHeight: '1.6', color: '#e4e4e7' },
-    loadingTrigger: { padding: '40px', textAlign: 'center', color: '#71717a' }
+    digitalTextContainer: { padding: '24px', color: '#fff' },
+    digitalBodyText: { fontSize: '18px', lineHeight: '1.6', color: '#e4e4e7' }
 };
 
 export default Reader;
