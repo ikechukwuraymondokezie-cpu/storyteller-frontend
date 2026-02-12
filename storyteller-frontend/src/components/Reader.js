@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import ReactDOM from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
     ChevronLeft, Loader2, MoreHorizontal, Type, MessageSquare,
@@ -12,7 +11,7 @@ const Reader = () => {
     const navigate = useNavigate();
     const scrollRef = useRef(null);
     const bottomObserverRef = useRef(null);
-    const activeWordRef = useRef(null); // Ref for auto-scroll
+    const activeWordRef = useRef(null);
 
     const [book, setBook] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -22,7 +21,6 @@ const Reader = () => {
     const [viewMode, setViewMode] = useState('reading');
     const [menuOpen, setMenuOpen] = useState(false);
 
-    // TTS & Progress State
     const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
     const [currentWordIndex, setCurrentWordIndex] = useState(-1);
     const [audioProgress, setAudioProgress] = useState(0);
@@ -32,21 +30,24 @@ const Reader = () => {
 
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
-    // 1. SMART WELDER LOGIC
+    // 1. SMART WELDER LOGIC WITH SAFETY CHECK
     const cleanContent = useMemo(() => {
+        if (!book) return ""; // Safety: check if book exists
         const text = viewMode === 'summary' ? book?.summary : book?.content;
         if (!text) return "";
+
         return text
             .replace(/\r\n/g, '\n')
-            .replace(/([^\n])\n([a-z])/g, '$1 $2') // Join broken lines only if next char is lowercase
+            .replace(/([^\n])\n([a-z])/g, '$1 $2')
             .trim();
     }, [book, viewMode]);
 
     const wordsArray = useMemo(() => {
-        return cleanContent.split(/(\s+)/); // Keeps spaces and newlines in the array
+        if (!cleanContent) return []; // Safety: ensure we have text
+        return cleanContent.split(/(\s+)/);
     }, [cleanContent]);
 
-    // 2. INITIAL FETCH & POLLING
+    // 2. FETCH DATA
     useEffect(() => {
         let pollInterval;
         const fetchBook = async () => {
@@ -62,13 +63,17 @@ const Reader = () => {
                         if (updated.status === 'completed') clearInterval(pollInterval);
                     }, 5000);
                 }
-            } catch (err) { console.error(err); } finally { setLoading(false); }
+            } catch (err) {
+                console.error("Fetch error:", err);
+            } finally {
+                setLoading(false);
+            }
         };
         fetchBook();
         return () => { clearInterval(pollInterval); synth.cancel(); };
     }, [id]);
 
-    // 3. AUTO-SCROLL LOGIC
+    // 3. AUTO-SCROLL
     useEffect(() => {
         if (activeWordRef.current && isPlaying) {
             activeWordRef.current.scrollIntoView({
@@ -146,7 +151,8 @@ const Reader = () => {
 
     if (loading) return <div style={styles.fullscreenCenter}><Loader2 className="animate-spin" size={40} /></div>;
 
-    return ReactDOM.createPortal(
+    // REMOVED ReactDOM.createPortal. Returning standard JSX for App.js compatibility.
+    return (
         <div style={styles.container}>
             <header style={styles.topNav}>
                 <div style={styles.navRow}>
@@ -221,8 +227,7 @@ const Reader = () => {
                 menuOpen={menuOpen}
                 setMenuOpen={setMenuOpen}
             />
-        </div>,
-        document.body
+        </div>
     );
 };
 
