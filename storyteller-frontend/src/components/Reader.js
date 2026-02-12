@@ -5,7 +5,7 @@ import {
     ChevronLeft, Loader2, MoreHorizontal, Type, MessageSquare,
     Sparkles, Mic2, FileText
 } from 'lucide-react';
-import PlaybackSheet from './PlaybackSheet';
+import PlaybackSheet from './Playbacksheet';
 
 const Reader = () => {
     const { id } = useParams();
