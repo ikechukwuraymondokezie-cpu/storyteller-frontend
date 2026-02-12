@@ -22,15 +22,18 @@ const Reader = () => {
     const [viewMode, setViewMode] = useState('reading');
     const [menuOpen, setMenuOpen] = useState(false);
 
+    // TTS State
     const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
     const synth = window.speechSynthesis;
     const utteranceRef = useRef(null);
 
+    // Your updated Backend URL
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
-    // 1. Logic: Fetch + Polling (EXACTLY AS YOUR WORKING VERSION)
+    // 1. Initial Fetch + Polling
     useEffect(() => {
         let pollInterval;
+
         const fetchBook = async () => {
             try {
                 const response = await fetch(`${BACKEND_URL}/api/books/${id}`);
@@ -43,81 +46,129 @@ const Reader = () => {
                         const res = await fetch(`${BACKEND_URL}/api/books/${id}`);
                         const updated = await res.json();
                         setBook(updated);
-                        if (updated.status === 'completed') clearInterval(pollInterval);
+                        if (updated.status === 'completed') {
+                            clearInterval(pollInterval);
+                        }
                     }, 5000);
                 }
             } catch (err) {
-                console.error("Error fetching book:", err);
+                console.error("Error fetching book data:", err);
             } finally {
                 setLoading(false);
             }
         };
         fetchBook();
-        return () => { clearInterval(pollInterval); synth.cancel(); };
+        return () => {
+            clearInterval(pollInterval);
+            synth.cancel();
+        };
     }, [id]);
 
-    // 2. Logic: TTS Controller (EXACTLY AS YOUR WORKING VERSION)
-    useEffect(() => {
-        const handleSpeech = () => {
-            if (isPlaying) {
-                if (synth.paused) {
-                    synth.resume();
-                } else {
-                    synth.cancel();
-                    const textToRead = viewMode === 'summary' ? book?.summary : book?.content;
-                    if (textToRead && textToRead.trim().length > 0) {
-                        const utterance = new SpeechSynthesisUtterance(textToRead);
-                        utterance.rate = playbackSpeed;
-                        const voices = synth.getVoices();
-                        if (voices.length > 0) {
-                            utterance.voice = voices.find(v => v.lang.includes('en-US')) || voices[0];
-                        }
-                        utterance.onend = () => { if (!synth.speaking) setIsPlaying(false); };
-                        utteranceRef.current = utterance;
-                        synth.speak(utterance);
-                    }
-                }
-            } else {
-                if (synth.speaking) synth.pause();
-            }
-        };
-        handleSpeech();
-    }, [isPlaying, book?.content, book?.summary, viewMode, playbackSpeed]);
+    // 2. FIXED TTS Controller - Triggered by Play Button (User Gesture)
+    const handleTogglePlay = () => {
+        if (isPlaying) {
+            synth.pause();
+            setIsPlaying(false);
+            return;
+        }
 
-    // 3. Logic: Lazy Load + Observer (EXACTLY AS YOUR WORKING VERSION)
+        // If paused, just resume
+        if (synth.paused && synth.speaking) {
+            synth.resume();
+            setIsPlaying(true);
+            return;
+        }
+
+        // Start Fresh
+        synth.cancel();
+        const textToRead = viewMode === 'summary' ? book?.summary : book?.content;
+
+        if (textToRead && textToRead.trim().length > 0) {
+            const utterance = new SpeechSynthesisUtterance(textToRead);
+            utterance.rate = playbackSpeed;
+
+            const voices = synth.getVoices();
+            if (voices.length > 0) {
+                utterance.voice = voices.find(v => v.lang.includes('en-US')) || voices[0];
+            }
+
+            utterance.onstart = () => setIsPlaying(true);
+            utterance.onend = () => {
+                if (!synth.speaking) setIsPlaying(false);
+            };
+            utterance.onerror = (e) => {
+                console.error("TTS Error:", e);
+                setIsPlaying(false);
+            };
+
+            utteranceRef.current = utterance;
+            synth.speak(utterance);
+        } else {
+            alert("Text content not ready for playback yet.");
+        }
+    };
+
+    // 3. Lazy Loading Logic
     const loadMorePages = async () => {
         if (loadingMore || !book || book.status === 'completed') return;
+
         setLoadingMore(true);
         try {
             const response = await fetch(`${BACKEND_URL}/api/books/${id}/load-pages`);
+            if (!response.ok) throw new Error("Failed to load more pages");
             const data = await response.json();
+
             if (data.addedText) {
                 setBook(prev => {
                     const newContent = (prev.content || "") + "\n\n" + data.addedText;
-                    return { ...prev, content: newContent, processedPages: data.processedPages, status: data.status, words: newContent.split(/\s+/).filter(w => w.length > 0).length };
+                    return {
+                        ...prev,
+                        content: newContent,
+                        processedPages: data.processedPages,
+                        status: data.status,
+                        words: newContent.split(/\s+/).filter(w => w.length > 0).length
+                    };
                 });
+            } else if (data.status === 'completed') {
+                setBook(prev => ({ ...prev, status: 'completed' }));
             }
-        } catch (err) { console.error(err); } finally { setLoadingMore(false); }
+        } catch (err) {
+            console.error("Lazy load error:", err);
+        } finally {
+            setLoadingMore(false);
+        }
     };
 
+    // 4. Interaction Observer
     useEffect(() => {
         if (!isDigitalMode || viewMode !== 'reading' || book?.status === 'completed') return;
-        const observer = new IntersectionObserver((entries) => {
-            if (entries[0].isIntersecting && !loadingMore) loadMorePages();
-        }, { threshold: 0.1, rootMargin: '200px' });
+
+        const observer = new IntersectionObserver(
+            (entries) => {
+                if (entries[0].isIntersecting && !loadingMore) {
+                    loadMorePages();
+                }
+            },
+            { threshold: 0.1, rootMargin: '200px' }
+        );
+
         if (bottomObserverRef.current) observer.observe(bottomObserverRef.current);
         return () => observer.disconnect();
     }, [isDigitalMode, viewMode, book?.status, loadingMore]);
 
-    // 4. Robust Viewer URL
     const viewerUrl = useMemo(() => {
         if (!book) return "";
         const rawUrl = book.url || book.pdfPath;
         if (!rawUrl || rawUrl === "pending") return "";
-        // Ensure absolute URL for Google Docs Viewer
         const fullUrl = rawUrl.startsWith('http') ? rawUrl : `${BACKEND_URL}/${rawUrl}`;
         return `https://docs.google.com/viewer?url=${encodeURIComponent(fullUrl)}&embedded=true`;
     }, [book]);
+
+    const toggleSpeed = () => {
+        const speeds = [1.0, 1.5, 2.0, 0.75];
+        const nextSpeed = speeds[(speeds.indexOf(playbackSpeed) + 1) % speeds.length];
+        setPlaybackSpeed(nextSpeed);
+    };
 
     if (loading) return (
         <div style={styles.fullscreenCenter}>
@@ -127,30 +178,57 @@ const Reader = () => {
 
     return ReactDOM.createPortal(
         <div style={styles.container}>
-            {/* TOP NAVIGATION */}
             <header style={styles.topNav}>
                 <div style={styles.navRow}>
-                    <button onClick={() => navigate(-1)} style={styles.backIcon}><ChevronLeft size={32} strokeWidth={2.5} /></button>
+                    <button onClick={() => navigate(-1)} style={styles.backIcon}>
+                        <ChevronLeft size={32} strokeWidth={2.5} />
+                    </button>
+
                     <div style={styles.rightActions}>
                         <button style={styles.actionIcon}><Type size={22} /></button>
                         <button
                             onClick={() => setIsDigitalMode(!isDigitalMode)}
-                            style={{ ...styles.actionIcon, backgroundColor: isDigitalMode ? '#4f46e5' : 'transparent', borderRadius: '8px' }}
+                            style={{
+                                ...styles.actionIcon,
+                                backgroundColor: isDigitalMode ? '#4f46e5' : 'transparent',
+                                borderRadius: '8px',
+                            }}
                         >
                             <FileText size={22} color="#fff" />
                         </button>
-                        <button onClick={() => setMenuOpen(true)} style={styles.actionIcon}><MoreHorizontal size={22} /></button>
+                        <button
+                            onClick={() => setMenuOpen(true)}
+                            style={styles.actionIcon}
+                        >
+                            <MoreHorizontal size={22} />
+                        </button>
                     </div>
                 </div>
+
                 <nav style={styles.pillScroll}>
-                    <PillButton active={viewMode === 'reading'} onClick={() => setViewMode('reading')} icon={<MessageSquare size={16} />} label="AI Chat" />
-                    <PillButton active={viewMode === 'summary'} onClick={() => setViewMode('summary')} icon={<Sparkles size={16} />} label="Summary" />
+                    <PillButton
+                        active={viewMode === 'reading'}
+                        onClick={() => setViewMode('reading')}
+                        icon={<MessageSquare size={16} fill={viewMode === 'reading' ? "white" : "none"} />}
+                        label="AI Chat"
+                    />
+                    <PillButton
+                        active={viewMode === 'summary'}
+                        onClick={() => setViewMode('summary')}
+                        icon={<Sparkles size={16} />}
+                        label="Summary"
+                    />
                     <PillButton icon={<Mic2 size={16} />} label="Podcast" />
                 </nav>
             </header>
 
-            {/* MAIN VIEWER */}
-            <main ref={scrollRef} style={{ ...styles.viewerContainer, backgroundColor: (isDigitalMode || viewMode === 'summary') ? '#000' : '#fff' }}>
+            <main
+                ref={scrollRef}
+                style={{
+                    ...styles.viewerContainer,
+                    backgroundColor: isDigitalMode || viewMode === 'summary' ? '#000' : '#fff'
+                }}
+            >
                 {viewMode === 'summary' ? (
                     <div style={styles.digitalTextContainer}>
                         <h1 style={styles.digitalMainTitle}>AI Summary</h1>
@@ -160,20 +238,38 @@ const Reader = () => {
                     <div style={styles.digitalTextContainer}>
                         <h1 style={styles.digitalMainTitle}>{book?.title}</h1>
                         <div style={styles.digitalBodyText}>
-                            {book?.content?.split('\n').map((para, i) => <p key={i} style={{ marginBottom: '1.5em' }}>{para}</p>)}
+                            {book?.content?.split('\n').map((para, i) => (
+                                <p key={i} style={{ marginBottom: '1.5em' }}>{para}</p>
+                            ))}
                             <div ref={bottomObserverRef} style={styles.loadingTrigger}>
                                 {book?.status !== 'completed' ? (
-                                    <div style={styles.loadingMoreBox}><Loader2 className="animate-spin" size={20} /><span>Loading...</span></div>
-                                ) : <div style={styles.endOfBook}>• END OF DOCUMENT •</div>}
+                                    <div style={styles.loadingMoreBox}>
+                                        <Loader2 className="animate-spin" size={20} />
+                                        <span>Loading page {book?.processedPages + 1} of {book?.totalPages}...</span>
+                                    </div>
+                                ) : (
+                                    <div style={styles.endOfBook}>• END OF DOCUMENT •</div>
+                                )}
                             </div>
                         </div>
                     </div>
                 ) : (
-                    viewerUrl ? <iframe src={viewerUrl} style={styles.iframe} title="Viewer" /> : <div style={styles.fullscreenCenter}><Loader2 className="animate-spin" /></div>
+                    viewerUrl ? (
+                        <iframe
+                            src={viewerUrl}
+                            style={styles.iframe}
+                            title="Document Viewer"
+                        />
+                    ) : (
+                        <div style={styles.fullscreenCenter}><Loader2 className="animate-spin" /></div>
+                    )
                 )}
+
+                <button style={styles.floatingUpBtn} onClick={() => scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })}>
+                    <ChevronUp size={24} />
+                </button>
             </main>
 
-            {/* NEW BOTTOM UI MENU */}
             {menuOpen && (
                 <div style={styles.overlay} onClick={() => setMenuOpen(false)}>
                     <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
@@ -183,23 +279,29 @@ const Reader = () => {
                 </div>
             )}
 
-            {/* PLAYER FOOTER */}
             <footer style={styles.bottomPlayer}>
                 <div style={styles.progressBarWrapper}>
                     <div style={styles.progressBase}>
                         <div style={{ ...styles.progressFill, width: `${(book?.processedPages / book?.totalPages) * 100}%` }} />
                     </div>
+                    <div style={styles.timeLabels}>
+                        <span>{book?.processedPages} / {book?.totalPages} pages</span>
+                        <span style={{ color: '#a1a1aa' }}>{book?.words?.toLocaleString()} words</span>
+                    </div>
                 </div>
+
                 <div style={styles.controlRow}>
                     <div style={styles.flagBox}>🇺🇸</div>
                     <div style={styles.mainButtons}>
-                        <button style={styles.skipBtn} onClick={() => synth.cancel()}><RotateCcw size={30} /><span style={styles.skipNum}>R</span></button>
-                        <button onClick={() => setIsPlaying(!isPlaying)} style={styles.playBtn}>
-                            {isPlaying ? <Pause size={30} fill="white" /> : <Play size={30} fill="white" />}
+                        <button style={styles.skipBtn} onClick={() => { synth.cancel(); setIsPlaying(false); }}>
+                            <RotateCcw size={30} /><span style={styles.skipNum}>R</span>
+                        </button>
+                        <button onClick={handleTogglePlay} style={styles.playBtn}>
+                            {isPlaying ? <Pause size={30} fill="white" /> : <Play size={30} fill="white" style={{ marginLeft: '4px' }} />}
                         </button>
                         <button style={styles.skipBtn}><RotateCw size={30} /><span style={styles.skipNum}>S</span></button>
                     </div>
-                    <button onClick={() => setPlaybackSpeed(s => s >= 2 ? 0.75 : s + 0.25)} style={styles.speedPill}>{playbackSpeed}×</button>
+                    <button onClick={toggleSpeed} style={styles.speedPill}>{playbackSpeed}×</button>
                 </div>
             </footer>
         </div>,
@@ -208,7 +310,10 @@ const Reader = () => {
 };
 
 const PillButton = ({ active, onClick, icon, label }) => (
-    <button onClick={onClick} style={{ ...styles.pill, backgroundColor: active ? '#4f46e5' : '#27272a' }}>
+    <button
+        onClick={onClick}
+        style={{ ...styles.pill, backgroundColor: active ? '#4f46e5' : '#27272a' }}
+    >
         {icon} {label}
     </button>
 );
@@ -238,7 +343,7 @@ const MainMenu = ({ book }) => (
                 <MenuOption icon={<FastForward size={22} />} label="Auto skip content" />
             </div>
             <div style={styles.optionGroup}>
-                <MenuOption icon={<Scroll size={22} />} label="Auto-Scroll" toggle active={true} />
+                <MenuOption icon={<Scroll size={22} />} label="Auto-Scroll" toggle={true} active={true} />
             </div>
         </div>
     </div>
@@ -274,6 +379,10 @@ const styles = {
     digitalTextContainer: { padding: '40px 24px', color: '#fff' },
     digitalMainTitle: { fontSize: '24px', fontWeight: 'bold', marginBottom: '24px' },
     digitalBodyText: { fontSize: '18px', lineHeight: '1.6', color: '#e4e4e7' },
+    loadingTrigger: { padding: '60px 0', display: 'flex', justifyContent: 'center' },
+    loadingMoreBox: { display: 'flex', alignItems: 'center', gap: '10px', color: '#71717a' },
+    endOfBook: { color: '#3f3f46', fontSize: '12px', letterSpacing: '2px', textAlign: 'center' },
+    floatingUpBtn: { position: 'absolute', bottom: '20px', right: '20px', backgroundColor: '#27272a', color: '#fff', padding: '12px', borderRadius: '14px', border: 'none' },
     overlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'end' },
     sheet: { width: '100%', backgroundColor: '#18181b', borderTopLeftRadius: '28px', borderTopRightRadius: '28px', padding: '16px', maxHeight: '85vh', overflowY: 'auto' },
     dragHandle: { width: '40px', height: '4px', backgroundColor: '#3f3f46', borderRadius: '2px', margin: '0 auto 16px' },
@@ -294,12 +403,13 @@ const styles = {
     bottomPlayer: { backgroundColor: '#000', padding: '20px 24px 40px' },
     progressBase: { height: '4px', backgroundColor: '#27272a', borderRadius: '2px' },
     progressFill: { height: '100%', backgroundColor: '#4f46e5', borderRadius: '2px' },
+    timeLabels: { display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '12px', color: '#71717a' },
     controlRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' },
     flagBox: { padding: '8px', backgroundColor: '#1c1c1e', borderRadius: '8px' },
     mainButtons: { display: 'flex', alignItems: 'center', gap: '24px' },
     playBtn: { width: '56px', height: '56px', backgroundColor: '#4f46e5', borderRadius: '28px', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center' },
     skipBtn: { background: 'none', border: 'none', color: '#fff', position: 'relative' },
-    skipNum: { position: 'absolute', top: '10px', fontSize: '10px', width: '100%', textAlign: 'center' },
+    skipNum: { position: 'absolute', top: '10px', fontSize: '10px', width: '100%', textAlign: 'center', fontWeight: 'bold' },
     speedPill: { color: '#fff', backgroundColor: '#1c1c1e', padding: '6px 12px', borderRadius: '12px', border: 'none', fontWeight: 'bold' }
 };
 
