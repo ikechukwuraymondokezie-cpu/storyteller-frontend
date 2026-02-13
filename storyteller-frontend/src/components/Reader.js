@@ -14,9 +14,8 @@ const Reader = () => {
     const bottomObserverRef = useRef(null);
     const paragraphRefs = useRef([]);
 
-    // Refs for playback state
     const isPlayingRef = useRef(false);
-    const resumeOffsetRef = useRef(0); // Tracks where we paused in the text
+    const resumeOffsetRef = useRef(0);
 
     const [book, setBook] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -32,15 +31,25 @@ const Reader = () => {
 
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
-    // --- ENGINE ---
+    // --- ENGINE: BREATH INJECTOR ---
     const visualParagraphs = useMemo(() => {
         if (!book?.content) return [];
         const rawBlocks = book.content.replace(/\r\n/g, '\n').split(/\n\s*\n/);
         const arranged = [];
 
         rawBlocks.forEach(block => {
-            const healedBlock = block.replace(/([^\n])\n([^\n])/g, '$1 $2').replace(/\s+/g, ' ').trim();
+            let healedBlock = block
+                .replace(/([^\n])\n([^\n])/g, '$1 $2')
+                .replace(/\s+/g, ' ')
+                .trim();
+
             if (!healedBlock) return;
+
+            // FIX: Inject "Breaths"
+            // We replace commas with a comma and a space to force the TTS to recognize the pause.
+            // We also add a tiny bit of extra padding to sentences.
+            healedBlock = healedBlock.replace(/,/g, ', ');
+
             const isTitle = healedBlock.length < 60 && !/[.!?]/.test(healedBlock);
             if (isTitle) {
                 arranged.push(healedBlock);
@@ -57,6 +66,66 @@ const Reader = () => {
         });
         return arranged;
     }, [book?.content]);
+
+    // PREDICTIVE LOADING
+    const loadMorePages = async () => {
+        if (loadingMore || !book || book.status === 'completed') return;
+        setLoadingMore(true);
+        try {
+            const response = await fetch(`${BACKEND_URL}/api/books/${id}/load-pages`);
+            const data = await response.json();
+            if (data.addedText) {
+                setBook(prev => ({
+                    ...prev,
+                    content: (prev.content || "") + "\n\n" + data.addedText,
+                    processedPages: data.processedPages,
+                    status: data.status
+                }));
+            }
+        } catch (err) { console.error("Loading error:", err); } finally { setLoadingMore(false); }
+    };
+
+    // SPEECH ENGINE
+    const speak = (index, offset = 0) => {
+        if (index >= visualParagraphs.length || !isPlayingRef.current) {
+            setIsPlaying(false);
+            isPlayingRef.current = false;
+            return;
+        }
+
+        synth.cancel();
+        setCurrentParaIndex(index);
+
+        const fullText = visualParagraphs[index];
+        const textToSpeak = fullText.slice(offset);
+
+        const utterance = new SpeechSynthesisUtterance(textToSpeak);
+        utterance.rate = playbackSpeed;
+
+        const voices = synth.getVoices();
+        utterance.voice = voices.find(v => v.name.includes("Google US English")) || voices[0];
+
+        utterance.onboundary = (event) => {
+            if (event.name === 'word') {
+                resumeOffsetRef.current = offset + event.charIndex;
+
+                // PREDICTIVE: Load more if we are within 3 paragraphs of the end
+                if (index >= visualParagraphs.length - 3 && !loadingMore) {
+                    loadMorePages();
+                }
+            }
+        };
+
+        utterance.onend = () => {
+            if (isPlayingRef.current) {
+                resumeOffsetRef.current = 0;
+                speak(index + 1);
+            }
+        };
+
+        paragraphRefs.current[index]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        synth.speak(utterance);
+    };
 
     useEffect(() => {
         let pollInterval;
@@ -79,82 +148,28 @@ const Reader = () => {
         return () => { clearInterval(pollInterval); synth.cancel(); };
     }, [id]);
 
-    // IMPROVED SPEECH ENGINE WITH RESUME SUPPORT
-    const speak = (index, offset = 0) => {
-        if (index >= visualParagraphs.length || !isPlayingRef.current) {
-            setIsPlaying(false);
-            isPlayingRef.current = false;
-            return;
-        }
-
-        synth.cancel();
-        setCurrentParaIndex(index);
-
-        // Slice the text to start from where we paused
-        const fullText = visualParagraphs[index];
-        const textToSpeak = fullText.slice(offset);
-
-        const utterance = new SpeechSynthesisUtterance(textToSpeak);
-        utterance.rate = playbackSpeed;
-        const voices = synth.getVoices();
-        utterance.voice = voices.find(v => v.name.includes("Google US English")) || voices[0];
-
-        // Track progress so we can resume if paused
-        utterance.onboundary = (event) => {
-            if (event.name === 'word') {
-                resumeOffsetRef.current = offset + event.charIndex;
-            }
-        };
-
-        utterance.onend = () => {
-            if (isPlayingRef.current) {
-                resumeOffsetRef.current = 0; // Reset offset for next paragraph
-                speak(index + 1);
-            }
-        };
-
-        paragraphRefs.current[index]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        synth.speak(utterance);
-    };
+    // Proactive Scroll Loading
+    useEffect(() => {
+        if (!isDigitalMode || viewMode !== 'reading' || book?.status === 'completed') return;
+        const observer = new IntersectionObserver(
+            (entries) => { if (entries[0].isIntersecting && !loadingMore) loadMorePages(); },
+            { threshold: 0.01, rootMargin: '800px' } // Load when 800px from bottom
+        );
+        if (bottomObserverRef.current) observer.observe(bottomObserverRef.current);
+        return () => observer.disconnect();
+    }, [isDigitalMode, viewMode, book?.status, loadingMore]);
 
     const handleTogglePlay = () => {
         if (isPlaying) {
             isPlayingRef.current = false;
             setIsPlaying(false);
-            synth.cancel(); // Stop but we keep resumeOffsetRef.current
+            synth.cancel();
         } else {
             isPlayingRef.current = true;
             setIsPlaying(true);
             speak(currentParaIndex, resumeOffsetRef.current);
         }
     };
-
-    const loadMorePages = async () => {
-        if (loadingMore || !book || book.status === 'completed') return;
-        setLoadingMore(true);
-        try {
-            const response = await fetch(`${BACKEND_URL}/api/books/${id}/load-pages`);
-            const data = await response.json();
-            if (data.addedText) {
-                setBook(prev => ({
-                    ...prev,
-                    content: (prev.content || "") + "\n\n" + data.addedText,
-                    processedPages: data.processedPages,
-                    status: data.status
-                }));
-            }
-        } catch (err) { console.error(err); } finally { setLoadingMore(false); }
-    };
-
-    useEffect(() => {
-        if (!isDigitalMode || viewMode !== 'reading' || book?.status === 'completed') return;
-        const observer = new IntersectionObserver(
-            (entries) => { if (entries[0].isIntersecting && !loadingMore) loadMorePages(); },
-            { threshold: 0.1, rootMargin: '200px' }
-        );
-        if (bottomObserverRef.current) observer.observe(bottomObserverRef.current);
-        return () => observer.disconnect();
-    }, [isDigitalMode, viewMode, book?.status, loadingMore]);
 
     if (loading) return <div style={styles.fullscreenCenter}><Loader2 className="animate-spin" size={40} /></div>;
 
@@ -194,7 +209,7 @@ const Reader = () => {
                                     key={i}
                                     ref={el => paragraphRefs.current[i] = el}
                                     onClick={() => {
-                                        resumeOffsetRef.current = 0; // Reset offset if user manually clicks a paragraph
+                                        resumeOffsetRef.current = 0;
                                         setCurrentParaIndex(i);
                                         if (isPlayingRef.current) speak(i);
                                     }}
@@ -218,15 +233,6 @@ const Reader = () => {
                 )}
             </main>
 
-            {menuOpen && (
-                <div style={styles.overlay} onClick={() => setMenuOpen(false)}>
-                    <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
-                        <div style={styles.dragHandle} />
-                        <MainMenu book={book} />
-                    </div>
-                </div>
-            )}
-
             <footer style={styles.bottomPlayer}>
                 <div style={styles.progressBase}><div style={{ ...styles.progressFill, width: `${(book?.processedPages / (book?.totalPages || 1)) * 100}%` }} /></div>
                 <div style={styles.controlRow}>
@@ -238,9 +244,7 @@ const Reader = () => {
                             if (isPlayingRef.current) speak(prev);
                             else setCurrentParaIndex(prev);
                         }}><RotateCcw size={24} /></button>
-
                         <button onClick={handleTogglePlay} style={styles.playBtn}>{isPlaying ? <Pause size={24} /> : <Play size={24} />}</button>
-
                         <button style={styles.skipBtn} onClick={() => {
                             resumeOffsetRef.current = 0;
                             const next = Math.min(visualParagraphs.length - 1, currentParaIndex + 1);
@@ -251,11 +255,21 @@ const Reader = () => {
                     <button onClick={() => setPlaybackSpeed(s => s >= 2 ? 0.75 : s + 0.25)} style={styles.speedPill}>{playbackSpeed}×</button>
                 </div>
             </footer>
+
+            {menuOpen && (
+                <div style={styles.overlay} onClick={() => setMenuOpen(false)}>
+                    <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.dragHandle} />
+                        <MainMenu book={book} />
+                    </div>
+                </div>
+            )}
         </div>,
         document.body
     );
 };
 
+// COMPONENT: Small Pills (10px)
 const PillButton = ({ active, onClick, icon, label }) => (
     <button onClick={onClick} style={{ ...styles.pill, backgroundColor: active ? '#4f46e5' : '#27272a' }}>{icon} {label}</button>
 );
@@ -296,7 +310,6 @@ const styles = {
     rightActions: { display: 'flex', gap: '8px' },
     actionIcon: { background: 'none', border: 'none', color: '#fff', padding: '4px' },
     pillScroll: { display: 'flex', gap: '6px', overflowX: 'auto', padding: '8px 16px' },
-    // PILLS: Standardized at 10px
     pill: { display: 'flex', alignItems: 'center', gap: '4px', color: '#fff', border: 'none', padding: '4px 10px', borderRadius: '12px', fontSize: '10px', whiteSpace: 'nowrap', fontWeight: '600' },
     viewerContainer: { flex: 1, overflowY: 'auto' },
     iframe: { width: '100%', height: '100%', border: 'none' },
@@ -305,7 +318,7 @@ const styles = {
     authorTag: { color: '#71717a', fontSize: '14px', marginTop: '4px', fontWeight: '500' },
     digitalMainTitle: { fontSize: '28px', fontWeight: '800', marginBottom: '8px', lineHeight: '1.2' },
     digitalBodyText: { fontSize: '19px', lineHeight: '1.75', letterSpacing: '-0.01em', fontFamily: 'serif' },
-    paragraphCard: { marginBottom: '2.5em' },
+    paragraphCard: { marginBottom: '2.5em', cursor: 'pointer' },
     loadingTrigger: { padding: '40px', textAlign: 'center', color: '#71717a' },
     overlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'end' },
     sheet: { width: '100%', backgroundColor: '#18181b', borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '16px' },
