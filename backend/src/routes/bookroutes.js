@@ -5,12 +5,12 @@ const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
 const vision = require('@google-cloud/vision');
-const axios = require('axios'); // Add this!
+const axios = require('axios');
 
 const Book = require("../models/Book");
 const router = express.Router();
 
-// Initialize Vision Client (Make sure your GOOGLE_APPLICATION_CREDENTIALS env is set)
+// Initialize Vision Client
 const visionClient = new vision.ImageAnnotatorClient();
 
 // Setup paths for temporary processing
@@ -23,6 +23,27 @@ fs.ensureDirSync(coversDir);
 const upload = multer({ dest: "temp/uploads/" });
 
 /* ---------------- HELPERS ---------------- */
+
+/**
+ * SMARTER TEXT EXTRACTION (PRE-PROCESSING)
+ * This fixes the "horrible logic" by forcing breaks where the PDF smashed text together.
+ */
+function smartClean(text) {
+    if (!text) return "";
+    return text
+        // 1. Force break BEFORE Chapter/BOOKS BY if it's stuck to a previous sentence
+        .replace(/([a-z0-9])\s*(Chapter\s+\d+|Psalm|Section|BOOKS\s+BY|Part|Book|Lesson)/gi, '$1\n\n$2')
+
+        // 2. Force break AFTER a title but BEFORE the body text starts
+        // Specifically targets: "Chapter 1 The Prayers of Paul [Space] The authority of..."
+        .replace(/(Chapter\s+\d+.*?)\s+(The\s+authority|Because|In\s+the|For\s+this|When\s+we)/gi, '$1\n\n$2')
+
+        // 3. Clean up excessive horizontal whitespaces
+        .replace(/[ \t]+/g, ' ')
+
+        // 4. Ensure we only use double newlines (not triples or more)
+        .replace(/\n{3,}/g, '\n\n');
+}
 
 function getPageCount(pdfPath) {
     return new Promise((resolve) => {
@@ -41,7 +62,6 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
     try {
         await new Promise((resolve, reject) => {
-            // Converts specific PDF page to a high-quality PNG for Google Vision
             exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
@@ -51,7 +71,9 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
         const text = result.fullTextAnnotation ? result.fullTextAnnotation.text : "";
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
-        return text;
+
+        // Apply the cleaning logic before returning
+        return smartClean(text);
     } catch (e) {
         console.error("OCR Error:", e);
         return "";
@@ -60,7 +82,7 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
 /* ---------------- ROUTES ---------------- */
 
-// 1. LAZY LOAD ROUTE (Triggered when user scrolls to bottom)
+// 1. LAZY LOAD ROUTE
 router.get("/:id/load-pages", async (req, res) => {
     let tempPath = "";
     try {
@@ -76,7 +98,6 @@ router.get("/:id/load-pages", async (req, res) => {
 
         tempPath = path.join(pdfDir, `temp_load_${book._id}.pdf`);
 
-        // Download from Cloudinary if local temp copy is gone
         if (!(await fs.pathExists(tempPath))) {
             const response = await axios.get(book.pdfPath, { responseType: 'arraybuffer' });
             await fs.writeFile(tempPath, Buffer.from(response.data));
@@ -99,7 +120,6 @@ router.get("/:id/load-pages", async (req, res) => {
             words: actualWordCount
         }, { new: true });
 
-        // Clean up temp file only if book is completely finished
         if (updatedBook.status === 'completed') {
             await fs.remove(tempPath);
         }
@@ -138,13 +158,11 @@ router.post("/", upload.single("file"), async (req, res) => {
 
         res.status(201).json(book);
 
-        // Background worker for initial setup
         (async () => {
             try {
                 const baseName = path.parse(req.file.filename).name;
                 const outputPrefix = path.join(coversDir, baseName);
 
-                // Upload to Cloudinary and Generate Cover simultaneously
                 const [cloudUrl, coverUrl] = await Promise.all([
                     cloudinary.uploader.upload(pdfDiskPath, { folder: "storyteller_pdfs", resource_type: "raw" }).then(r => r.secure_url),
                     new Promise((resolve) => {
@@ -159,7 +177,6 @@ router.post("/", upload.single("file"), async (req, res) => {
 
                 await Book.findByIdAndUpdate(book._id, { pdfPath: cloudUrl, cover: coverUrl });
 
-                // Extract first 5 pages immediately so the user can start reading
                 let runningText = "";
                 const limit = Math.min(5, totalPages);
                 for (let i = 1; i <= limit; i++) {
@@ -175,7 +192,6 @@ router.post("/", upload.single("file"), async (req, res) => {
                     });
                 }
 
-                // Cleanup initial upload
                 if (await fs.pathExists(pdfDiskPath)) await fs.remove(pdfDiskPath);
             } catch (e) {
                 console.error("Background Worker Error:", e);

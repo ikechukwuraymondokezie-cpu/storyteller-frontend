@@ -7,9 +7,8 @@ const path = require("path");
 const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
-const axios = require("axios"); // Added for reliable PDF fetching
+const axios = require("axios");
 
-// Standard imports
 const vision = require('@google-cloud/vision');
 
 const app = express();
@@ -111,6 +110,30 @@ const formatBook = (book) => ({
     createdAt: book.createdAt
 });
 
+/**
+ * SMARTER TEXT EXTRACTION (PRE-PROCESSING)
+ * This forces newlines where headers like "Chapter 1" or "BOOKS BY" appear 
+ * so the frontend can properly split them into separate lines/cards.
+ */
+function smartClean(text) {
+    if (!text) return "";
+    return text
+        // 1. Force break BEFORE Chapter/BOOKS BY if it's preceded by text
+        .replace(/([a-z0-9])\s*(Chapter\s+\d+|Psalm|Section|BOOKS\s+BY|Part)/gi, '$1\n\n$2')
+
+        // 2. Force break AFTER a title like "Chapter 1 The Prayers of Paul" 
+        // if it's immediately followed by body text keywords (The, Because, In)
+        .replace(/(Chapter\s+\d+.*?)\s+(The\s+authority|Because|In\s+the|For\s+this)/gi, '$1\n\n$2')
+
+        // 3. Force a break before numeric sections like "2. 2 The Law"
+        .replace(/([a-z0-9])\s*(\d+\.\s+\d+\s+[A-Z])/g, '$1\n\n$2')
+
+        // 4. Clean up excessive whitespaces/tabs
+        .replace(/[ \t]+/g, ' ')
+        // 5. Ensure we only use double newlines (not triples)
+        .replace(/\n{3,}/g, '\n\n');
+}
+
 function getPageCount(pdfPath) {
     return new Promise((resolve) => {
         exec(`pdfinfo "${pdfPath}" | grep Pages: | awk '{print $2}'`, (err, stdout) => {
@@ -138,7 +161,9 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
         const text = result.fullTextAnnotation ? result.fullTextAnnotation.text : "";
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
-        return text;
+
+        // Apply the Smart Cleaning here before returning to database/frontend
+        return smartClean(text);
     } catch (e) {
         console.error(`❌ Google OCR Error on page ${pageNum}:`, e.message);
         return "";
@@ -163,7 +188,6 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
 
         tempPdfPath = path.join(uploadDir, `temp_load_${book._id}.pdf`);
 
-        // Use Axios for arraybuffer download (more stable on Render)
         if (!(await fs.pathExists(tempPdfPath))) {
             const response = await axios.get(book.pdfPath, { responseType: 'arraybuffer' });
             await fs.writeFile(tempPdfPath, Buffer.from(response.data));
@@ -188,7 +212,6 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
             status: isFinished ? 'completed' : 'processing'
         }, { new: true });
 
-        // Cleanup temp file ONLY when fully finished
         if (isFinished && await fs.pathExists(tempPdfPath)) {
             await fs.remove(tempPdfPath);
         }
@@ -226,7 +249,6 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
 
         res.status(201).json(formatBook(book));
 
-        // Background Worker
         (async () => {
             try {
                 const baseName = path.parse(req.file.filename).name;
@@ -331,7 +353,6 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", async () => {
     console.log(`✅ Server running on port ${PORT}`);
     try {
-        // Clear temp files on restart
         await fs.emptyDir(uploadDir);
         await fs.emptyDir(coversDir);
     } catch (e) { console.warn("Initial cleanup failed"); }
