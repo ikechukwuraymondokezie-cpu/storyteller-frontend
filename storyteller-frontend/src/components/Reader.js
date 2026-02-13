@@ -27,24 +27,41 @@ const Reader = () => {
 
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
-    // --- BRUTE FORCE WELDER (The Logic You Described) ---
-    // 1. It merges sentences/phrases by destroying PDF "hard returns".
-    // 2. It preserves real paragraph breaks (double newlines).
-    // 3. This is what both the screen and the TTS will use.
-    const weldedContent = useMemo(() => {
-        if (!book?.content) return "";
+    // --- SMART ARRANGER LOGIC (Speechify Style) ---
+    // This logic prevents "blobbing" by identifying headers and info blocks
+    const visualParagraphs = useMemo(() => {
+        if (!book?.content) return [];
 
-        return book.content
-            .replace(/(\w)-\n(\w)/g, '$1$2')             // Weld hyphenated words (inter-\nview)
-            .replace(/(?<!\n)\n(?!\n)/g, ' ')            // Weld single line breaks into a space
-            .replace(/\s+/g, ' ')                        // Clean up extra spaces
-            .trim();
+        const lines = book.content.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        const arranged = [];
+        let currentParagraph = "";
+
+        lines.forEach((line, index) => {
+            const nextLine = lines[index + 1] || "";
+
+            // Detection rules for headers/titles/info (short lines or all caps)
+            const isShort = line.length < 45;
+            const isHeader = /^[A-Z0-9\s-]+$/.test(line) && line.length < 60;
+            const startsNewThought = /^[A-Z]/.test(nextLine) && isShort;
+
+            if (isShort || isHeader || startsNewThought) {
+                if (currentParagraph) {
+                    arranged.push(currentParagraph.trim());
+                    currentParagraph = "";
+                }
+                arranged.push(line);
+            } else {
+                // Weld normal sentences together
+                currentParagraph += (currentParagraph ? " " : "") + line;
+            }
+        });
+
+        if (currentParagraph) arranged.push(currentParagraph.trim());
+        return arranged;
     }, [book?.content]);
 
-    // Split for the visual UI so it's not one giant wall of text
-    const visualParagraphs = useMemo(() => {
-        return weldedContent.split(/\n\s*\n/).filter(p => p.length > 0);
-    }, [weldedContent]);
+    // TTS reads the same arranged blocks to ensure natural pauses
+    const textToRead = useMemo(() => visualParagraphs.join('\n '), [visualParagraphs]);
 
     useEffect(() => {
         let pollInterval;
@@ -67,18 +84,16 @@ const Reader = () => {
         return () => { clearInterval(pollInterval); synth.cancel(); };
     }, [id]);
 
-    // --- TTS CONTROLLER (Reads exactly what is arranged) ---
     const handleTogglePlay = () => {
         if (isPlaying) { synth.pause(); setIsPlaying(false); return; }
         if (synth.paused && synth.speaking) { synth.resume(); setIsPlaying(true); return; }
 
         synth.cancel();
         setTimeout(() => {
-            // We read the WELDED content, ensuring the TTS flows over the joins
-            const textToRead = viewMode === 'summary' ? book?.summary : weldedContent;
+            const content = viewMode === 'summary' ? book?.summary : textToRead;
 
-            if (textToRead) {
-                const utterance = new SpeechSynthesisUtterance(textToRead.substring(0, 4000));
+            if (content) {
+                const utterance = new SpeechSynthesisUtterance(content.substring(0, 4000));
                 utterance.rate = playbackSpeed;
                 utterance.onstart = () => setIsPlaying(true);
                 utterance.onend = () => setIsPlaying(false);
@@ -146,8 +161,9 @@ const Reader = () => {
                     <div style={styles.digitalTextContainer}>
                         <h1 style={styles.digitalMainTitle}>{book?.title}</h1>
                         <div style={styles.digitalBodyText}>
-                            {/* Uses the visual paragraphs derived from the welded content */}
-                            {visualParagraphs.map((para, i) => <p key={i} style={{ marginBottom: '1.2em' }}>{para}</p>)}
+                            {visualParagraphs.map((para, i) => (
+                                <p key={i} style={{ marginBottom: '1.4em' }}>{para}</p>
+                            ))}
                             <div ref={bottomObserverRef} style={styles.loadingTrigger}>
                                 {book?.status !== 'completed' ? <Loader2 className="animate-spin" /> : "• END •"}
                             </div>
@@ -184,8 +200,6 @@ const Reader = () => {
     );
 };
 
-// --- Sub-components (Stayed the same as requested) ---
-
 const PillButton = ({ active, onClick, icon, label }) => (
     <button onClick={onClick} style={{ ...styles.pill, backgroundColor: active ? '#4f46e5' : '#27272a' }}>{icon} {label}</button>
 );
@@ -217,8 +231,6 @@ const MenuOption = ({ icon, label, toggle, active }) => (
     </button>
 );
 
-// --- Styles (Unalchanged for consistency) ---
-
 const styles = {
     fullscreenCenter: { height: '100vh', backgroundColor: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' },
     container: { position: 'fixed', inset: 0, backgroundColor: '#000', display: 'flex', flexDirection: 'column', zIndex: 9999 },
@@ -228,12 +240,12 @@ const styles = {
     rightActions: { display: 'flex', gap: '8px' },
     actionIcon: { background: 'none', border: 'none', color: '#fff', padding: '6px' },
     pillScroll: { display: 'flex', gap: '8px', overflowX: 'auto', padding: '8px 16px' },
-    pill: { display: 'flex', alignItems: 'center', gap: '4px', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', fontSize: '12px', whiteSpace: 'nowrap' },
+    pill: { display: 'flex', alignItems: 'center', gap: '4px', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', fontSize: '11px', whiteSpace: 'nowrap' },
     viewerContainer: { flex: 1, overflowY: 'auto' },
     iframe: { width: '100%', height: '100%', border: 'none' },
-    digitalTextContainer: { padding: '30px 20px', color: '#fff' },
-    digitalMainTitle: { fontSize: '20px', fontWeight: 'bold', marginBottom: '16px' },
-    digitalBodyText: { fontSize: '17px', lineHeight: '1.6', color: '#e4e4e7' },
+    digitalTextContainer: { padding: '30px 24px', color: '#fff' },
+    digitalMainTitle: { fontSize: '22px', fontWeight: 'bold', marginBottom: '20px', lineHeight: '1.3' },
+    digitalBodyText: { fontSize: '18px', lineHeight: '1.7', color: '#e4e4e7', letterSpacing: '-0.01em' },
     loadingTrigger: { padding: '30px', textAlign: 'center', color: '#71717a' },
     overlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'end' },
     sheet: { width: '100%', backgroundColor: '#18181b', borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '16px' },
@@ -253,7 +265,7 @@ const styles = {
     controlRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px' },
     flagBox: { padding: '6px', backgroundColor: '#1c1c1e', borderRadius: '6px', fontSize: '14px' },
     mainButtons: { display: 'flex', alignItems: 'center', gap: '20px' },
-    playBtn: { width: '48px', height: '48px', backgroundColor: '#4f46e5', borderRadius: '24px', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' },
+    playBtn: { width: '52px', height: '52px', backgroundColor: '#4f46e5', borderRadius: '26px', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' },
     skipBtn: { background: 'none', border: 'none', color: '#fff' },
     speedPill: { color: '#fff', backgroundColor: '#1c1c1e', padding: '4px 10px', borderRadius: '10px', border: 'none', fontSize: '12px' }
 };
