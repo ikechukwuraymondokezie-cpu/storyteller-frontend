@@ -27,22 +27,24 @@ const Reader = () => {
 
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
-    // --- 1. ENHANCED SMART WELDER LOGIC ---
-    const processedContent = useMemo(() => {
-        if (!book?.content) return [];
+    // --- BRUTE FORCE WELDER (The Logic You Described) ---
+    // 1. It merges sentences/phrases by destroying PDF "hard returns".
+    // 2. It preserves real paragraph breaks (double newlines).
+    // 3. This is what both the screen and the TTS will use.
+    const weldedContent = useMemo(() => {
+        if (!book?.content) return "";
 
         return book.content
-            .split(/\n\s*\n/) // Detect physical paragraph breaks
-            .map(para => {
-                return para
-                    .replace(/(\w)-\n(\w)/g, '$1$2') // Fix hyphens: "inter-\nview" -> "interview"
-                    .replace(/([^\.!?:])\n(?=[a-z0-9])/g, '$1 ') // Join lines that don't end in sentence-closers
-                    .replace(/\n/g, ' ') // Clean up remaining newlines
-                    .replace(/\s+/g, ' ') // Remove double spaces
-                    .trim();
-            })
-            .filter(para => para.length > 5); // Filter out noise/empty artifacts
+            .replace(/(\w)-\n(\w)/g, '$1$2')             // Weld hyphenated words (inter-\nview)
+            .replace(/(?<!\n)\n(?!\n)/g, ' ')            // Weld single line breaks into a space
+            .replace(/\s+/g, ' ')                        // Clean up extra spaces
+            .trim();
     }, [book?.content]);
+
+    // Split for the visual UI so it's not one giant wall of text
+    const visualParagraphs = useMemo(() => {
+        return weldedContent.split(/\n\s*\n/).filter(p => p.length > 0);
+    }, [weldedContent]);
 
     useEffect(() => {
         let pollInterval;
@@ -65,21 +67,18 @@ const Reader = () => {
         return () => { clearInterval(pollInterval); synth.cancel(); };
     }, [id]);
 
-    // --- 2. UPDATED TTS CONTROLLER ---
+    // --- TTS CONTROLLER (Reads exactly what is arranged) ---
     const handleTogglePlay = () => {
         if (isPlaying) { synth.pause(); setIsPlaying(false); return; }
         if (synth.paused && synth.speaking) { synth.resume(); setIsPlaying(true); return; }
 
         synth.cancel();
         setTimeout(() => {
-            // FIX: TTS now consumes the "Welded" content for natural speech flow
-            const textToRead = viewMode === 'summary'
-                ? book?.summary
-                : processedContent.join(' ');
+            // We read the WELDED content, ensuring the TTS flows over the joins
+            const textToRead = viewMode === 'summary' ? book?.summary : weldedContent;
 
             if (textToRead) {
-                // Use a smaller chunk size (3000) for better browser performance
-                const utterance = new SpeechSynthesisUtterance(textToRead.substring(0, 3000));
+                const utterance = new SpeechSynthesisUtterance(textToRead.substring(0, 4000));
                 utterance.rate = playbackSpeed;
                 utterance.onstart = () => setIsPlaying(true);
                 utterance.onend = () => setIsPlaying(false);
@@ -147,7 +146,8 @@ const Reader = () => {
                     <div style={styles.digitalTextContainer}>
                         <h1 style={styles.digitalMainTitle}>{book?.title}</h1>
                         <div style={styles.digitalBodyText}>
-                            {processedContent.map((para, i) => <p key={i} style={{ marginBottom: '1.2em' }}>{para}</p>)}
+                            {/* Uses the visual paragraphs derived from the welded content */}
+                            {visualParagraphs.map((para, i) => <p key={i} style={{ marginBottom: '1.2em' }}>{para}</p>)}
                             <div ref={bottomObserverRef} style={styles.loadingTrigger}>
                                 {book?.status !== 'completed' ? <Loader2 className="animate-spin" /> : "• END •"}
                             </div>
