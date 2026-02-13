@@ -7,6 +7,32 @@ import {
     Sparkles, Mic2, FileText, Download, Scroll, Share2
 } from 'lucide-react';
 
+// --- SKELETON COMPONENT FOR DIGITAL MODE ---
+const SkeletonLoader = () => (
+    <div style={styles.skeletonContainer}>
+        <div style={styles.skeletonHeader} className="animate-pulse" />
+        <div style={styles.skeletonSubHeader} className="animate-pulse" />
+        {[1, 2, 3].map((i) => (
+            <div key={i} style={styles.skeletonPara}>
+                <div style={{ ...styles.skeletonLine, width: '100%' }} className="animate-pulse" />
+                <div style={{ ...styles.skeletonLine, width: '90%' }} className="animate-pulse" />
+                <div style={{ ...styles.skeletonLine, width: '95%' }} className="animate-pulse" />
+                <div style={{ ...styles.skeletonLine, width: '40%' }} className="animate-pulse" />
+            </div>
+        ))}
+        {/* Injecting the pulse animation keyframes */}
+        <style>{`
+            @keyframes pulse {
+                0%, 100% { opacity: 1; }
+                50% { opacity: 0.4; }
+            }
+            .animate-pulse {
+                animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+            }
+        `}</style>
+    </div>
+);
+
 const Reader = () => {
     const { id } = useParams();
     const navigate = useNavigate();
@@ -31,63 +57,33 @@ const Reader = () => {
 
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
-    // --- UPDATED ENGINE: AGGRESSIVE HEADER & NUMERIC PAUSE ---
+    // --- STREAMLINED ENGINE: TRUST THE BACKEND BLOCKS ---
     const visualParagraphs = useMemo(() => {
         if (!book?.content) return [];
-        const rawBlocks = book.content.replace(/\r\n/g, '\n').split(/\n\s*\n/);
-        const arranged = [];
 
-        rawBlocks.forEach((block, index) => {
-            let healedBlock = block
-                .replace(/([^\n])\n([^\n])/g, '$1 $2')
-                .replace(/\s+/g, ' ')
-                .trim();
+        // Split by double newlines from backend
+        const rawBlocks = book.content.split(/\n\s*\n/);
 
-            if (!healedBlock) return;
+        return rawBlocks
+            .map(block => block.trim())
+            .filter(block => block.length > 0)
+            .map((text, index) => {
+                const isMainTitle = index === 0;
+                // Detect headers for styling
+                const isHeader = /^(Chapter|Section|Part|Lesson|Psalm|BOOKS BY|Romans|John)\s+\d+/i.test(text) ||
+                    (text.length < 65 && !/[.!?]$/.test(text));
 
-            // 1. DYNAMIC TYPE DETECTION
-            const isNumbered = /^(\d+[\.\s\-]+)/.test(healedBlock); // "1. ", "2 - "
-            const isKeywordHeader = /^(Chapter|Section|Part|Lesson|Romans|John|Psalm)\s+\d+/i.test(healedBlock);
-            const isShortLine = healedBlock.length < 65 && !/[.!?]$/.test(healedBlock); // Short, no punctuation
+                // Natural TTS pauses for verse numbers (e.g., "1:1" or "1.")
+                const injectPause = (t) => t.replace(/(\d+[\.:]\s?|\d+\s)/g, '$1... ');
 
-            let type = 'body';
-            if (index === 0) type = 'mainTitle';
-            else if (isNumbered || isKeywordHeader || isShortLine) type = 'header';
-
-            // 2. TTS PAUSE INJECTOR (Targeting figures 1. or verses 8:14)
-            // Injects '... ' which forces Synthesis to pause naturally
-            const injectPause = (text) => text.replace(/(\d+[\.:]\s?|\d+\s)/g, '$1... ');
-
-            if (type === 'mainTitle' || type === 'header') {
-                arranged.push({
-                    text: healedBlock,
-                    ttsText: injectPause(healedBlock),
-                    type
-                });
-            } else {
-                const sentences = healedBlock.match(/[^.!?]+[.!?]+["']?|[^.!?]+$/g);
-                if (sentences) {
-                    for (let i = 0; i < sentences.length; i += 2) {
-                        const chunk = sentences.slice(i, i + 2).join(' ').trim();
-                        arranged.push({
-                            text: chunk,
-                            ttsText: injectPause(chunk),
-                            type: 'body'
-                        });
-                    }
-                } else {
-                    arranged.push({
-                        text: healedBlock,
-                        ttsText: injectPause(healedBlock),
-                        type: 'body'
-                    });
-                }
-            }
-        });
-        return arranged;
+                return {
+                    text: text,
+                    ttsText: injectPause(text),
+                    type: isMainTitle ? 'mainTitle' : (isHeader ? 'header' : 'body')
+                };
+            });
     }, [book?.content]);
 
-    // PREDICTIVE LOADING
     const loadMorePages = async () => {
         if (loadingMore || !book || book.status === 'completed') return;
         setLoadingMore(true);
@@ -105,7 +101,6 @@ const Reader = () => {
         } catch (err) { console.error("Loading error:", err); } finally { setLoadingMore(false); }
     };
 
-    // SPEECH ENGINE
     const speak = (index, offset = 0) => {
         if (index >= visualParagraphs.length || !isPlayingRef.current) {
             setIsPlaying(false);
@@ -202,9 +197,9 @@ const Reader = () => {
                     </div>
                 </div>
                 <nav style={styles.pillScroll}>
-                    <PillButton active={viewMode === 'reading'} onClick={() => setViewMode('reading')} icon={<MessageSquare size={14} />} label="AI Chat" />
-                    <PillButton active={viewMode === 'summary'} onClick={() => setViewMode('summary')} icon={<Sparkles size={14} />} label="Summary" />
-                    <PillButton icon={<Mic2 size={14} />} label="Podcast" />
+                    <PillButton active={viewMode === 'reading'} onClick={() => setViewMode('reading')} icon={<MessageSquare size={12} />} label="AI Chat" />
+                    <PillButton active={viewMode === 'summary'} onClick={() => setViewMode('summary')} icon={<Sparkles size={12} />} label="Summary" />
+                    <PillButton icon={<Mic2 size={12} />} label="Podcast" />
                 </nav>
             </header>
 
@@ -216,35 +211,40 @@ const Reader = () => {
                     </div>
                 ) : isDigitalMode ? (
                     <div style={styles.digitalTextContainer}>
-                        {visualParagraphs.map((item, i) => {
-                            const isMainTitle = item.type === 'mainTitle';
-                            const isHeader = item.type === 'header';
+                        {/* SHOW SKELETON IF NO CONTENT YET */}
+                        {visualParagraphs.length === 0 ? (
+                            <SkeletonLoader />
+                        ) : (
+                            visualParagraphs.map((item, i) => {
+                                const isMainTitle = item.type === 'mainTitle';
+                                const isHeader = item.type === 'header';
 
-                            return (
-                                <p
-                                    key={i}
-                                    ref={el => paragraphRefs.current[i] = el}
-                                    onClick={() => {
-                                        resumeOffsetRef.current = 0;
-                                        setCurrentParaIndex(i);
-                                        if (isPlayingRef.current) speak(i);
-                                    }}
-                                    style={{
-                                        ...styles.paragraphCard,
-                                        color: i === currentParaIndex ? '#fff' : (isMainTitle || isHeader ? '#f4f4f5' : '#4b4b4b'),
-                                        fontSize: isMainTitle ? '36px' : (isHeader ? '26px' : '19px'),
-                                        fontWeight: (isMainTitle || isHeader) ? '900' : '400',
-                                        marginBottom: isMainTitle ? '0.6em' : (isHeader ? '1.2em' : '2.5em'),
-                                        lineHeight: isMainTitle ? '1.1' : '1.75',
-                                        fontFamily: (isMainTitle || isHeader) ? 'sans-serif' : 'serif',
-                                        borderTop: (isHeader && i !== 0) ? '1px solid #27272a' : 'none',
-                                        paddingTop: (isHeader && i !== 0) ? '24px' : '0'
-                                    }}
-                                >
-                                    {item.text}
-                                </p>
-                            )
-                        })}
+                                return (
+                                    <p
+                                        key={i}
+                                        ref={el => paragraphRefs.current[i] = el}
+                                        onClick={() => {
+                                            resumeOffsetRef.current = 0;
+                                            setCurrentParaIndex(i);
+                                            if (isPlayingRef.current) speak(i);
+                                        }}
+                                        style={{
+                                            ...styles.paragraphCard,
+                                            color: i === currentParaIndex ? '#fff' : (isMainTitle || isHeader ? '#f4f4f5' : '#4b4b4b'),
+                                            fontSize: isMainTitle ? '34px' : (isHeader ? '24px' : '18px'),
+                                            fontWeight: (isMainTitle || isHeader) ? '900' : '400',
+                                            marginBottom: isMainTitle ? '0.6em' : (isHeader ? '1.2em' : '2.2em'),
+                                            lineHeight: isMainTitle ? '1.1' : '1.7',
+                                            fontFamily: (isMainTitle || isHeader) ? 'sans-serif' : 'serif',
+                                            borderTop: (isHeader && i !== 0) ? '1px solid #27272a' : 'none',
+                                            paddingTop: (isHeader && i !== 0) ? '20px' : '0'
+                                        }}
+                                    >
+                                        {item.text}
+                                    </p>
+                                )
+                            })
+                        )}
                         <div ref={bottomObserverRef} style={styles.loadingTrigger}>
                             {book?.status !== 'completed' ? <Loader2 className="animate-spin" /> : "• END •"}
                         </div>
@@ -276,15 +276,6 @@ const Reader = () => {
                     <button onClick={() => setPlaybackSpeed(s => s >= 2 ? 0.75 : s + 0.25)} style={styles.speedPill}>{playbackSpeed}×</button>
                 </div>
             </footer>
-
-            {menuOpen && (
-                <div style={styles.overlay} onClick={() => setMenuOpen(false)}>
-                    <div style={styles.sheet} onClick={(e) => e.stopPropagation()}>
-                        <div style={styles.dragHandle} />
-                        <MainMenu book={book} />
-                    </div>
-                </div>
-            )}
         </div>,
         document.body
     );
@@ -292,33 +283,6 @@ const Reader = () => {
 
 const PillButton = ({ active, onClick, icon, label }) => (
     <button onClick={onClick} style={{ ...styles.pill, backgroundColor: active ? '#4f46e5' : '#27272a' }}>{icon} {label}</button>
-);
-
-const MainMenu = ({ book }) => (
-    <div style={styles.menuContent}>
-        <div style={styles.menuHeader}>
-            <div style={styles.bookInfoCard}>
-                <div style={styles.miniCover}><FileText size={20} color="#6366f1" /></div>
-                <div>
-                    <div style={styles.bookTitleSmall}>{book?.title}</div>
-                    <div style={styles.bookMetaSmall}>{book?.totalPages} pages</div>
-                </div>
-            </div>
-            <Share2 size={20} color="#fff" />
-        </div>
-        <div style={styles.optionGroup}>
-            <MenuOption icon={<List size={20} />} label="Table of Contents" />
-            <MenuOption icon={<Download size={20} />} label="Download Audio" />
-            <MenuOption icon={<Scroll size={20} />} label="Auto-Scroll" toggle={true} active={true} />
-        </div>
-    </div>
-);
-
-const MenuOption = ({ icon, label, toggle, active }) => (
-    <button style={styles.optionBtn}>
-        {icon} <span style={{ flex: 1, textAlign: 'left' }}>{label}</span>
-        {toggle && <div style={{ ...styles.toggleBase, backgroundColor: active ? '#4f46e5' : '#3f3f3f' }}><div style={{ ...styles.toggleCircle, transform: active ? 'translateX(18px)' : 'translateX(0px)' }} /></div>}
-    </button>
 );
 
 const styles = {
@@ -329,27 +293,15 @@ const styles = {
     backIcon: { background: 'none', border: 'none', color: '#fff', cursor: 'pointer' },
     rightActions: { display: 'flex', gap: '8px' },
     actionIcon: { background: 'none', border: 'none', color: '#fff', padding: '4px' },
-    pillScroll: { display: 'flex', gap: '6px', overflowX: 'auto', padding: '8px 16px' },
-    pill: { display: 'flex', alignItems: 'center', gap: '4px', color: '#fff', border: 'none', padding: '4px 10px', borderRadius: '12px', fontSize: '10px', whiteSpace: 'nowrap', fontWeight: '600' },
+    pillScroll: { display: 'flex', gap: '6px', overflowX: 'auto', padding: '6px 16px' },
+    pill: { display: 'flex', alignItems: 'center', gap: '4px', color: '#fff', border: 'none', padding: '3px 8px', borderRadius: '10px', fontSize: '9px', whiteSpace: 'nowrap', fontWeight: '700', textTransform: 'uppercase' },
     viewerContainer: { flex: 1, overflowY: 'auto' },
     iframe: { width: '100%', height: '100%', border: 'none' },
     digitalTextContainer: { padding: '40px 24px 180px', color: '#fff', maxWidth: '600px', margin: '0 auto' },
-    digitalMainTitle: { fontSize: '36px', fontWeight: '900', marginBottom: '8px', lineHeight: '1.2' },
-    digitalBodyText: { fontSize: '19px', lineHeight: '1.75', letterSpacing: '-0.01em', fontFamily: 'serif' },
-    paragraphCard: { marginBottom: '2.5em', cursor: 'pointer', transition: 'color 0.3s ease' },
+    digitalMainTitle: { fontSize: '34px', fontWeight: '900', marginBottom: '8px', lineHeight: '1.2' },
+    digitalBodyText: { fontSize: '18px', lineHeight: '1.7', letterSpacing: '-0.01em', fontFamily: 'serif' },
+    paragraphCard: { marginBottom: '2.2em', cursor: 'pointer', transition: 'color 0.3s ease' },
     loadingTrigger: { padding: '40px', textAlign: 'center', color: '#71717a' },
-    overlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'end' },
-    sheet: { width: '100%', backgroundColor: '#18181b', borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '16px' },
-    dragHandle: { width: '36px', height: '4px', backgroundColor: '#3f3f46', borderRadius: '2px', margin: '0 auto 16px' },
-    menuHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' },
-    bookInfoCard: { display: 'flex', gap: '10px', alignItems: 'center' },
-    miniCover: { width: '32px', height: '44px', backgroundColor: '#27272a', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-    bookTitleSmall: { color: '#fff', fontSize: '13px', fontWeight: '600' },
-    bookMetaSmall: { color: '#71717a', fontSize: '10px' },
-    optionGroup: { backgroundColor: '#27272a', borderRadius: '12px', overflow: 'hidden' },
-    optionBtn: { display: 'flex', alignItems: 'center', gap: '12px', width: '100%', padding: '12px', background: 'none', border: 'none', color: '#fff', fontSize: '14px' },
-    toggleBase: { width: '40px', height: '22px', borderRadius: '11px', position: 'relative', padding: '2px' },
-    toggleCircle: { width: '18px', height: '18px', backgroundColor: '#fff', borderRadius: '50%', transition: '0.2s' },
     bottomPlayer: { backgroundColor: '#000', padding: '12px 20px 30px', borderTop: '1px solid #1c1c1e' },
     progressBase: { height: '3px', backgroundColor: '#27272a', borderRadius: '2px' },
     progressFill: { height: '100%', backgroundColor: '#4f46e5' },
@@ -358,7 +310,14 @@ const styles = {
     mainButtons: { display: 'flex', alignItems: 'center', gap: '20px' },
     playBtn: { width: '56px', height: '56px', backgroundColor: '#4f46e5', borderRadius: '28px', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', boxShadow: '0 4px 12px rgba(79, 70, 229, 0.4)' },
     skipBtn: { background: 'none', border: 'none', color: '#fff' },
-    speedPill: { color: '#fff', backgroundColor: '#1c1c1e', padding: '6px 12px', borderRadius: '12px', border: 'none', fontSize: '13px', fontWeight: '500' }
+    speedPill: { color: '#fff', backgroundColor: '#1c1c1e', padding: '6px 12px', borderRadius: '12px', border: 'none', fontSize: '13px', fontWeight: '500' },
+
+    // SKELETON STYLES
+    skeletonContainer: { display: 'flex', flexDirection: 'column', gap: '16px' },
+    skeletonHeader: { height: '36px', width: '80%', backgroundColor: '#27272a', borderRadius: '8px' },
+    skeletonSubHeader: { height: '24px', width: '50%', backgroundColor: '#1c1c1e', borderRadius: '6px', marginBottom: '12px' },
+    skeletonPara: { display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' },
+    skeletonLine: { height: '14px', backgroundColor: '#1c1c1e', borderRadius: '4px' }
 };
 
 export default Reader;
