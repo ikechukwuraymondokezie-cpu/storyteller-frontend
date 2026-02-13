@@ -12,6 +12,7 @@ const Reader = () => {
     const navigate = useNavigate();
     const scrollRef = useRef(null);
     const bottomObserverRef = useRef(null);
+    const paragraphRefs = useRef([]);
 
     const [book, setBook] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -20,28 +21,20 @@ const Reader = () => {
     const [isDigitalMode, setIsDigitalMode] = useState(false);
     const [viewMode, setViewMode] = useState('reading');
     const [menuOpen, setMenuOpen] = useState(false);
+    const [currentParaIndex, setCurrentParaIndex] = useState(-1);
 
     const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
     const synth = window.speechSynthesis;
-    const utteranceRef = useRef(null);
 
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
     // --- SPEECHIFY REPLICATION ENGINE (V3) ---
-    // Fixes "Second Edition" by splitting double-newlines first, 
-    // then healing "ladder" single-newlines inside those blocks.
     const visualParagraphs = useMemo(() => {
         if (!book?.content) return [];
-
-        // Step 1: Split by DOUBLE newlines to preserve real structural paragraphs
-        const rawBlocks = book.content
-            .replace(/\r\n/g, '\n')
-            .split(/\n\s*\n/);
-
+        const rawBlocks = book.content.replace(/\r\n/g, '\n').split(/\n\s*\n/);
         const arranged = [];
 
         rawBlocks.forEach(block => {
-            // Step 2: Heal single-line ladder fragments inside this specific block
             const healedBlock = block
                 .replace(/([^\n])\n([^\n])/g, '$1 $2')
                 .replace(/\s+/g, ' ')
@@ -49,13 +42,10 @@ const Reader = () => {
 
             if (!healedBlock) return;
 
-            // Step 3: Title Detection
             const isTitle = healedBlock.length < 60 && !/[.!?]/.test(healedBlock);
-
             if (isTitle) {
                 arranged.push(healedBlock);
             } else {
-                // Step 4: Sentence Grouping (2 sentences per card)
                 const sentences = healedBlock.match(/[^.!?]+[.!?]+["']?|[^.!?]+$/g);
                 if (sentences) {
                     for (let i = 0; i < sentences.length; i += 2) {
@@ -66,11 +56,8 @@ const Reader = () => {
                 }
             }
         });
-
         return arranged;
     }, [book?.content]);
-
-    const textToRead = useMemo(() => visualParagraphs.join(' '), [visualParagraphs]);
 
     useEffect(() => {
         let pollInterval;
@@ -93,26 +80,50 @@ const Reader = () => {
         return () => { clearInterval(pollInterval); synth.cancel(); };
     }, [id]);
 
-    const handleTogglePlay = () => {
-        if (isPlaying) { synth.pause(); setIsPlaying(false); return; }
-        if (synth.paused && synth.speaking) { synth.resume(); setIsPlaying(true); return; }
+    // Handle Speech and Highlighting
+    const speakParagraph = (index) => {
+        if (index >= visualParagraphs.length) {
+            setIsPlaying(false);
+            setCurrentParaIndex(-1);
+            return;
+        }
 
         synth.cancel();
-        setTimeout(() => {
-            const content = viewMode === 'summary' ? book?.summary : textToRead;
-            if (content) {
-                const utterance = new SpeechSynthesisUtterance(content.substring(0, 4000));
-                utterance.rate = playbackSpeed;
-                const voices = synth.getVoices();
-                const preferredVoice = voices.find(v => v.name.includes("Google US English")) || voices[0];
-                if (preferredVoice) utterance.voice = preferredVoice;
+        setCurrentParaIndex(index);
 
-                utterance.onstart = () => setIsPlaying(true);
-                utterance.onend = () => setIsPlaying(false);
-                utteranceRef.current = utterance;
-                synth.speak(utterance);
+        const utterance = new SpeechSynthesisUtterance(visualParagraphs[index]);
+        utterance.rate = playbackSpeed;
+
+        const voices = synth.getVoices();
+        const preferredVoice = voices.find(v => v.name.includes("Google US English")) || voices[0];
+        if (preferredVoice) utterance.voice = preferredVoice;
+
+        utterance.onend = () => {
+            if (isPlaying) speakParagraph(index + 1);
+        };
+
+        // Auto-scroll to active paragraph
+        paragraphRefs.current[index]?.scrollIntoView({
+            behavior: 'smooth',
+            block: 'center'
+        });
+
+        synth.speak(utterance);
+    };
+
+    const handleTogglePlay = () => {
+        if (isPlaying) {
+            synth.pause();
+            setIsPlaying(false);
+        } else {
+            if (synth.paused) {
+                synth.resume();
+                setIsPlaying(true);
+            } else {
+                setIsPlaying(true);
+                speakParagraph(currentParaIndex === -1 ? 0 : currentParaIndex);
             }
-        }, 100);
+        }
     };
 
     const loadMorePages = async () => {
@@ -176,7 +187,17 @@ const Reader = () => {
                         </div>
                         <div style={styles.digitalBodyText}>
                             {visualParagraphs.map((para, i) => (
-                                <p key={i} style={styles.paragraphCard}>{para}</p>
+                                <p
+                                    key={i}
+                                    ref={el => paragraphRefs.current[i] = el}
+                                    style={{
+                                        ...styles.paragraphCard,
+                                        color: i === currentParaIndex ? '#fff' : '#71717a',
+                                        transition: 'color 0.3s ease'
+                                    }}
+                                >
+                                    {para}
+                                </p>
                             ))}
                             <div ref={bottomObserverRef} style={styles.loadingTrigger}>
                                 {book?.status !== 'completed' ? <Loader2 className="animate-spin" /> : "• END •"}
@@ -202,9 +223,9 @@ const Reader = () => {
                 <div style={styles.controlRow}>
                     <div style={styles.flagBox}>🇺🇸</div>
                     <div style={styles.mainButtons}>
-                        <button style={styles.skipBtn} onClick={() => { synth.cancel(); setIsPlaying(false); }}><RotateCcw size={24} /></button>
+                        <button style={styles.skipBtn} onClick={() => { synth.cancel(); setIsPlaying(false); setCurrentParaIndex(-1); }}><RotateCcw size={24} /></button>
                         <button onClick={handleTogglePlay} style={styles.playBtn}>{isPlaying ? <Pause size={24} /> : <Play size={24} />}</button>
-                        <button style={styles.skipBtn}><RotateCw size={24} /></button>
+                        <button style={styles.skipBtn} onClick={() => speakParagraph(currentParaIndex + 1)}><RotateCw size={24} /></button>
                     </div>
                     <button onClick={() => setPlaybackSpeed(s => s >= 2 ? 0.75 : s + 0.25)} style={styles.speedPill}>{playbackSpeed}×</button>
                 </div>
@@ -254,7 +275,6 @@ const styles = {
     rightActions: { display: 'flex', gap: '8px' },
     actionIcon: { background: 'none', border: 'none', color: '#fff', padding: '4px' },
     pillScroll: { display: 'flex', gap: '6px', overflowX: 'auto', padding: '8px 16px' },
-    // REDUCED PILL SIZE
     pill: { display: 'flex', alignItems: 'center', gap: '4px', color: '#fff', border: 'none', padding: '4px 10px', borderRadius: '12px', fontSize: '10px', whiteSpace: 'nowrap', fontWeight: '600' },
     viewerContainer: { flex: 1, overflowY: 'auto' },
     iframe: { width: '100%', height: '100%', border: 'none' },
@@ -262,7 +282,7 @@ const styles = {
     titleCard: { marginBottom: '40px' },
     authorTag: { color: '#71717a', fontSize: '14px', marginTop: '4px', fontWeight: '500' },
     digitalMainTitle: { fontSize: '28px', fontWeight: '800', marginBottom: '8px', lineHeight: '1.2' },
-    digitalBodyText: { fontSize: '19px', lineHeight: '1.75', color: '#e4e4e7', letterSpacing: '-0.01em', fontFamily: 'serif' },
+    digitalBodyText: { fontSize: '19px', lineHeight: '1.75', letterSpacing: '-0.01em', fontFamily: 'serif' },
     paragraphCard: { marginBottom: '2.5em' },
     loadingTrigger: { padding: '40px', textAlign: 'center', color: '#71717a' },
     overlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'end' },
