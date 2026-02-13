@@ -27,8 +27,8 @@ const Reader = () => {
 
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
-    // --- GOLDILOCKS ARRANGER ---
-    // Fixes the "Ladder" issue from your screenshots by welding fragments
+    // --- REFINED GOLDILOCKS ARRANGER ---
+    // Fixes "The Ladder" (too many lines) and "The Wall" (too few lines)
     const visualParagraphs = useMemo(() => {
         if (!book?.content) return [];
 
@@ -39,21 +39,29 @@ const Reader = () => {
         lines.forEach((line, index) => {
             const nextLine = lines[index + 1] || "";
 
-            // Rule 1: Does it end in punctuation? If so, it's a finished thought.
-            const isCompleteSentence = /[.!?:"] $/.test(line);
+            // Logic A: Is it a title? (Short, no ending punctuation, likely Title Case)
+            const isTitleLike = line.length < 50 && !/[.!?]$/.test(line);
 
-            // Rule 2: Is the next line long? If so, we are entering a paragraph.
-            const nextIsLong = nextLine.length > 60;
+            // Logic B: Is it a long body line?
+            const isLong = line.length > 65;
 
-            // Rule 3: Is this line a tiny fragment like "The"? Weld it regardless.
-            const isFragment = line.length < 20;
+            // Logic C: Does it naturally end a sentence?
+            const endsWithPunctuation = /[.!?:"] $/.test(line);
 
-            if ((isCompleteSentence || nextIsLong) && !isFragment) {
+            if (isTitleLike) {
+                // If we have a paragraph building, flush it before the title
+                if (currentBuffer) {
+                    arranged.push(currentBuffer.trim());
+                    currentBuffer = "";
+                }
+                arranged.push(line); // Title gets its own line
+            } else if (endsWithPunctuation || isLong) {
+                // Weld this line to the buffer and flush as a paragraph
                 currentBuffer += (currentBuffer ? " " : "") + line;
                 arranged.push(currentBuffer.trim());
                 currentBuffer = "";
             } else {
-                // Keep welding fragments (like "The" + "Believer's" + "Authority")
+                // It's a fragment of a paragraph; keep welding
                 currentBuffer += (currentBuffer ? " " : "") + line;
             }
         });
@@ -62,7 +70,6 @@ const Reader = () => {
         return arranged;
     }, [book?.content]);
 
-    // TTS reads the blocks with a slight pause (the period) for a natural flow
     const textToRead = useMemo(() => visualParagraphs.join('. '), [visualParagraphs]);
 
     useEffect(() => {
@@ -93,19 +100,15 @@ const Reader = () => {
         synth.cancel();
         setTimeout(() => {
             const content = viewMode === 'summary' ? book?.summary : textToRead;
-
             if (content) {
                 const utterance = new SpeechSynthesisUtterance(content.substring(0, 4000));
                 utterance.rate = playbackSpeed;
-
-                // Try to get a smoother voice if the browser supports it
                 const voices = synth.getVoices();
                 const preferredVoice = voices.find(v => v.name.includes("Google US English")) || voices[0];
                 if (preferredVoice) utterance.voice = preferredVoice;
 
                 utterance.onstart = () => setIsPlaying(true);
                 utterance.onend = () => setIsPlaying(false);
-                utterance.onerror = () => setIsPlaying(false);
                 utteranceRef.current = utterance;
                 synth.speak(utterance);
             }
@@ -170,7 +173,7 @@ const Reader = () => {
                         <h1 style={styles.digitalMainTitle}>{book?.title}</h1>
                         <div style={styles.digitalBodyText}>
                             {visualParagraphs.map((para, i) => (
-                                <p key={i} style={{ marginBottom: '1.6em' }}>{para}</p>
+                                <p key={i} style={{ marginBottom: '1.8em' }}>{para}</p>
                             ))}
                             <div ref={bottomObserverRef} style={styles.loadingTrigger}>
                                 {book?.status !== 'completed' ? <Loader2 className="animate-spin" /> : "• END •"}
@@ -251,7 +254,7 @@ const styles = {
     pill: { display: 'flex', alignItems: 'center', gap: '4px', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', fontSize: '11px', whiteSpace: 'nowrap' },
     viewerContainer: { flex: 1, overflowY: 'auto' },
     iframe: { width: '100%', height: '100%', border: 'none' },
-    digitalTextContainer: { padding: '30px 24px 120px', color: '#fff' }, // Added bottom padding so the player doesn't cover text
+    digitalTextContainer: { padding: '30px 24px 150px', color: '#fff' },
     digitalMainTitle: { fontSize: '24px', fontWeight: 'bold', marginBottom: '24px', lineHeight: '1.3' },
     digitalBodyText: { fontSize: '19px', lineHeight: '1.8', color: '#e4e4e7', letterSpacing: '-0.01em' },
     loadingTrigger: { padding: '40px', textAlign: 'center', color: '#71717a' },
