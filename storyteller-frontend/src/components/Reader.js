@@ -31,13 +31,13 @@ const Reader = () => {
 
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
-    // --- ENGINE: BREATH INJECTOR ---
+    // --- ENGINE: TITLE, HEADER, & NUMERIC PAUSE LOGIC ---
     const visualParagraphs = useMemo(() => {
         if (!book?.content) return [];
         const rawBlocks = book.content.replace(/\r\n/g, '\n').split(/\n\s*\n/);
         const arranged = [];
 
-        rawBlocks.forEach(block => {
+        rawBlocks.forEach((block, index) => {
             let healedBlock = block
                 .replace(/([^\n])\n([^\n])/g, '$1 $2')
                 .replace(/\s+/g, ' ')
@@ -45,22 +45,33 @@ const Reader = () => {
 
             if (!healedBlock) return;
 
-            // FIX: Inject "Breaths"
-            // We replace commas with a comma and a space to force the TTS to recognize the pause.
-            // We also add a tiny bit of extra padding to sentences.
-            healedBlock = healedBlock.replace(/,/g, ', ');
+            // 1. Identify Type
+            const headerPattern = /^(\d+[\.\s]+\d*|[A-Z\s]{5,}|Chapter\s\d+)/i;
+            let type = 'body';
+            if (index === 0) type = 'mainTitle';
+            else if (headerPattern.test(healedBlock) && healedBlock.length < 100) type = 'header';
 
-            const isTitle = healedBlock.length < 60 && !/[.!?]/.test(healedBlock);
-            if (isTitle) {
-                arranged.push(healedBlock);
+            // 2. Breath Injector & Numeric Pause (for verses/lists)
+            // Injects space after commas and ellipsis after figures for TTS timing
+            let ttsText = healedBlock
+                .replace(/,/g, ', ')
+                .replace(/(\d+[\.:]?\s)/g, '$1... ');
+
+            if (type === 'mainTitle' || type === 'header') {
+                arranged.push({ text: healedBlock, ttsText, type });
             } else {
                 const sentences = healedBlock.match(/[^.!?]+[.!?]+["']?|[^.!?]+$/g);
                 if (sentences) {
                     for (let i = 0; i < sentences.length; i += 2) {
-                        arranged.push(sentences.slice(i, i + 2).join(' ').trim());
+                        const chunk = sentences.slice(i, i + 2).join(' ').trim();
+                        arranged.push({
+                            text: chunk,
+                            ttsText: chunk.replace(/(\d+[\.:]?\s)/g, '$1... '),
+                            type: 'body'
+                        });
                     }
                 } else {
-                    arranged.push(healedBlock);
+                    arranged.push({ text: healedBlock, ttsText, type: 'body' });
                 }
             }
         });
@@ -96,8 +107,8 @@ const Reader = () => {
         synth.cancel();
         setCurrentParaIndex(index);
 
-        const fullText = visualParagraphs[index];
-        const textToSpeak = fullText.slice(offset);
+        const currentItem = visualParagraphs[index];
+        const textToSpeak = currentItem.ttsText.slice(offset);
 
         const utterance = new SpeechSynthesisUtterance(textToSpeak);
         utterance.rate = playbackSpeed;
@@ -108,8 +119,6 @@ const Reader = () => {
         utterance.onboundary = (event) => {
             if (event.name === 'word') {
                 resumeOffsetRef.current = offset + event.charIndex;
-
-                // PREDICTIVE: Load more if we are within 3 paragraphs of the end
                 if (index >= visualParagraphs.length - 3 && !loadingMore) {
                     loadMorePages();
                 }
@@ -148,12 +157,11 @@ const Reader = () => {
         return () => { clearInterval(pollInterval); synth.cancel(); };
     }, [id]);
 
-    // Proactive Scroll Loading
     useEffect(() => {
         if (!isDigitalMode || viewMode !== 'reading' || book?.status === 'completed') return;
         const observer = new IntersectionObserver(
             (entries) => { if (entries[0].isIntersecting && !loadingMore) loadMorePages(); },
-            { threshold: 0.01, rootMargin: '800px' } // Load when 800px from bottom
+            { threshold: 0.01, rootMargin: '800px' }
         );
         if (bottomObserverRef.current) observer.observe(bottomObserverRef.current);
         return () => observer.disconnect();
@@ -199,12 +207,10 @@ const Reader = () => {
                     </div>
                 ) : isDigitalMode ? (
                     <div style={styles.digitalTextContainer}>
-                        <div style={styles.titleCard}>
-                            <h1 style={styles.digitalMainTitle}>{book?.title}</h1>
-                            <div style={styles.authorTag}>Kenneth E. Hagin</div>
-                        </div>
-                        <div style={styles.digitalBodyText}>
-                            {visualParagraphs.map((para, i) => (
+                        {visualParagraphs.map((item, i) => {
+                            const isMainTitle = item.type === 'mainTitle';
+                            const isHeader = item.type === 'header';
+                            return (
                                 <p
                                     key={i}
                                     ref={el => paragraphRefs.current[i] = el}
@@ -215,17 +221,20 @@ const Reader = () => {
                                     }}
                                     style={{
                                         ...styles.paragraphCard,
-                                        color: i === currentParaIndex ? '#fff' : '#4b4b4b',
-                                        transition: 'color 0.4s ease',
-                                        cursor: 'pointer'
+                                        color: i === currentParaIndex ? '#fff' : (isMainTitle || isHeader ? '#e4e4e7' : '#4b4b4b'),
+                                        fontSize: isMainTitle ? '34px' : (isHeader ? '24px' : '19px'),
+                                        fontWeight: (isMainTitle || isHeader) ? '900' : '400',
+                                        marginBottom: isMainTitle ? '0.6em' : (isHeader ? '1.2em' : '2.5em'),
+                                        lineHeight: isMainTitle ? '1.1' : '1.75',
+                                        fontFamily: isMainTitle ? 'sans-serif' : 'serif'
                                     }}
                                 >
-                                    {para}
+                                    {item.text}
                                 </p>
-                            ))}
-                            <div ref={bottomObserverRef} style={styles.loadingTrigger}>
-                                {book?.status !== 'completed' ? <Loader2 className="animate-spin" /> : "• END •"}
-                            </div>
+                            )
+                        })}
+                        <div ref={bottomObserverRef} style={styles.loadingTrigger}>
+                            {book?.status !== 'completed' ? <Loader2 className="animate-spin" /> : "• END •"}
                         </div>
                     </div>
                 ) : (
@@ -269,7 +278,6 @@ const Reader = () => {
     );
 };
 
-// COMPONENT: Small Pills (10px)
 const PillButton = ({ active, onClick, icon, label }) => (
     <button onClick={onClick} style={{ ...styles.pill, backgroundColor: active ? '#4f46e5' : '#27272a' }}>{icon} {label}</button>
 );
@@ -314,8 +322,6 @@ const styles = {
     viewerContainer: { flex: 1, overflowY: 'auto' },
     iframe: { width: '100%', height: '100%', border: 'none' },
     digitalTextContainer: { padding: '40px 24px 180px', color: '#fff', maxWidth: '600px', margin: '0 auto' },
-    titleCard: { marginBottom: '40px' },
-    authorTag: { color: '#71717a', fontSize: '14px', marginTop: '4px', fontWeight: '500' },
     digitalMainTitle: { fontSize: '28px', fontWeight: '800', marginBottom: '8px', lineHeight: '1.2' },
     digitalBodyText: { fontSize: '19px', lineHeight: '1.75', letterSpacing: '-0.01em', fontFamily: 'serif' },
     paragraphCard: { marginBottom: '2.5em', cursor: 'pointer' },
