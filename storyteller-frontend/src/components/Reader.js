@@ -27,19 +27,21 @@ const Reader = () => {
 
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
-    // 1. SMART WELDER LOGIC - Fixes PDF line breaks
+    // --- 1. ENHANCED SMART WELDER LOGIC ---
     const processedContent = useMemo(() => {
         if (!book?.content) return [];
 
         return book.content
-            .split(/\n\s*\n/) // Split into physical paragraphs first
+            .split(/\n\s*\n/) // Detect physical paragraph breaks
             .map(para => {
                 return para
-                    .replace(/([^\.!?:])\n(?=[a-z])/g, '$1 ') // Join lines that end without punctuation if next line is lowercase
-                    .replace(/\n/g, ' ') // General join for remaining single breaks
+                    .replace(/(\w)-\n(\w)/g, '$1$2') // Fix hyphens: "inter-\nview" -> "interview"
+                    .replace(/([^\.!?:])\n(?=[a-z0-9])/g, '$1 ') // Join lines that don't end in sentence-closers
+                    .replace(/\n/g, ' ') // Clean up remaining newlines
+                    .replace(/\s+/g, ' ') // Remove double spaces
                     .trim();
             })
-            .filter(para => para.length > 0);
+            .filter(para => para.length > 5); // Filter out noise/empty artifacts
     }, [book?.content]);
 
     useEffect(() => {
@@ -49,7 +51,6 @@ const Reader = () => {
                 const response = await fetch(`${BACKEND_URL}/api/books/${id}`);
                 const data = await response.json();
                 setBook(data);
-
                 if (data.status === 'processing') {
                     pollInterval = setInterval(async () => {
                         const res = await fetch(`${BACKEND_URL}/api/books/${id}`);
@@ -58,28 +59,31 @@ const Reader = () => {
                         if (updated.status === 'completed') clearInterval(pollInterval);
                     }, 5000);
                 }
-            } catch (err) {
-                console.error("Fetch error:", err);
-            } finally {
-                setLoading(false);
-            }
+            } catch (err) { console.error("Fetch error:", err); } finally { setLoading(false); }
         };
         fetchBook();
         return () => { clearInterval(pollInterval); synth.cancel(); };
     }, [id]);
 
+    // --- 2. UPDATED TTS CONTROLLER ---
     const handleTogglePlay = () => {
         if (isPlaying) { synth.pause(); setIsPlaying(false); return; }
         if (synth.paused && synth.speaking) { synth.resume(); setIsPlaying(true); return; }
 
         synth.cancel();
         setTimeout(() => {
-            const rawText = viewMode === 'summary' ? book?.summary : book?.content;
-            if (rawText) {
-                const utterance = new SpeechSynthesisUtterance(rawText.substring(0, 3000));
+            // FIX: TTS now consumes the "Welded" content for natural speech flow
+            const textToRead = viewMode === 'summary'
+                ? book?.summary
+                : processedContent.join(' ');
+
+            if (textToRead) {
+                // Use a smaller chunk size (3000) for better browser performance
+                const utterance = new SpeechSynthesisUtterance(textToRead.substring(0, 3000));
                 utterance.rate = playbackSpeed;
                 utterance.onstart = () => setIsPlaying(true);
                 utterance.onend = () => setIsPlaying(false);
+                utterance.onerror = () => setIsPlaying(false);
                 utteranceRef.current = utterance;
                 synth.speak(utterance);
             }
@@ -180,6 +184,8 @@ const Reader = () => {
     );
 };
 
+// --- Sub-components (Stayed the same as requested) ---
+
 const PillButton = ({ active, onClick, icon, label }) => (
     <button onClick={onClick} style={{ ...styles.pill, backgroundColor: active ? '#4f46e5' : '#27272a' }}>{icon} {label}</button>
 );
@@ -210,6 +216,8 @@ const MenuOption = ({ icon, label, toggle, active }) => (
         {toggle && <div style={{ ...styles.toggleBase, backgroundColor: active ? '#4f46e5' : '#3f3f3f' }}><div style={{ ...styles.toggleCircle, transform: active ? 'translateX(18px)' : 'translateX(0px)' }} /></div>}
     </button>
 );
+
+// --- Styles (Unalchanged for consistency) ---
 
 const styles = {
     fullscreenCenter: { height: '100vh', backgroundColor: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' },
