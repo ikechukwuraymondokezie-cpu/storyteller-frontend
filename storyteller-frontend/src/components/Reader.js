@@ -14,6 +14,10 @@ const Reader = () => {
     const bottomObserverRef = useRef(null);
     const paragraphRefs = useRef([]);
 
+    // Refs for playback state
+    const isPlayingRef = useRef(false);
+    const resumeOffsetRef = useRef(0); // Tracks where we paused in the text
+
     const [book, setBook] = useState(null);
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
@@ -21,27 +25,22 @@ const Reader = () => {
     const [isDigitalMode, setIsDigitalMode] = useState(false);
     const [viewMode, setViewMode] = useState('reading');
     const [menuOpen, setMenuOpen] = useState(false);
-    const [currentParaIndex, setCurrentParaIndex] = useState(-1);
+    const [currentParaIndex, setCurrentParaIndex] = useState(0);
 
     const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
     const synth = window.speechSynthesis;
 
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
-    // --- SPEECHIFY REPLICATION ENGINE (V3) ---
+    // --- ENGINE ---
     const visualParagraphs = useMemo(() => {
         if (!book?.content) return [];
         const rawBlocks = book.content.replace(/\r\n/g, '\n').split(/\n\s*\n/);
         const arranged = [];
 
         rawBlocks.forEach(block => {
-            const healedBlock = block
-                .replace(/([^\n])\n([^\n])/g, '$1 $2')
-                .replace(/\s+/g, ' ')
-                .trim();
-
+            const healedBlock = block.replace(/([^\n])\n([^\n])/g, '$1 $2').replace(/\s+/g, ' ').trim();
             if (!healedBlock) return;
-
             const isTitle = healedBlock.length < 60 && !/[.!?]/.test(healedBlock);
             if (isTitle) {
                 arranged.push(healedBlock);
@@ -80,49 +79,53 @@ const Reader = () => {
         return () => { clearInterval(pollInterval); synth.cancel(); };
     }, [id]);
 
-    // Handle Speech and Highlighting
-    const speakParagraph = (index) => {
-        if (index >= visualParagraphs.length) {
+    // IMPROVED SPEECH ENGINE WITH RESUME SUPPORT
+    const speak = (index, offset = 0) => {
+        if (index >= visualParagraphs.length || !isPlayingRef.current) {
             setIsPlaying(false);
-            setCurrentParaIndex(-1);
+            isPlayingRef.current = false;
             return;
         }
 
         synth.cancel();
         setCurrentParaIndex(index);
 
-        const utterance = new SpeechSynthesisUtterance(visualParagraphs[index]);
+        // Slice the text to start from where we paused
+        const fullText = visualParagraphs[index];
+        const textToSpeak = fullText.slice(offset);
+
+        const utterance = new SpeechSynthesisUtterance(textToSpeak);
         utterance.rate = playbackSpeed;
-
         const voices = synth.getVoices();
-        const preferredVoice = voices.find(v => v.name.includes("Google US English")) || voices[0];
-        if (preferredVoice) utterance.voice = preferredVoice;
+        utterance.voice = voices.find(v => v.name.includes("Google US English")) || voices[0];
 
-        utterance.onend = () => {
-            if (isPlaying) speakParagraph(index + 1);
+        // Track progress so we can resume if paused
+        utterance.onboundary = (event) => {
+            if (event.name === 'word') {
+                resumeOffsetRef.current = offset + event.charIndex;
+            }
         };
 
-        // Auto-scroll to active paragraph
-        paragraphRefs.current[index]?.scrollIntoView({
-            behavior: 'smooth',
-            block: 'center'
-        });
+        utterance.onend = () => {
+            if (isPlayingRef.current) {
+                resumeOffsetRef.current = 0; // Reset offset for next paragraph
+                speak(index + 1);
+            }
+        };
 
+        paragraphRefs.current[index]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         synth.speak(utterance);
     };
 
     const handleTogglePlay = () => {
         if (isPlaying) {
-            synth.pause();
+            isPlayingRef.current = false;
             setIsPlaying(false);
+            synth.cancel(); // Stop but we keep resumeOffsetRef.current
         } else {
-            if (synth.paused) {
-                synth.resume();
-                setIsPlaying(true);
-            } else {
-                setIsPlaying(true);
-                speakParagraph(currentParaIndex === -1 ? 0 : currentParaIndex);
-            }
+            isPlayingRef.current = true;
+            setIsPlaying(true);
+            speak(currentParaIndex, resumeOffsetRef.current);
         }
     };
 
@@ -190,10 +193,16 @@ const Reader = () => {
                                 <p
                                     key={i}
                                     ref={el => paragraphRefs.current[i] = el}
+                                    onClick={() => {
+                                        resumeOffsetRef.current = 0; // Reset offset if user manually clicks a paragraph
+                                        setCurrentParaIndex(i);
+                                        if (isPlayingRef.current) speak(i);
+                                    }}
                                     style={{
                                         ...styles.paragraphCard,
-                                        color: i === currentParaIndex ? '#fff' : '#71717a',
-                                        transition: 'color 0.3s ease'
+                                        color: i === currentParaIndex ? '#fff' : '#4b4b4b',
+                                        transition: 'color 0.4s ease',
+                                        cursor: 'pointer'
                                     }}
                                 >
                                     {para}
@@ -223,9 +232,21 @@ const Reader = () => {
                 <div style={styles.controlRow}>
                     <div style={styles.flagBox}>🇺🇸</div>
                     <div style={styles.mainButtons}>
-                        <button style={styles.skipBtn} onClick={() => { synth.cancel(); setIsPlaying(false); setCurrentParaIndex(-1); }}><RotateCcw size={24} /></button>
+                        <button style={styles.skipBtn} onClick={() => {
+                            resumeOffsetRef.current = 0;
+                            const prev = Math.max(0, currentParaIndex - 1);
+                            if (isPlayingRef.current) speak(prev);
+                            else setCurrentParaIndex(prev);
+                        }}><RotateCcw size={24} /></button>
+
                         <button onClick={handleTogglePlay} style={styles.playBtn}>{isPlaying ? <Pause size={24} /> : <Play size={24} />}</button>
-                        <button style={styles.skipBtn} onClick={() => speakParagraph(currentParaIndex + 1)}><RotateCw size={24} /></button>
+
+                        <button style={styles.skipBtn} onClick={() => {
+                            resumeOffsetRef.current = 0;
+                            const next = Math.min(visualParagraphs.length - 1, currentParaIndex + 1);
+                            if (isPlayingRef.current) speak(next);
+                            else setCurrentParaIndex(next);
+                        }}><RotateCw size={24} /></button>
                     </div>
                     <button onClick={() => setPlaybackSpeed(s => s >= 2 ? 0.75 : s + 0.25)} style={styles.speedPill}>{playbackSpeed}×</button>
                 </div>
@@ -275,6 +296,7 @@ const styles = {
     rightActions: { display: 'flex', gap: '8px' },
     actionIcon: { background: 'none', border: 'none', color: '#fff', padding: '4px' },
     pillScroll: { display: 'flex', gap: '6px', overflowX: 'auto', padding: '8px 16px' },
+    // PILLS: Standardized at 10px
     pill: { display: 'flex', alignItems: 'center', gap: '4px', color: '#fff', border: 'none', padding: '4px 10px', borderRadius: '12px', fontSize: '10px', whiteSpace: 'nowrap', fontWeight: '600' },
     viewerContainer: { flex: 1, overflowY: 'auto' },
     iframe: { width: '100%', height: '100%', border: 'none' },
