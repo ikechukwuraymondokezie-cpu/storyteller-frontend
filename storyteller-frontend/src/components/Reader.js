@@ -31,7 +31,7 @@ const Reader = () => {
 
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
-    // --- ENGINE: TITLE, HEADER, & NUMERIC PAUSE LOGIC ---
+    // --- UPDATED ENGINE: AGGRESSIVE HEADER & NUMERIC PAUSE ---
     const visualParagraphs = useMemo(() => {
         if (!book?.content) return [];
         const rawBlocks = book.content.replace(/\r\n/g, '\n').split(/\n\s*\n/);
@@ -45,20 +45,25 @@ const Reader = () => {
 
             if (!healedBlock) return;
 
-            // 1. Identify Type
-            const headerPattern = /^(\d+[\.\s]+\d*|[A-Z\s]{5,}|Chapter\s\d+)/i;
+            // 1. DYNAMIC TYPE DETECTION
+            const isNumbered = /^(\d+[\.\s\-]+)/.test(healedBlock); // "1. ", "2 - "
+            const isKeywordHeader = /^(Chapter|Section|Part|Lesson|Romans|John|Psalm)\s+\d+/i.test(healedBlock);
+            const isShortLine = healedBlock.length < 65 && !/[.!?]$/.test(healedBlock); // Short, no punctuation
+
             let type = 'body';
             if (index === 0) type = 'mainTitle';
-            else if (headerPattern.test(healedBlock) && healedBlock.length < 100) type = 'header';
+            else if (isNumbered || isKeywordHeader || isShortLine) type = 'header';
 
-            // 2. Breath Injector & Numeric Pause (for verses/lists)
-            // Injects space after commas and ellipsis after figures for TTS timing
-            let ttsText = healedBlock
-                .replace(/,/g, ', ')
-                .replace(/(\d+[\.:]?\s)/g, '$1... ');
+            // 2. TTS PAUSE INJECTOR (Targeting figures 1. or verses 8:14)
+            // Injects '... ' which forces Synthesis to pause naturally
+            const injectPause = (text) => text.replace(/(\d+[\.:]\s?|\d+\s)/g, '$1... ');
 
             if (type === 'mainTitle' || type === 'header') {
-                arranged.push({ text: healedBlock, ttsText, type });
+                arranged.push({
+                    text: healedBlock,
+                    ttsText: injectPause(healedBlock),
+                    type
+                });
             } else {
                 const sentences = healedBlock.match(/[^.!?]+[.!?]+["']?|[^.!?]+$/g);
                 if (sentences) {
@@ -66,12 +71,16 @@ const Reader = () => {
                         const chunk = sentences.slice(i, i + 2).join(' ').trim();
                         arranged.push({
                             text: chunk,
-                            ttsText: chunk.replace(/(\d+[\.:]?\s)/g, '$1... '),
+                            ttsText: injectPause(chunk),
                             type: 'body'
                         });
                     }
                 } else {
-                    arranged.push({ text: healedBlock, ttsText, type: 'body' });
+                    arranged.push({
+                        text: healedBlock,
+                        ttsText: injectPause(healedBlock),
+                        type: 'body'
+                    });
                 }
             }
         });
@@ -210,6 +219,7 @@ const Reader = () => {
                         {visualParagraphs.map((item, i) => {
                             const isMainTitle = item.type === 'mainTitle';
                             const isHeader = item.type === 'header';
+
                             return (
                                 <p
                                     key={i}
@@ -221,12 +231,14 @@ const Reader = () => {
                                     }}
                                     style={{
                                         ...styles.paragraphCard,
-                                        color: i === currentParaIndex ? '#fff' : (isMainTitle || isHeader ? '#e4e4e7' : '#4b4b4b'),
-                                        fontSize: isMainTitle ? '34px' : (isHeader ? '24px' : '19px'),
+                                        color: i === currentParaIndex ? '#fff' : (isMainTitle || isHeader ? '#f4f4f5' : '#4b4b4b'),
+                                        fontSize: isMainTitle ? '36px' : (isHeader ? '26px' : '19px'),
                                         fontWeight: (isMainTitle || isHeader) ? '900' : '400',
                                         marginBottom: isMainTitle ? '0.6em' : (isHeader ? '1.2em' : '2.5em'),
                                         lineHeight: isMainTitle ? '1.1' : '1.75',
-                                        fontFamily: isMainTitle ? 'sans-serif' : 'serif'
+                                        fontFamily: (isMainTitle || isHeader) ? 'sans-serif' : 'serif',
+                                        borderTop: (isHeader && i !== 0) ? '1px solid #27272a' : 'none',
+                                        paddingTop: (isHeader && i !== 0) ? '24px' : '0'
                                     }}
                                 >
                                     {item.text}
@@ -322,9 +334,9 @@ const styles = {
     viewerContainer: { flex: 1, overflowY: 'auto' },
     iframe: { width: '100%', height: '100%', border: 'none' },
     digitalTextContainer: { padding: '40px 24px 180px', color: '#fff', maxWidth: '600px', margin: '0 auto' },
-    digitalMainTitle: { fontSize: '28px', fontWeight: '800', marginBottom: '8px', lineHeight: '1.2' },
+    digitalMainTitle: { fontSize: '36px', fontWeight: '900', marginBottom: '8px', lineHeight: '1.2' },
     digitalBodyText: { fontSize: '19px', lineHeight: '1.75', letterSpacing: '-0.01em', fontFamily: 'serif' },
-    paragraphCard: { marginBottom: '2.5em', cursor: 'pointer' },
+    paragraphCard: { marginBottom: '2.5em', cursor: 'pointer', transition: 'color 0.3s ease' },
     loadingTrigger: { padding: '40px', textAlign: 'center', color: '#71717a' },
     overlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'end' },
     sheet: { width: '100%', backgroundColor: '#18181b', borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '16px' },
