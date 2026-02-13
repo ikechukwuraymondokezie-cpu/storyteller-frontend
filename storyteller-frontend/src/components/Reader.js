@@ -27,41 +27,43 @@ const Reader = () => {
 
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
-    // --- SMART ARRANGER LOGIC (Speechify Style) ---
-    // This logic prevents "blobbing" by identifying headers and info blocks
+    // --- GOLDILOCKS ARRANGER ---
+    // Fixes the "Ladder" issue from your screenshots by welding fragments
     const visualParagraphs = useMemo(() => {
         if (!book?.content) return [];
 
         const lines = book.content.split('\n').map(l => l.trim()).filter(l => l.length > 0);
         const arranged = [];
-        let currentParagraph = "";
+        let currentBuffer = "";
 
         lines.forEach((line, index) => {
             const nextLine = lines[index + 1] || "";
 
-            // Detection rules for headers/titles/info (short lines or all caps)
-            const isShort = line.length < 45;
-            const isHeader = /^[A-Z0-9\s-]+$/.test(line) && line.length < 60;
-            const startsNewThought = /^[A-Z]/.test(nextLine) && isShort;
+            // Rule 1: Does it end in punctuation? If so, it's a finished thought.
+            const isCompleteSentence = /[.!?:"] $/.test(line);
 
-            if (isShort || isHeader || startsNewThought) {
-                if (currentParagraph) {
-                    arranged.push(currentParagraph.trim());
-                    currentParagraph = "";
-                }
-                arranged.push(line);
+            // Rule 2: Is the next line long? If so, we are entering a paragraph.
+            const nextIsLong = nextLine.length > 60;
+
+            // Rule 3: Is this line a tiny fragment like "The"? Weld it regardless.
+            const isFragment = line.length < 20;
+
+            if ((isCompleteSentence || nextIsLong) && !isFragment) {
+                currentBuffer += (currentBuffer ? " " : "") + line;
+                arranged.push(currentBuffer.trim());
+                currentBuffer = "";
             } else {
-                // Weld normal sentences together
-                currentParagraph += (currentParagraph ? " " : "") + line;
+                // Keep welding fragments (like "The" + "Believer's" + "Authority")
+                currentBuffer += (currentBuffer ? " " : "") + line;
             }
         });
 
-        if (currentParagraph) arranged.push(currentParagraph.trim());
+        if (currentBuffer) arranged.push(currentBuffer.trim());
         return arranged;
     }, [book?.content]);
 
-    // TTS reads the same arranged blocks to ensure natural pauses
-    const textToRead = useMemo(() => visualParagraphs.join('\n '), [visualParagraphs]);
+    // TTS reads the blocks with a slight pause (the period) for a natural flow
+    const textToRead = useMemo(() => visualParagraphs.join('. '), [visualParagraphs]);
 
     useEffect(() => {
         let pollInterval;
@@ -95,6 +97,12 @@ const Reader = () => {
             if (content) {
                 const utterance = new SpeechSynthesisUtterance(content.substring(0, 4000));
                 utterance.rate = playbackSpeed;
+
+                // Try to get a smoother voice if the browser supports it
+                const voices = synth.getVoices();
+                const preferredVoice = voices.find(v => v.name.includes("Google US English")) || voices[0];
+                if (preferredVoice) utterance.voice = preferredVoice;
+
                 utterance.onstart = () => setIsPlaying(true);
                 utterance.onend = () => setIsPlaying(false);
                 utterance.onerror = () => setIsPlaying(false);
@@ -162,7 +170,7 @@ const Reader = () => {
                         <h1 style={styles.digitalMainTitle}>{book?.title}</h1>
                         <div style={styles.digitalBodyText}>
                             {visualParagraphs.map((para, i) => (
-                                <p key={i} style={{ marginBottom: '1.4em' }}>{para}</p>
+                                <p key={i} style={{ marginBottom: '1.6em' }}>{para}</p>
                             ))}
                             <div ref={bottomObserverRef} style={styles.loadingTrigger}>
                                 {book?.status !== 'completed' ? <Loader2 className="animate-spin" /> : "• END •"}
@@ -243,10 +251,10 @@ const styles = {
     pill: { display: 'flex', alignItems: 'center', gap: '4px', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', fontSize: '11px', whiteSpace: 'nowrap' },
     viewerContainer: { flex: 1, overflowY: 'auto' },
     iframe: { width: '100%', height: '100%', border: 'none' },
-    digitalTextContainer: { padding: '30px 24px', color: '#fff' },
-    digitalMainTitle: { fontSize: '22px', fontWeight: 'bold', marginBottom: '20px', lineHeight: '1.3' },
-    digitalBodyText: { fontSize: '18px', lineHeight: '1.7', color: '#e4e4e7', letterSpacing: '-0.01em' },
-    loadingTrigger: { padding: '30px', textAlign: 'center', color: '#71717a' },
+    digitalTextContainer: { padding: '30px 24px 120px', color: '#fff' }, // Added bottom padding so the player doesn't cover text
+    digitalMainTitle: { fontSize: '24px', fontWeight: 'bold', marginBottom: '24px', lineHeight: '1.3' },
+    digitalBodyText: { fontSize: '19px', lineHeight: '1.8', color: '#e4e4e7', letterSpacing: '-0.01em' },
+    loadingTrigger: { padding: '40px', textAlign: 'center', color: '#71717a' },
     overlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'end' },
     sheet: { width: '100%', backgroundColor: '#18181b', borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '16px' },
     dragHandle: { width: '36px', height: '4px', backgroundColor: '#3f3f46', borderRadius: '2px', margin: '0 auto 16px' },
@@ -259,15 +267,15 @@ const styles = {
     optionBtn: { display: 'flex', alignItems: 'center', gap: '12px', width: '100%', padding: '12px', background: 'none', border: 'none', color: '#fff', fontSize: '14px' },
     toggleBase: { width: '40px', height: '22px', borderRadius: '11px', position: 'relative', padding: '2px' },
     toggleCircle: { width: '18px', height: '18px', backgroundColor: '#fff', borderRadius: '50%', transition: '0.2s' },
-    bottomPlayer: { backgroundColor: '#000', padding: '12px 20px 30px' },
+    bottomPlayer: { backgroundColor: '#000', padding: '12px 20px 30px', borderTop: '1px solid #1c1c1e' },
     progressBase: { height: '3px', backgroundColor: '#27272a', borderRadius: '2px' },
     progressFill: { height: '100%', backgroundColor: '#4f46e5' },
     controlRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px' },
     flagBox: { padding: '6px', backgroundColor: '#1c1c1e', borderRadius: '6px', fontSize: '14px' },
     mainButtons: { display: 'flex', alignItems: 'center', gap: '20px' },
-    playBtn: { width: '52px', height: '52px', backgroundColor: '#4f46e5', borderRadius: '26px', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' },
+    playBtn: { width: '56px', height: '56px', backgroundColor: '#4f46e5', borderRadius: '28px', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', boxShadow: '0 4px 12px rgba(79, 70, 229, 0.4)' },
     skipBtn: { background: 'none', border: 'none', color: '#fff' },
-    speedPill: { color: '#fff', backgroundColor: '#1c1c1e', padding: '4px 10px', borderRadius: '10px', border: 'none', fontSize: '12px' }
+    speedPill: { color: '#fff', backgroundColor: '#1c1c1e', padding: '6px 12px', borderRadius: '12px', border: 'none', fontSize: '13px', fontWeight: '500' }
 };
 
 export default Reader;
