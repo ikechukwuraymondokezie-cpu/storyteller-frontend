@@ -27,40 +27,42 @@ const Reader = () => {
 
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
-    // --- SPEECHIFY REPLICATION ENGINE ---
-    // This heals "ladder" text by ignoring single line breaks and only breaking on double-newlines or punctuation.
+    // --- SPEECHIFY REPLICATION ENGINE (V3) ---
+    // Fixes "Second Edition" by splitting double-newlines first, 
+    // then healing "ladder" single-newlines inside those blocks.
     const visualParagraphs = useMemo(() => {
         if (!book?.content) return [];
 
-        // Step 1: Normalize line endings and replace single newlines with spaces
-        // This effectively kills the "ladder" effect while preserving actual paragraph gaps.
-        const normalized = book.content
+        // Step 1: Split by DOUBLE newlines to preserve real structural paragraphs
+        const rawBlocks = book.content
             .replace(/\r\n/g, '\n')
-            .replace(/([^\n])\n([^\n])/g, '$1 $2')
             .split(/\n\s*\n/);
 
         const arranged = [];
 
-        normalized.forEach(block => {
-            const trimmedBlock = block.trim();
-            if (!trimmedBlock) return;
+        rawBlocks.forEach(block => {
+            // Step 2: Heal single-line ladder fragments inside this specific block
+            const healedBlock = block
+                .replace(/([^\n])\n([^\n])/g, '$1 $2')
+                .replace(/\s+/g, ' ')
+                .trim();
 
-            // Step 2: Identify Titles (Short and no sentence-ending punctuation)
-            const isTitle = trimmedBlock.length < 60 && !/[.!?]/.test(trimmedBlock);
+            if (!healedBlock) return;
+
+            // Step 3: Title Detection
+            const isTitle = healedBlock.length < 60 && !/[.!?]/.test(healedBlock);
 
             if (isTitle) {
-                arranged.push(trimmedBlock);
+                arranged.push(healedBlock);
             } else {
-                // Step 3: Sentence Chunking
-                // We split the block into sentences and group them (2 sentences per "card")
-                // to replicate the digestible reading style of premium apps.
-                const sentences = trimmedBlock.match(/[^.!?]+[.!?]+["']?|[^.!?]+$/g);
+                // Step 4: Sentence Grouping (2 sentences per card)
+                const sentences = healedBlock.match(/[^.!?]+[.!?]+["']?|[^.!?]+$/g);
                 if (sentences) {
                     for (let i = 0; i < sentences.length; i += 2) {
                         arranged.push(sentences.slice(i, i + 2).join(' ').trim());
                     }
                 } else {
-                    arranged.push(trimmedBlock);
+                    arranged.push(healedBlock);
                 }
             }
         });
@@ -250,17 +252,18 @@ const styles = {
     navRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 12px' },
     backIcon: { background: 'none', border: 'none', color: '#fff', cursor: 'pointer' },
     rightActions: { display: 'flex', gap: '8px' },
-    actionIcon: { background: 'none', border: 'none', color: '#fff', padding: '6px' },
-    pillScroll: { display: 'flex', gap: '8px', overflowX: 'auto', padding: '8px 16px' },
-    pill: { display: 'flex', alignItems: 'center', gap: '4px', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', fontSize: '11px', whiteSpace: 'nowrap' },
+    actionIcon: { background: 'none', border: 'none', color: '#fff', padding: '4px' },
+    pillScroll: { display: 'flex', gap: '6px', overflowX: 'auto', padding: '8px 16px' },
+    // REDUCED PILL SIZE
+    pill: { display: 'flex', alignItems: 'center', gap: '4px', color: '#fff', border: 'none', padding: '4px 10px', borderRadius: '12px', fontSize: '10px', whiteSpace: 'nowrap', fontWeight: '600' },
     viewerContainer: { flex: 1, overflowY: 'auto' },
     iframe: { width: '100%', height: '100%', border: 'none' },
-    digitalTextContainer: { padding: '40px 24px 180px', color: '#fff', maxWidth: '650px', margin: '0 auto' },
-    titleCard: { marginBottom: '40px', borderLeft: '4px solid #4f46e5', paddingLeft: '16px' },
+    digitalTextContainer: { padding: '40px 24px 180px', color: '#fff', maxWidth: '600px', margin: '0 auto' },
+    titleCard: { marginBottom: '40px' },
     authorTag: { color: '#71717a', fontSize: '14px', marginTop: '4px', fontWeight: '500' },
     digitalMainTitle: { fontSize: '28px', fontWeight: '800', marginBottom: '8px', lineHeight: '1.2' },
-    digitalBodyText: { fontSize: '20px', lineHeight: '1.7', color: '#e4e4e7', letterSpacing: '-0.01em' },
-    paragraphCard: { marginBottom: '2.2em' },
+    digitalBodyText: { fontSize: '19px', lineHeight: '1.75', color: '#e4e4e7', letterSpacing: '-0.01em', fontFamily: 'serif' },
+    paragraphCard: { marginBottom: '2.5em' },
     loadingTrigger: { padding: '40px', textAlign: 'center', color: '#71717a' },
     overlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'end' },
     sheet: { width: '100%', backgroundColor: '#18181b', borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '16px' },
