@@ -111,27 +111,19 @@ const formatBook = (book) => ({
 });
 
 /**
- * SMARTER TEXT EXTRACTION (PRE-PROCESSING)
- * This forces newlines where headers like "Chapter 1" or "BOOKS BY" appear 
- * so the frontend can properly split them into separate lines/cards.
+ * REFINED SMART CLEAN
+ * Forces gaps between headers and body text.
  */
 function smartClean(text) {
     if (!text) return "";
     return text
-        // 1. Force break BEFORE Chapter/BOOKS BY if it's preceded by text
+        // Force break before Chapter or Header keywords
         .replace(/([a-z0-9])\s*(Chapter\s+\d+|Psalm|Section|BOOKS\s+BY|Part)/gi, '$1\n\n$2')
-
-        // 2. Force break AFTER a title like "Chapter 1 The Prayers of Paul" 
-        // if it's immediately followed by body text keywords (The, Because, In)
-        .replace(/(Chapter\s+\d+.*?)\s+(The\s+authority|Because|In\s+the|For\s+this)/gi, '$1\n\n$2')
-
-        // 3. Force a break before numeric sections like "2. 2 The Law"
-        .replace(/([a-z0-9])\s*(\d+\.\s+\d+\s+[A-Z])/g, '$1\n\n$2')
-
-        // 4. Clean up excessive whitespaces/tabs
+        // Force break after Title Case headers followed by paragraph starters
+        .replace(/([A-Z]{2,})\s+([A-Z][a-z]+)/g, '$1\n\n$2')
         .replace(/[ \t]+/g, ' ')
-        // 5. Ensure we only use double newlines (not triples)
-        .replace(/\n{3,}/g, '\n\n');
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
 }
 
 function getPageCount(pdfPath) {
@@ -144,6 +136,10 @@ function getPageCount(pdfPath) {
     });
 }
 
+/**
+ * BLOCK-LEVEL GOOGLE VISION EXTRACTION
+ * Instead of taking the raw string, we traverse the 'blocks' detected by AI.
+ */
 async function extractPageTextGoogle(pdfPath, pageNum) {
     if (!visionClient) return "";
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
@@ -152,18 +148,34 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
     try {
         await new Promise((resolve, reject) => {
-            exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
+            // Added -r 300 for higher resolution to help AI see gaps
+            exec(`pdftoppm -r 300 -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
 
-        const [result] = await visionClient.textDetection(pageImgFull);
-        const text = result.fullTextAnnotation ? result.fullTextAnnotation.text : "";
+        const [result] = await visionClient.documentTextDetection(pageImgFull);
+        let extractedContent = "";
+
+        if (result.fullTextAnnotation && result.fullTextAnnotation.pages) {
+            result.fullTextAnnotation.pages.forEach(page => {
+                page.blocks.forEach(block => {
+                    let blockText = "";
+                    block.paragraphs.forEach(para => {
+                        let paraText = para.words.map(w =>
+                            w.symbols.map(s => s.text).join('')
+                        ).join(' ');
+                        blockText += paraText + "\n";
+                    });
+                    // Force double newline between visual blocks (Headers vs Body)
+                    extractedContent += blockText + "\n\n";
+                });
+            });
+        }
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
 
-        // Apply the Smart Cleaning here before returning to database/frontend
-        return smartClean(text);
+        return smartClean(extractedContent);
     } catch (e) {
         console.error(`❌ Google OCR Error on page ${pageNum}:`, e.message);
         return "";
@@ -172,7 +184,6 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
 /* -------------------- API ROUTES -------------------- */
 
-// LAZY LOAD ADJUSTED
 app.get("/api/books/:id/load-pages", async (req, res) => {
     let tempPdfPath = "";
     try {
@@ -227,14 +238,12 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
     }
 });
 
-// UPLOAD ADJUSTED
 app.post("/api/books", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
         const pdfPath = req.file.path;
         const totalPages = await getPageCount(pdfPath);
-        console.log(`✅ File: ${req.file.originalname} | Total Pages: ${totalPages}`);
 
         const book = await Book.create({
             title: req.body.title || req.file.originalname.replace(/\.[^/.]+$/, ""),
@@ -284,7 +293,6 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
                 }
 
                 if (await fs.pathExists(pdfPath)) await fs.remove(pdfPath);
-                console.log(`✅ Initial batch complete for: ${book.title}`);
             } catch (bgErr) {
                 console.error("BG Worker Error:", bgErr.message);
             }

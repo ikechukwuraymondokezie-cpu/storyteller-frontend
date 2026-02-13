@@ -26,7 +26,7 @@ const upload = multer({ dest: "temp/uploads/" });
 
 /**
  * SMARTER TEXT EXTRACTION (PRE-PROCESSING)
- * This fixes the "horrible logic" by forcing breaks where the PDF smashed text together.
+ * Cleans the structural text and ensures proper line breaks for frontend display.
  */
 function smartClean(text) {
     if (!text) return "";
@@ -35,14 +35,14 @@ function smartClean(text) {
         .replace(/([a-z0-9])\s*(Chapter\s+\d+|Psalm|Section|BOOKS\s+BY|Part|Book|Lesson)/gi, '$1\n\n$2')
 
         // 2. Force break AFTER a title but BEFORE the body text starts
-        // Specifically targets: "Chapter 1 The Prayers of Paul [Space] The authority of..."
         .replace(/(Chapter\s+\d+.*?)\s+(The\s+authority|Because|In\s+the|For\s+this|When\s+we)/gi, '$1\n\n$2')
 
         // 3. Clean up excessive horizontal whitespaces
         .replace(/[ \t]+/g, ' ')
 
         // 4. Ensure we only use double newlines (not triples or more)
-        .replace(/\n{3,}/g, '\n\n');
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
 }
 
 function getPageCount(pdfPath) {
@@ -55,6 +55,10 @@ function getPageCount(pdfPath) {
     });
 }
 
+/**
+ * BLOCK-LEVEL GOOGLE VISION EXTRACTION
+ * Uses 'documentTextDetection' to respect visual blocks and paragraphs.
+ */
 async function extractPageTextGoogle(pdfPath, pageNum) {
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
     const pageImgBase = path.join(coversDir, `google_tmp_${pageNum}_${uniqueId}`);
@@ -62,18 +66,35 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
     try {
         await new Promise((resolve, reject) => {
-            exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
+            // High DPI (300) helps the AI distinguish small text and gaps
+            exec(`pdftoppm -r 300 -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
 
-        const [result] = await visionClient.textDetection(pageImgFull);
-        const text = result.fullTextAnnotation ? result.fullTextAnnotation.text : "";
+        // Use documentTextDetection for structural awareness (Blocks/Paragraphs)
+        const [result] = await visionClient.documentTextDetection(pageImgFull);
+        let extractedContent = "";
+
+        if (result.fullTextAnnotation && result.fullTextAnnotation.pages) {
+            result.fullTextAnnotation.pages.forEach(page => {
+                page.blocks.forEach(block => {
+                    let blockText = "";
+                    block.paragraphs.forEach(para => {
+                        let paraText = para.words.map(w =>
+                            w.symbols.map(s => s.text).join('')
+                        ).join(' ');
+                        blockText += paraText + "\n";
+                    });
+                    // Force a double newline between visual blocks (Headers vs Body)
+                    extractedContent += blockText + "\n\n";
+                });
+            });
+        }
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
 
-        // Apply the cleaning logic before returning
-        return smartClean(text);
+        return smartClean(extractedContent);
     } catch (e) {
         console.error("OCR Error:", e);
         return "";
@@ -110,7 +131,7 @@ router.get("/:id/load-pages", async (req, res) => {
 
         const pagesResults = await Promise.all(pagePromises);
         const newText = pagesResults.filter(t => t).join("\n\n");
-        const updatedContent = book.content + "\n\n" + newText;
+        const updatedContent = (book.content || "") + "\n\n" + newText;
         const actualWordCount = updatedContent.split(/\s+/).filter(w => w.length > 0).length;
 
         const updatedBook = await Book.findByIdAndUpdate(req.params.id, {
