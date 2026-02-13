@@ -27,50 +27,48 @@ const Reader = () => {
 
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
-    // --- REFINED GOLDILOCKS ARRANGER ---
-    // Fixes "The Ladder" (too many lines) and "The Wall" (too few lines)
+    // --- SPEECHIFY REPLICATION ENGINE ---
+    // This heals "ladder" text by ignoring single line breaks and only breaking on double-newlines or punctuation.
     const visualParagraphs = useMemo(() => {
         if (!book?.content) return [];
 
-        const lines = book.content.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        // Step 1: Normalize line endings and replace single newlines with spaces
+        // This effectively kills the "ladder" effect while preserving actual paragraph gaps.
+        const normalized = book.content
+            .replace(/\r\n/g, '\n')
+            .replace(/([^\n])\n([^\n])/g, '$1 $2')
+            .split(/\n\s*\n/);
+
         const arranged = [];
-        let currentBuffer = "";
 
-        lines.forEach((line, index) => {
-            const nextLine = lines[index + 1] || "";
+        normalized.forEach(block => {
+            const trimmedBlock = block.trim();
+            if (!trimmedBlock) return;
 
-            // Logic A: Is it a title? (Short, no ending punctuation, likely Title Case)
-            const isTitleLike = line.length < 50 && !/[.!?]$/.test(line);
+            // Step 2: Identify Titles (Short and no sentence-ending punctuation)
+            const isTitle = trimmedBlock.length < 60 && !/[.!?]/.test(trimmedBlock);
 
-            // Logic B: Is it a long body line?
-            const isLong = line.length > 65;
-
-            // Logic C: Does it naturally end a sentence?
-            const endsWithPunctuation = /[.!?:"] $/.test(line);
-
-            if (isTitleLike) {
-                // If we have a paragraph building, flush it before the title
-                if (currentBuffer) {
-                    arranged.push(currentBuffer.trim());
-                    currentBuffer = "";
-                }
-                arranged.push(line); // Title gets its own line
-            } else if (endsWithPunctuation || isLong) {
-                // Weld this line to the buffer and flush as a paragraph
-                currentBuffer += (currentBuffer ? " " : "") + line;
-                arranged.push(currentBuffer.trim());
-                currentBuffer = "";
+            if (isTitle) {
+                arranged.push(trimmedBlock);
             } else {
-                // It's a fragment of a paragraph; keep welding
-                currentBuffer += (currentBuffer ? " " : "") + line;
+                // Step 3: Sentence Chunking
+                // We split the block into sentences and group them (2 sentences per "card")
+                // to replicate the digestible reading style of premium apps.
+                const sentences = trimmedBlock.match(/[^.!?]+[.!?]+["']?|[^.!?]+$/g);
+                if (sentences) {
+                    for (let i = 0; i < sentences.length; i += 2) {
+                        arranged.push(sentences.slice(i, i + 2).join(' ').trim());
+                    }
+                } else {
+                    arranged.push(trimmedBlock);
+                }
             }
         });
 
-        if (currentBuffer) arranged.push(currentBuffer.trim());
         return arranged;
     }, [book?.content]);
 
-    const textToRead = useMemo(() => visualParagraphs.join('. '), [visualParagraphs]);
+    const textToRead = useMemo(() => visualParagraphs.join(' '), [visualParagraphs]);
 
     useEffect(() => {
         let pollInterval;
@@ -170,10 +168,13 @@ const Reader = () => {
                     </div>
                 ) : isDigitalMode ? (
                     <div style={styles.digitalTextContainer}>
-                        <h1 style={styles.digitalMainTitle}>{book?.title}</h1>
+                        <div style={styles.titleCard}>
+                            <h1 style={styles.digitalMainTitle}>{book?.title}</h1>
+                            <div style={styles.authorTag}>Kenneth E. Hagin</div>
+                        </div>
                         <div style={styles.digitalBodyText}>
                             {visualParagraphs.map((para, i) => (
-                                <p key={i} style={{ marginBottom: '1.8em' }}>{para}</p>
+                                <p key={i} style={styles.paragraphCard}>{para}</p>
                             ))}
                             <div ref={bottomObserverRef} style={styles.loadingTrigger}>
                                 {book?.status !== 'completed' ? <Loader2 className="animate-spin" /> : "• END •"}
@@ -254,9 +255,12 @@ const styles = {
     pill: { display: 'flex', alignItems: 'center', gap: '4px', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: '16px', fontSize: '11px', whiteSpace: 'nowrap' },
     viewerContainer: { flex: 1, overflowY: 'auto' },
     iframe: { width: '100%', height: '100%', border: 'none' },
-    digitalTextContainer: { padding: '30px 24px 150px', color: '#fff' },
-    digitalMainTitle: { fontSize: '24px', fontWeight: 'bold', marginBottom: '24px', lineHeight: '1.3' },
-    digitalBodyText: { fontSize: '19px', lineHeight: '1.8', color: '#e4e4e7', letterSpacing: '-0.01em' },
+    digitalTextContainer: { padding: '40px 24px 180px', color: '#fff', maxWidth: '650px', margin: '0 auto' },
+    titleCard: { marginBottom: '40px', borderLeft: '4px solid #4f46e5', paddingLeft: '16px' },
+    authorTag: { color: '#71717a', fontSize: '14px', marginTop: '4px', fontWeight: '500' },
+    digitalMainTitle: { fontSize: '28px', fontWeight: '800', marginBottom: '8px', lineHeight: '1.2' },
+    digitalBodyText: { fontSize: '20px', lineHeight: '1.7', color: '#e4e4e7', letterSpacing: '-0.01em' },
+    paragraphCard: { marginBottom: '2.2em' },
     loadingTrigger: { padding: '40px', textAlign: 'center', color: '#71717a' },
     overlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 10000, display: 'flex', alignItems: 'end' },
     sheet: { width: '100%', backgroundColor: '#18181b', borderTopLeftRadius: '24px', borderTopRightRadius: '24px', padding: '16px' },
