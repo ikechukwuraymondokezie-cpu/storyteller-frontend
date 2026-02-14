@@ -56,6 +56,11 @@ const Reader = () => {
 
     // --- STREAMLINED ENGINE ---
     const visualParagraphs = useMemo(() => {
+        // UPDATE: Check if book exists but content is empty to handle skeleton trigger properly
+        if (book && (!book.content || book.content.trim() === "") && book.status === 'processing') {
+            return [];
+        }
+
         if (!book?.content) return [];
         const rawBlocks = book.content.split(/\n\s*\n/);
 
@@ -75,7 +80,7 @@ const Reader = () => {
                     type: isMainTitle ? 'mainTitle' : (isHeader ? 'header' : 'body')
                 };
             });
-    }, [book?.content]);
+    }, [book?.content, book?.status]);
 
     const loadMorePages = async () => {
         if (loadingMore || !book || book.status === 'completed') return;
@@ -145,7 +150,10 @@ const Reader = () => {
                         const res = await fetch(`${BACKEND_URL}/api/books/${id}`);
                         const updated = await res.json();
                         setBook(updated);
-                        if (updated.status === 'completed') clearInterval(pollInterval);
+                        // Stop polling if completed or if we finally have some text to show
+                        if (updated.status === 'completed' || (updated.content && updated.content.length > 0)) {
+                            if (updated.status === 'completed') clearInterval(pollInterval);
+                        }
                     }, 5000);
                 }
             } catch (err) { console.error("Fetch error:", err); } finally { setLoading(false); }
@@ -249,7 +257,12 @@ const Reader = () => {
                         </div>
                     </div>
                 ) : (
-                    <iframe src={`https://docs.google.com/viewer?url=${encodeURIComponent(book?.url)}&embedded=true`} style={styles.iframe} title="Viewer" />
+                    <iframe
+                        key={book?.url} // UPDATE: Key forces reload when URL is finally ready
+                        src={`https://docs.google.com/viewer?url=${encodeURIComponent(book?.url)}&embedded=true`}
+                        style={styles.iframe}
+                        title="Viewer"
+                    />
                 )}
             </main>
 
@@ -308,9 +321,9 @@ const styles = {
         display: 'flex',
         alignItems: 'center',
         border: 'none',
-        padding: '6px 12px',
+        padding: '4px 10px', // REDUCED pill size
         borderRadius: '16px',
-        fontSize: '11px',
+        fontSize: '10px',    // REDUCED font size
         whiteSpace: 'nowrap',
         fontWeight: '600',
         transition: 'all 0.2s ease'
