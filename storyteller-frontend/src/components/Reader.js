@@ -20,7 +20,6 @@ const SkeletonLoader = () => (
                 <div style={{ ...styles.skeletonLine, width: '40%' }} className="animate-pulse" />
             </div>
         ))}
-        {/* Injecting the pulse animation keyframes */}
         <style>{`
             @keyframes pulse {
                 0%, 100% { opacity: 1; }
@@ -61,7 +60,6 @@ const Reader = () => {
     const visualParagraphs = useMemo(() => {
         if (!book?.content) return [];
 
-        // Split by double newlines from backend
         const rawBlocks = book.content.split(/\n\s*\n/);
 
         return rawBlocks
@@ -69,11 +67,10 @@ const Reader = () => {
             .filter(block => block.length > 0)
             .map((text, index) => {
                 const isMainTitle = index === 0;
-                // Detect headers for styling
+                // Header detection
                 const isHeader = /^(Chapter|Section|Part|Lesson|Psalm|BOOKS BY|Romans|John)\s+\d+/i.test(text) ||
                     (text.length < 65 && !/[.!?]$/.test(text));
 
-                // Natural TTS pauses for verse numbers (e.g., "1:1" or "1.")
                 const injectPause = (t) => t.replace(/(\d+[\.:]\s?|\d+\s)/g, '$1... ');
 
                 return {
@@ -211,7 +208,6 @@ const Reader = () => {
                     </div>
                 ) : isDigitalMode ? (
                     <div style={styles.digitalTextContainer}>
-                        {/* SHOW SKELETON IF NO CONTENT YET */}
                         {visualParagraphs.length === 0 ? (
                             <SkeletonLoader />
                         ) : (
@@ -230,14 +226,17 @@ const Reader = () => {
                                         }}
                                         style={{
                                             ...styles.paragraphCard,
-                                            color: i === currentParaIndex ? '#fff' : (isMainTitle || isHeader ? '#f4f4f5' : '#4b4b4b'),
-                                            fontSize: isMainTitle ? '34px' : (isHeader ? '24px' : '18px'),
-                                            fontWeight: (isMainTitle || isHeader) ? '900' : '400',
-                                            marginBottom: isMainTitle ? '0.6em' : (isHeader ? '1.2em' : '2.2em'),
-                                            lineHeight: isMainTitle ? '1.1' : '1.7',
+                                            // STYLE UPDATES: Bigger size, No bold, Serif body
+                                            color: i === currentParaIndex ? '#fff' : (isMainTitle || isHeader ? '#f4f4f5' : '#71717a'),
+                                            fontSize: isMainTitle ? '36px' : (isHeader ? '28px' : '19px'),
+                                            fontWeight: (isMainTitle || isHeader) ? '400' : '400',
+                                            marginBottom: isMainTitle ? '0.8em' : (isHeader ? '1.4em' : '2.4em'),
+                                            lineHeight: (isMainTitle || isHeader) ? '1.2' : '1.7',
+                                            textAlign: (isMainTitle || isHeader) ? 'center' : 'left',
                                             fontFamily: (isMainTitle || isHeader) ? 'sans-serif' : 'serif',
-                                            borderTop: (isHeader && i !== 0) ? '1px solid #27272a' : 'none',
-                                            paddingTop: (isHeader && i !== 0) ? '20px' : '0'
+                                            letterSpacing: (isMainTitle || isHeader) ? '-0.03em' : 'normal',
+                                            borderTop: (isHeader && i !== 0) ? '1px solid #1c1c1e' : 'none',
+                                            paddingTop: (isHeader && i !== 0) ? '32px' : '0'
                                         }}
                                     >
                                         {item.text}
@@ -312,7 +311,6 @@ const styles = {
     skipBtn: { background: 'none', border: 'none', color: '#fff' },
     speedPill: { color: '#fff', backgroundColor: '#1c1c1e', padding: '6px 12px', borderRadius: '12px', border: 'none', fontSize: '13px', fontWeight: '500' },
 
-    // SKELETON STYLES
     skeletonContainer: { display: 'flex', flexDirection: 'column', gap: '16px' },
     skeletonHeader: { height: '36px', width: '80%', backgroundColor: '#27272a', borderRadius: '8px' },
     skeletonSubHeader: { height: '24px', width: '50%', backgroundColor: '#1c1c1e', borderRadius: '6px', marginBottom: '12px' },

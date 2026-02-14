@@ -111,17 +111,19 @@ const formatBook = (book) => ({
 });
 
 /**
- * REFINED SMART CLEAN
- * Forces gaps between headers and body text.
+ * SMARTER TEXT EXTRACTION (PRE-PROCESSING)
+ * Cleans up noise and ensures formatting keywords are on their own lines.
  */
 function smartClean(text) {
     if (!text) return "";
     return text
-        // Force break before Chapter or Header keywords
+        // 1. Join words that were accidentally split by hyphenation at end of lines
+        .replace(/(\w)-\s*\n(\w)/g, '$1$2')
+        // 2. Force break BEFORE Chapter/Psalm/Section
         .replace(/([a-z0-9])\s*(Chapter\s+\d+|Psalm|Section|BOOKS\s+BY|Part)/gi, '$1\n\n$2')
-        // Force break after Title Case headers followed by paragraph starters
-        .replace(/([A-Z]{2,})\s+([A-Z][a-z]+)/g, '$1\n\n$2')
+        // 3. Clean up excessive whitespaces
         .replace(/[ \t]+/g, ' ')
+        // 4. Standardize paragraph spacing
         .replace(/\n{3,}/g, '\n\n')
         .trim();
 }
@@ -137,8 +139,9 @@ function getPageCount(pdfPath) {
 }
 
 /**
- * BLOCK-LEVEL GOOGLE VISION EXTRACTION
- * Instead of taking the raw string, we traverse the 'blocks' detected by AI.
+ * IMPROVED GOOGLE OCR
+ * Uses documentTextDetection and reconstructs paragraphs word-by-word
+ * to prevent the "vertical list" word arrangement.
  */
 async function extractPageTextGoogle(pdfPath, pageNum) {
     if (!visionClient) return "";
@@ -147,35 +150,38 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
     const pageImgFull = `${pageImgBase}.png`;
 
     try {
+        // Convert PDF page to PNG
         await new Promise((resolve, reject) => {
-            // Added -r 300 for higher resolution to help AI see gaps
-            exec(`pdftoppm -r 300 -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
+            exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
 
+        // Use DOCUMENT_TEXT_DETECTION for better paragraph grouping
         const [result] = await visionClient.documentTextDetection(pageImgFull);
-        let extractedContent = "";
-
-        if (result.fullTextAnnotation && result.fullTextAnnotation.pages) {
-            result.fullTextAnnotation.pages.forEach(page => {
-                page.blocks.forEach(block => {
-                    let blockText = "";
-                    block.paragraphs.forEach(para => {
-                        let paraText = para.words.map(w =>
-                            w.symbols.map(s => s.text).join('')
-                        ).join(' ');
-                        blockText += paraText + "\n";
-                    });
-                    // Force double newline between visual blocks (Headers vs Body)
-                    extractedContent += blockText + "\n\n";
-                });
-            });
-        }
+        const fullTextAnnotation = result.fullTextAnnotation;
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
 
-        return smartClean(extractedContent);
+        if (!fullTextAnnotation) return "";
+
+        let pageContent = "";
+
+        // Iterate through structural blocks and paragraphs
+        fullTextAnnotation.pages.forEach(page => {
+            page.blocks.forEach(block => {
+                block.paragraphs.forEach(para => {
+                    // Join words in paragraph with space
+                    const paraText = para.words
+                        .map(word => word.symbols.map(s => s.text).join(''))
+                        .join(' ');
+
+                    pageContent += paraText + "\n\n";
+                });
+            });
+        });
+
+        return smartClean(pageContent);
     } catch (e) {
         console.error(`❌ Google OCR Error on page ${pageNum}:`, e.message);
         return "";
@@ -250,7 +256,7 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
             folder: req.body.folder || "All",
             pdfPath: "pending",
             cover: "https://via.placeholder.com/300x450?text=Processing...",
-            content: "Scanning initial pages...",
+            content: "",
             totalPages,
             words: 0,
             status: 'processing'
@@ -281,7 +287,8 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
                 const limit = Math.min(5, totalPages);
                 for (let i = 1; i <= limit; i++) {
                     const pageText = await extractPageTextGoogle(pdfPath, i);
-                    runningContent += pageText + "\n\n";
+                    if (pageText) runningContent += pageText + "\n\n";
+
                     const actualWords = runningContent.split(/\s+/).filter(w => w.length > 0).length;
 
                     await Book.findByIdAndUpdate(book._id, {
@@ -304,7 +311,7 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
     }
 });
 
-/* --- OTHER ROUTES --- */
+/* --- FOLDER ROUTES --- */
 app.get("/api/books/folders", async (_, res) => {
     try {
         const folders = await Folder.find().sort({ name: 1 });
@@ -327,6 +334,7 @@ app.delete("/api/books/folders/:name", async (req, res) => {
     } catch { res.status(500).json({ error: "Failed" }); }
 });
 
+/* --- BOOK ROUTES --- */
 app.get("/api/books", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });

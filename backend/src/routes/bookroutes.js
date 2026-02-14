@@ -26,21 +26,20 @@ const upload = multer({ dest: "temp/uploads/" });
 
 /**
  * SMARTER TEXT EXTRACTION (PRE-PROCESSING)
- * Cleans the structural text and ensures proper line breaks for frontend display.
+ * Ensures headers are separated and hyphenated words are joined.
  */
 function smartClean(text) {
     if (!text) return "";
     return text
-        // 1. Force break BEFORE Chapter/BOOKS BY if it's stuck to a previous sentence
+        // 1. Join words split by hyphens at the end of a line
+        .replace(/(\w)-\s*\n(\w)/g, '$1$2')
+        // 2. Force break BEFORE Chapter/Psalm/Section/Lesson etc.
         .replace(/([a-z0-9])\s*(Chapter\s+\d+|Psalm|Section|BOOKS\s+BY|Part|Book|Lesson)/gi, '$1\n\n$2')
-
-        // 2. Force break AFTER a title but BEFORE the body text starts
+        // 3. Force break AFTER a title but BEFORE body text starts
         .replace(/(Chapter\s+\d+.*?)\s+(The\s+authority|Because|In\s+the|For\s+this|When\s+we)/gi, '$1\n\n$2')
-
-        // 3. Clean up excessive horizontal whitespaces
+        // 4. Clean up excessive horizontal whitespaces
         .replace(/[ \t]+/g, ' ')
-
-        // 4. Ensure we only use double newlines (not triples or more)
+        // 5. Standardize double newlines
         .replace(/\n{3,}/g, '\n\n')
         .trim();
 }
@@ -56,8 +55,8 @@ function getPageCount(pdfPath) {
 }
 
 /**
- * BLOCK-LEVEL GOOGLE VISION EXTRACTION
- * Uses 'documentTextDetection' to respect visual blocks and paragraphs.
+ * UPDATED OCR ENGINE
+ * Uses documentTextDetection to respect layout and group words into sentences.
  */
 async function extractPageTextGoogle(pdfPath, pageNum) {
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
@@ -65,36 +64,38 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
     const pageImgFull = `${pageImgBase}.png`;
 
     try {
+        // Convert PDF page to Image
         await new Promise((resolve, reject) => {
-            // High DPI (300) helps the AI distinguish small text and gaps
-            exec(`pdftoppm -r 300 -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
+            exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
 
-        // Use documentTextDetection for structural awareness (Blocks/Paragraphs)
+        // Use documentTextDetection for structural layout analysis
         const [result] = await visionClient.documentTextDetection(pageImgFull);
-        let extractedContent = "";
-
-        if (result.fullTextAnnotation && result.fullTextAnnotation.pages) {
-            result.fullTextAnnotation.pages.forEach(page => {
-                page.blocks.forEach(block => {
-                    let blockText = "";
-                    block.paragraphs.forEach(para => {
-                        let paraText = para.words.map(w =>
-                            w.symbols.map(s => s.text).join('')
-                        ).join(' ');
-                        blockText += paraText + "\n";
-                    });
-                    // Force a double newline between visual blocks (Headers vs Body)
-                    extractedContent += blockText + "\n\n";
-                });
-            });
-        }
+        const fullTextAnnotation = result.fullTextAnnotation;
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
 
-        return smartClean(extractedContent);
+        if (!fullTextAnnotation) return "";
+
+        let reconstructedText = "";
+
+        // Loop through the layout hierarchy: Pages -> Blocks -> Paragraphs -> Words
+        fullTextAnnotation.pages.forEach(page => {
+            page.blocks.forEach(block => {
+                block.paragraphs.forEach(para => {
+                    const paraString = para.words
+                        .map(word => word.symbols.map(s => s.text).join(''))
+                        .join(' ');
+
+                    reconstructedText += paraString + "\n\n";
+                });
+            });
+        });
+
+        // Final cleanup of the reconstructed string
+        return smartClean(reconstructedText);
     } catch (e) {
         console.error("OCR Error:", e);
         return "";
@@ -170,7 +171,7 @@ router.post("/", upload.single("file"), async (req, res) => {
             pdfPath: "pending",
             cover: "https://via.placeholder.com/300x450?text=Processing...",
             folder: req.body.folder || "All",
-            content: "Scanning first pages...",
+            content: "",
             totalPages,
             processedPages: 0,
             status: 'processing',
@@ -202,7 +203,8 @@ router.post("/", upload.single("file"), async (req, res) => {
                 const limit = Math.min(5, totalPages);
                 for (let i = 1; i <= limit; i++) {
                     const text = await extractPageTextGoogle(pdfDiskPath, i);
-                    runningText += text + "\n\n";
+                    if (text) runningText += text + "\n\n";
+
                     const wordCount = runningText.split(/\s+/).filter(w => w.length > 0).length;
 
                     await Book.findByIdAndUpdate(book._id, {
