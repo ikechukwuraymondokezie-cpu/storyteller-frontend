@@ -8,6 +8,7 @@ const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
 const axios = require("axios");
+
 const vision = require('@google-cloud/vision');
 
 const app = express();
@@ -109,12 +110,20 @@ const formatBook = (book) => ({
     createdAt: book.createdAt
 });
 
+/**
+ * SMARTER TEXT EXTRACTION (PRE-PROCESSING)
+ * Cleans up noise and ensures formatting keywords are on their own lines.
+ */
 function smartClean(text) {
     if (!text) return "";
     return text
+        // 1. Join words that were accidentally split by hyphenation at end of lines
         .replace(/(\w)-\s*\n(\w)/g, '$1$2')
-        .replace(/([a-z0-9])\s*(Chapter\s+\d+|Psalm|Section|BOOKS\s+BY|Part|Lesson)/gi, '$1\n\n$2')
+        // 2. Force break BEFORE Chapter/Psalm/Section
+        .replace(/([a-z0-9])\s*(Chapter\s+\d+|Psalm|Section|BOOKS\s+BY|Part)/gi, '$1\n\n$2')
+        // 3. Clean up excessive whitespaces
         .replace(/[ \t]+/g, ' ')
+        // 4. Standardize paragraph spacing
         .replace(/\n{3,}/g, '\n\n')
         .trim();
 }
@@ -129,6 +138,11 @@ function getPageCount(pdfPath) {
     });
 }
 
+/**
+ * IMPROVED GOOGLE OCR
+ * Uses documentTextDetection and reconstructs paragraphs word-by-word
+ * to prevent the "vertical list" word arrangement.
+ */
 async function extractPageTextGoogle(pdfPath, pageNum) {
     if (!visionClient) return "";
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
@@ -136,31 +150,38 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
     const pageImgFull = `${pageImgBase}.png`;
 
     try {
+        // Convert PDF page to PNG
         await new Promise((resolve, reject) => {
             exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
 
+        // Use DOCUMENT_TEXT_DETECTION for better paragraph grouping
         const [result] = await visionClient.documentTextDetection(pageImgFull);
         const fullTextAnnotation = result.fullTextAnnotation;
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
+
         if (!fullTextAnnotation) return "";
 
-        let reconstructedText = "";
+        let pageContent = "";
+
+        // Iterate through structural blocks and paragraphs
         fullTextAnnotation.pages.forEach(page => {
             page.blocks.forEach(block => {
                 block.paragraphs.forEach(para => {
-                    const paraString = para.words
+                    // Join words in paragraph with space
+                    const paraText = para.words
                         .map(word => word.symbols.map(s => s.text).join(''))
                         .join(' ');
-                    reconstructedText += paraString + "\n\n";
+
+                    pageContent += paraText + "\n\n";
                 });
             });
         });
 
-        return smartClean(reconstructedText);
+        return smartClean(pageContent);
     } catch (e) {
         console.error(`❌ Google OCR Error on page ${pageNum}:`, e.message);
         return "";
@@ -169,24 +190,13 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
 /* -------------------- API ROUTES -------------------- */
 
-// LAZY LOAD EXTRA PAGES (UPDATED WITH 500 ERROR GUARDS)
 app.get("/api/books/:id/load-pages", async (req, res) => {
     let tempPdfPath = "";
     try {
-        const { id } = req.params;
-        const book = await Book.findById(id);
+        const book = await Book.findById(req.params.id);
+        if (!book) return res.status(404).json({ error: "Book not found" });
 
-        if (!book) {
-            console.error(`[Server] Book ID ${id} not found.`);
-            return res.status(404).json({ error: "Book not found" });
-        }
-
-        // If already done, don't re-process
-        if (book.status === 'completed') {
-            return res.json({ message: "End", addedText: "", status: 'completed' });
-        }
-
-        const startPage = (book.processedPages || 0) + 1;
+        const startPage = book.processedPages + 1;
         const endPage = Math.min(startPage + 4, book.totalPages);
 
         if (startPage > book.totalPages) {
@@ -195,7 +205,6 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
 
         tempPdfPath = path.join(uploadDir, `temp_load_${book._id}.pdf`);
 
-        // Download from Cloudinary if local temp file is missing
         if (!(await fs.pathExists(tempPdfPath))) {
             const response = await axios.get(book.pdfPath, { responseType: 'arraybuffer' });
             await fs.writeFile(tempPdfPath, Buffer.from(response.data));
@@ -213,14 +222,13 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
         const newWordCount = updatedContent.split(/\s+/).filter(w => w.length > 0).length;
         const isFinished = endPage >= book.totalPages;
 
-        const updatedBook = await Book.findByIdAndUpdate(id, {
+        const updatedBook = await Book.findByIdAndUpdate(req.params.id, {
             content: updatedContent,
             processedPages: endPage,
             words: newWordCount,
             status: isFinished ? 'completed' : 'processing'
         }, { new: true });
 
-        // Cleanup temp file only if completely finished
         if (isFinished && await fs.pathExists(tempPdfPath)) {
             await fs.remove(tempPdfPath);
         }
@@ -231,12 +239,11 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
             status: updatedBook.status
         });
     } catch (err) {
-        console.error("Critical Lazy load error:", err.message);
-        res.status(500).json({ error: "Internal Server Error during pagination", details: err.message });
+        console.error("Lazy load error:", err.message);
+        res.status(500).json({ error: "Lazy load failed" });
     }
 });
 
-// UPLOAD BOOK
 app.post("/api/books", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -257,7 +264,6 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
 
         res.status(201).json(formatBook(book));
 
-        // Background Processing
         (async () => {
             try {
                 const baseName = path.parse(req.file.filename).name;
@@ -328,7 +334,7 @@ app.delete("/api/books/folders/:name", async (req, res) => {
     } catch { res.status(500).json({ error: "Failed" }); }
 });
 
-/* --- BOOK MANAGEMENT --- */
+/* --- BOOK ROUTES --- */
 app.get("/api/books", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
@@ -358,7 +364,7 @@ app.delete("/api/books/:id", async (req, res) => {
     } catch { res.status(500).json({ error: "Failed" }); }
 });
 
-/* --- START SERVER --- */
+/* --- START --- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", async () => {
     console.log(`✅ Server running on port ${PORT}`);
