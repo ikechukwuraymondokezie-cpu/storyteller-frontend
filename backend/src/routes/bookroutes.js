@@ -16,8 +16,11 @@ const visionClient = new vision.ImageAnnotatorClient();
 // Setup paths for temporary processing
 const pdfDir = path.join(__dirname, "../temp/pdfs");
 const coversDir = path.join(__dirname, "../temp/covers");
+const uploadDir = path.join(__dirname, "../temp/uploads"); // Fixed: consistency with path.join
+
 fs.ensureDirSync(pdfDir);
 fs.ensureDirSync(coversDir);
+fs.ensureDirSync(uploadDir);
 
 // Multer setup
 const upload = multer({ dest: "temp/uploads/" });
@@ -26,24 +29,14 @@ const upload = multer({ dest: "temp/uploads/" });
 
 /**
  * SMARTER TEXT EXTRACTION (PRE-PROCESSING)
- * Cleans up noise, joins split words, and ensures formatting keywords start new blocks.
  */
 function smartClean(text) {
     if (!text) return "";
     return text
-        // 1. Join words split by hyphens at the end of a line (e.g., "au- \n thority")
         .replace(/(\w)-\s*\n(\w)/g, '$1$2')
-
-        // 2. Force break BEFORE Chapter/Psalm/Section if it's stuck to previous text
         .replace(/([a-z0-9])\s*(Chapter\s+\d+|Psalm|Section|BOOKS\s+BY|Part|Book|Lesson)/gi, '$1\n\n$2')
-
-        // 3. Force break AFTER a title but BEFORE the body text starts
         .replace(/(Chapter\s+\d+.*?)\s+(The\s+authority|Because|In\s+the|For\s+this|When\s+we)/gi, '$1\n\n$2')
-
-        // 4. Clean up excessive horizontal whitespaces
         .replace(/[ \t]+/g, ' ')
-
-        // 5. Ensure standardized double newlines for paragraph spacing
         .replace(/\n{3,}/g, '\n\n')
         .trim();
 }
@@ -60,7 +53,6 @@ function getPageCount(pdfPath) {
 
 /**
  * IMPROVED OCR ENGINE
- * Uses documentTextDetection to respect visual blocks and group words into coherent paragraphs.
  */
 async function extractPageTextGoogle(pdfPath, pageNum) {
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
@@ -68,32 +60,25 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
     const pageImgFull = `${pageImgBase}.png`;
 
     try {
-        // Convert PDF page to PNG image
         await new Promise((resolve, reject) => {
             exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
 
-        // Use documentTextDetection (optimized for dense text/books)
         const [result] = await visionClient.documentTextDetection(pageImgFull);
         const fullTextAnnotation = result.fullTextAnnotation;
 
-        // Immediate cleanup of the temporary image to save disk space
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
-
         if (!fullTextAnnotation) return "";
 
         let reconstructedText = "";
-
-        // Reconstruct text by following the document hierarchy (Block > Paragraph > Word)
         fullTextAnnotation.pages.forEach(page => {
             page.blocks.forEach(block => {
                 block.paragraphs.forEach(para => {
                     const paraString = para.words
                         .map(word => word.symbols.map(s => s.text).join(''))
                         .join(' ');
-
                     reconstructedText += paraString + "\n\n";
                 });
             });
@@ -101,33 +86,47 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
         return smartClean(reconstructedText);
     } catch (e) {
-        console.error(`OCR Error on page ${pageNum}:`, e);
+        console.error(`❌ OCR Error on page ${pageNum}:`, e.message);
         return "";
     }
 }
 
 /* ---------------- ROUTES ---------------- */
 
-// 1. LAZY LOAD ROUTE (Fetches next 4 pages)
+// 1. LAZY LOAD ROUTE (Fixed: Added error guards to stop 500s)
 router.get("/:id/load-pages", async (req, res) => {
     let tempPath = "";
     try {
-        const book = await Book.findById(req.params.id);
-        if (!book) return res.status(404).json({ error: "Book not found" });
+        const { id } = req.params;
+        const book = await Book.findById(id);
 
-        const startPage = book.processedPages + 1;
-        const endPage = Math.min(startPage + 4, book.totalPages);
+        // Guard 1: Book not found
+        if (!book) {
+            console.error(`[Load-Pages] 404: Book ${id} not found.`);
+            return res.status(404).json({ error: "Book not found" });
+        }
 
-        if (startPage > book.totalPages) {
+        const startPage = (book.processedPages || 0) + 1;
+        const endPage = Math.min(startPage + 3, book.totalPages); // Reduced chunk to 4 pages total
+
+        if (startPage > book.totalPages || book.status === 'completed') {
             return res.json({ addedText: "", status: "completed" });
         }
 
         tempPath = path.join(pdfDir, `temp_load_${book._id}.pdf`);
 
-        // Download from Cloudinary to local temp if not already present
+        // Guard 2: Axios download error handling
         if (!(await fs.pathExists(tempPath))) {
-            const response = await axios.get(book.pdfPath, { responseType: 'arraybuffer' });
-            await fs.writeFile(tempPath, Buffer.from(response.data));
+            try {
+                const response = await axios.get(book.pdfPath, {
+                    responseType: 'arraybuffer',
+                    timeout: 15000 // 15s timeout
+                });
+                await fs.writeFile(tempPath, Buffer.from(response.data));
+            } catch (dlErr) {
+                console.error(`[Load-Pages] Download Failed for ${book.title}:`, dlErr.message);
+                return res.status(500).json({ error: "Could not retrieve PDF from storage" });
+            }
         }
 
         const pagePromises = [];
@@ -140,14 +139,14 @@ router.get("/:id/load-pages", async (req, res) => {
         const updatedContent = (book.content || "") + "\n\n" + newText;
         const actualWordCount = updatedContent.split(/\s+/).filter(w => w.length > 0).length;
 
-        const updatedBook = await Book.findByIdAndUpdate(req.params.id, {
+        const updatedBook = await Book.findByIdAndUpdate(id, {
             content: updatedContent,
             processedPages: endPage,
             status: endPage >= book.totalPages ? 'completed' : 'processing',
             words: actualWordCount
         }, { new: true });
 
-        // Cleanup the temp PDF if the book is fully processed
+        // Cleanup the temp PDF only if finished to avoid ERR_CONNECTION_RESET on subsequent rapid calls
         if (updatedBook.status === 'completed') {
             await fs.remove(tempPath);
         }
@@ -159,8 +158,8 @@ router.get("/:id/load-pages", async (req, res) => {
             totalWords: actualWordCount
         });
     } catch (err) {
-        console.error("Lazy Load Error:", err);
-        res.status(500).json({ error: "Lazy load failed" });
+        console.error("❌ Lazy Load Fatal Error:", err);
+        res.status(500).json({ error: "Internal server error during pagination" });
     }
 });
 
@@ -177,7 +176,7 @@ router.post("/", upload.single("file"), async (req, res) => {
             pdfPath: "pending",
             cover: "https://via.placeholder.com/300x450?text=Processing...",
             folder: req.body.folder || "All",
-            content: "", // Start empty
+            content: "",
             totalPages,
             processedPages: 0,
             status: 'processing',
@@ -186,21 +185,22 @@ router.post("/", upload.single("file"), async (req, res) => {
 
         res.status(201).json(book);
 
-        // Background Worker for initial processing
+        // Background Worker
         (async () => {
             try {
                 const baseName = path.parse(req.file.filename).name;
                 const outputPrefix = path.join(coversDir, baseName);
 
-                // Parallel upload PDF and generate/upload Cover
                 const [cloudUrl, coverUrl] = await Promise.all([
                     cloudinary.uploader.upload(pdfDiskPath, { folder: "storyteller_pdfs", resource_type: "raw" }).then(r => r.secure_url),
                     new Promise((resolve) => {
                         exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfDiskPath}" "${outputPrefix}"`, async (err) => {
                             if (err) return resolve(null);
-                            const res = await cloudinary.uploader.upload(`${outputPrefix}.png`, { folder: "storyteller_covers" });
-                            await fs.remove(`${outputPrefix}.png`);
-                            resolve(res.secure_url);
+                            try {
+                                const cRes = await cloudinary.uploader.upload(`${outputPrefix}.png`, { folder: "storyteller_covers" });
+                                await fs.remove(`${outputPrefix}.png`);
+                                resolve(cRes.secure_url);
+                            } catch (e) { resolve(null); }
                         });
                     })
                 ]);
@@ -208,7 +208,7 @@ router.post("/", upload.single("file"), async (req, res) => {
                 await Book.findByIdAndUpdate(book._id, { pdfPath: cloudUrl, cover: coverUrl });
 
                 let runningText = "";
-                const limit = Math.min(5, totalPages); // Process first 5 pages immediately
+                const limit = Math.min(5, totalPages);
 
                 for (let i = 1; i <= limit; i++) {
                     const text = await extractPageTextGoogle(pdfDiskPath, i);
@@ -224,14 +224,13 @@ router.post("/", upload.single("file"), async (req, res) => {
                     });
                 }
 
-                // Delete local upload after Cloudinary and OCR are done
                 if (await fs.pathExists(pdfDiskPath)) await fs.remove(pdfDiskPath);
             } catch (e) {
-                console.error("Background Worker Error:", e);
+                console.error("❌ Background Worker Error:", e.message);
             }
         })();
     } catch (err) {
-        console.error("Upload Error:", err);
+        console.error("❌ Upload Route Error:", err);
         res.status(500).json({ error: "Upload failed" });
     }
 });

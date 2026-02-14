@@ -109,19 +109,12 @@ const formatBook = (book) => ({
     createdAt: book.createdAt
 });
 
-/**
- * SMARTER TEXT EXTRACTION (PRE-PROCESSING)
- */
 function smartClean(text) {
     if (!text) return "";
     return text
-        // 1. Join hyphenated words split at line breaks
         .replace(/(\w)-\s*\n(\w)/g, '$1$2')
-        // 2. Force breaks for Structural Keywords
         .replace(/([a-z0-9])\s*(Chapter\s+\d+|Psalm|Section|BOOKS\s+BY|Part|Lesson)/gi, '$1\n\n$2')
-        // 3. Clean horizontal spacing
         .replace(/[ \t]+/g, ' ')
-        // 4. Uniform paragraph spacing
         .replace(/\n{3,}/g, '\n\n')
         .trim();
 }
@@ -136,10 +129,6 @@ function getPageCount(pdfPath) {
     });
 }
 
-/**
- * IMPROVED GOOGLE OCR ENGINE
- * Uses documentTextDetection to maintain logical paragraph flow.
- */
 async function extractPageTextGoogle(pdfPath, pageNum) {
     if (!visionClient) return "";
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
@@ -147,14 +136,12 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
     const pageImgFull = `${pageImgBase}.png`;
 
     try {
-        // PDF -> Image
         await new Promise((resolve, reject) => {
             exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
 
-        // OCR with Structural Layout Analysis
         const [result] = await visionClient.documentTextDetection(pageImgFull);
         const fullTextAnnotation = result.fullTextAnnotation;
 
@@ -162,15 +149,12 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
         if (!fullTextAnnotation) return "";
 
         let reconstructedText = "";
-
-        // Traverse hierarchy: Pages -> Blocks -> Paragraphs -> Words
         fullTextAnnotation.pages.forEach(page => {
             page.blocks.forEach(block => {
                 block.paragraphs.forEach(para => {
                     const paraString = para.words
                         .map(word => word.symbols.map(s => s.text).join(''))
                         .join(' ');
-
                     reconstructedText += paraString + "\n\n";
                 });
             });
@@ -185,14 +169,24 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
 /* -------------------- API ROUTES -------------------- */
 
-// LAZY LOAD EXTRA PAGES
+// LAZY LOAD EXTRA PAGES (UPDATED WITH 500 ERROR GUARDS)
 app.get("/api/books/:id/load-pages", async (req, res) => {
     let tempPdfPath = "";
     try {
-        const book = await Book.findById(req.params.id);
-        if (!book) return res.status(404).json({ error: "Book not found" });
+        const { id } = req.params;
+        const book = await Book.findById(id);
 
-        const startPage = book.processedPages + 1;
+        if (!book) {
+            console.error(`[Server] Book ID ${id} not found.`);
+            return res.status(404).json({ error: "Book not found" });
+        }
+
+        // If already done, don't re-process
+        if (book.status === 'completed') {
+            return res.json({ message: "End", addedText: "", status: 'completed' });
+        }
+
+        const startPage = (book.processedPages || 0) + 1;
         const endPage = Math.min(startPage + 4, book.totalPages);
 
         if (startPage > book.totalPages) {
@@ -201,6 +195,7 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
 
         tempPdfPath = path.join(uploadDir, `temp_load_${book._id}.pdf`);
 
+        // Download from Cloudinary if local temp file is missing
         if (!(await fs.pathExists(tempPdfPath))) {
             const response = await axios.get(book.pdfPath, { responseType: 'arraybuffer' });
             await fs.writeFile(tempPdfPath, Buffer.from(response.data));
@@ -218,13 +213,14 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
         const newWordCount = updatedContent.split(/\s+/).filter(w => w.length > 0).length;
         const isFinished = endPage >= book.totalPages;
 
-        const updatedBook = await Book.findByIdAndUpdate(req.params.id, {
+        const updatedBook = await Book.findByIdAndUpdate(id, {
             content: updatedContent,
             processedPages: endPage,
             words: newWordCount,
             status: isFinished ? 'completed' : 'processing'
         }, { new: true });
 
+        // Cleanup temp file only if completely finished
         if (isFinished && await fs.pathExists(tempPdfPath)) {
             await fs.remove(tempPdfPath);
         }
@@ -235,8 +231,8 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
             status: updatedBook.status
         });
     } catch (err) {
-        console.error("Lazy load error:", err.message);
-        res.status(500).json({ error: "Lazy load failed" });
+        console.error("Critical Lazy load error:", err.message);
+        res.status(500).json({ error: "Internal Server Error during pagination", details: err.message });
     }
 });
 
@@ -367,7 +363,6 @@ const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", async () => {
     console.log(`✅ Server running on port ${PORT}`);
     try {
-        // Cleanup local storage on restart
         await fs.emptyDir(uploadDir);
         await fs.emptyDir(coversDir);
     } catch (e) { console.warn("Initial cleanup failed"); }
