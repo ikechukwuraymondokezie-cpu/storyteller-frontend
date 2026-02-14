@@ -8,7 +8,6 @@ const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
 const axios = require("axios");
-
 const vision = require('@google-cloud/vision');
 
 const app = express();
@@ -112,18 +111,17 @@ const formatBook = (book) => ({
 
 /**
  * SMARTER TEXT EXTRACTION (PRE-PROCESSING)
- * Cleans up noise and ensures formatting keywords are on their own lines.
  */
 function smartClean(text) {
     if (!text) return "";
     return text
-        // 1. Join words that were accidentally split by hyphenation at end of lines
+        // 1. Join hyphenated words split at line breaks
         .replace(/(\w)-\s*\n(\w)/g, '$1$2')
-        // 2. Force break BEFORE Chapter/Psalm/Section
-        .replace(/([a-z0-9])\s*(Chapter\s+\d+|Psalm|Section|BOOKS\s+BY|Part)/gi, '$1\n\n$2')
-        // 3. Clean up excessive whitespaces
+        // 2. Force breaks for Structural Keywords
+        .replace(/([a-z0-9])\s*(Chapter\s+\d+|Psalm|Section|BOOKS\s+BY|Part|Lesson)/gi, '$1\n\n$2')
+        // 3. Clean horizontal spacing
         .replace(/[ \t]+/g, ' ')
-        // 4. Standardize paragraph spacing
+        // 4. Uniform paragraph spacing
         .replace(/\n{3,}/g, '\n\n')
         .trim();
 }
@@ -139,9 +137,8 @@ function getPageCount(pdfPath) {
 }
 
 /**
- * IMPROVED GOOGLE OCR
- * Uses documentTextDetection and reconstructs paragraphs word-by-word
- * to prevent the "vertical list" word arrangement.
+ * IMPROVED GOOGLE OCR ENGINE
+ * Uses documentTextDetection to maintain logical paragraph flow.
  */
 async function extractPageTextGoogle(pdfPath, pageNum) {
     if (!visionClient) return "";
@@ -150,38 +147,36 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
     const pageImgFull = `${pageImgBase}.png`;
 
     try {
-        // Convert PDF page to PNG
+        // PDF -> Image
         await new Promise((resolve, reject) => {
             exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
 
-        // Use DOCUMENT_TEXT_DETECTION for better paragraph grouping
+        // OCR with Structural Layout Analysis
         const [result] = await visionClient.documentTextDetection(pageImgFull);
         const fullTextAnnotation = result.fullTextAnnotation;
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
-
         if (!fullTextAnnotation) return "";
 
-        let pageContent = "";
+        let reconstructedText = "";
 
-        // Iterate through structural blocks and paragraphs
+        // Traverse hierarchy: Pages -> Blocks -> Paragraphs -> Words
         fullTextAnnotation.pages.forEach(page => {
             page.blocks.forEach(block => {
                 block.paragraphs.forEach(para => {
-                    // Join words in paragraph with space
-                    const paraText = para.words
+                    const paraString = para.words
                         .map(word => word.symbols.map(s => s.text).join(''))
                         .join(' ');
 
-                    pageContent += paraText + "\n\n";
+                    reconstructedText += paraString + "\n\n";
                 });
             });
         });
 
-        return smartClean(pageContent);
+        return smartClean(reconstructedText);
     } catch (e) {
         console.error(`❌ Google OCR Error on page ${pageNum}:`, e.message);
         return "";
@@ -190,6 +185,7 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
 /* -------------------- API ROUTES -------------------- */
 
+// LAZY LOAD EXTRA PAGES
 app.get("/api/books/:id/load-pages", async (req, res) => {
     let tempPdfPath = "";
     try {
@@ -244,6 +240,7 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
     }
 });
 
+// UPLOAD BOOK
 app.post("/api/books", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -264,6 +261,7 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
 
         res.status(201).json(formatBook(book));
 
+        // Background Processing
         (async () => {
             try {
                 const baseName = path.parse(req.file.filename).name;
@@ -334,7 +332,7 @@ app.delete("/api/books/folders/:name", async (req, res) => {
     } catch { res.status(500).json({ error: "Failed" }); }
 });
 
-/* --- BOOK ROUTES --- */
+/* --- BOOK MANAGEMENT --- */
 app.get("/api/books", async (_, res) => {
     try {
         const books = await Book.find().sort({ createdAt: -1 });
@@ -364,11 +362,12 @@ app.delete("/api/books/:id", async (req, res) => {
     } catch { res.status(500).json({ error: "Failed" }); }
 });
 
-/* --- START --- */
+/* --- START SERVER --- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", async () => {
     console.log(`✅ Server running on port ${PORT}`);
     try {
+        // Cleanup local storage on restart
         await fs.emptyDir(uploadDir);
         await fs.emptyDir(coversDir);
     } catch (e) { console.warn("Initial cleanup failed"); }

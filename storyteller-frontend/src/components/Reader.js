@@ -2,9 +2,9 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import ReactDOM from 'react-dom';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-    ChevronLeft, Loader2, MoreHorizontal, Type, List,
+    ChevronLeft, Loader2, MoreHorizontal, Type,
     RotateCcw, RotateCw, Play, Pause, MessageSquare,
-    Sparkles, Mic2, FileText, Download, Scroll, Share2
+    Sparkles, Mic2, FileText
 } from 'lucide-react';
 
 // --- SKELETON COMPONENT FOR DIGITAL MODE ---
@@ -48,18 +48,15 @@ const Reader = () => {
     const [isPlaying, setIsPlaying] = useState(false);
     const [isDigitalMode, setIsDigitalMode] = useState(false);
     const [viewMode, setViewMode] = useState('reading');
-    const [menuOpen, setMenuOpen] = useState(false);
     const [currentParaIndex, setCurrentParaIndex] = useState(0);
-
     const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
-    const synth = window.speechSynthesis;
 
+    const synth = window.speechSynthesis;
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
-    // --- STREAMLINED ENGINE: TRUST THE BACKEND BLOCKS ---
+    // --- STREAMLINED ENGINE ---
     const visualParagraphs = useMemo(() => {
         if (!book?.content) return [];
-
         const rawBlocks = book.content.split(/\n\s*\n/);
 
         return rawBlocks
@@ -67,7 +64,6 @@ const Reader = () => {
             .filter(block => block.length > 0)
             .map((text, index) => {
                 const isMainTitle = index === 0;
-                // Header detection
                 const isHeader = /^(Chapter|Section|Part|Lesson|Psalm|BOOKS BY|Romans|John)\s+\d+/i.test(text) ||
                     (text.length < 65 && !/[.!?]$/.test(text));
 
@@ -189,10 +185,16 @@ const Reader = () => {
                     <button onClick={() => navigate(-1)} style={styles.backIcon}><ChevronLeft size={28} /></button>
                     <div style={styles.rightActions}>
                         <button style={styles.actionIcon}><Type size={20} /></button>
-                        <button onClick={() => setIsDigitalMode(!isDigitalMode)} style={{ ...styles.actionIcon, backgroundColor: isDigitalMode ? '#4f46e5' : 'transparent', borderRadius: '8px' }}><FileText size={20} /></button>
-                        <button onClick={() => setMenuOpen(true)} style={styles.actionIcon}><MoreHorizontal size={20} /></button>
+                        <button
+                            onClick={() => setIsDigitalMode(!isDigitalMode)}
+                            style={{ ...styles.actionIcon, color: isDigitalMode ? '#4f46e5' : '#fff' }}
+                        >
+                            <FileText size={20} />
+                        </button>
+                        <button style={styles.actionIcon}><MoreHorizontal size={20} /></button>
                     </div>
                 </div>
+                {/* REFINED PILLS SECTION */}
                 <nav style={styles.pillScroll}>
                     <PillButton active={viewMode === 'reading'} onClick={() => setViewMode('reading')} icon={<MessageSquare size={12} />} label="AI Chat" />
                     <PillButton active={viewMode === 'summary'} onClick={() => setViewMode('summary')} icon={<Sparkles size={12} />} label="Summary" />
@@ -226,17 +228,15 @@ const Reader = () => {
                                         }}
                                         style={{
                                             ...styles.paragraphCard,
-                                            // STYLE UPDATES: Bigger size, No bold, Serif body
                                             color: i === currentParaIndex ? '#fff' : (isMainTitle || isHeader ? '#f4f4f5' : '#71717a'),
-                                            fontSize: isMainTitle ? '36px' : (isHeader ? '28px' : '19px'),
-                                            fontWeight: (isMainTitle || isHeader) ? '400' : '400',
-                                            marginBottom: isMainTitle ? '0.8em' : (isHeader ? '1.4em' : '2.4em'),
-                                            lineHeight: (isMainTitle || isHeader) ? '1.2' : '1.7',
+                                            fontSize: isMainTitle ? '36px' : (isHeader ? '28px' : '20px'),
+                                            fontWeight: (isMainTitle || isHeader) ? '700' : '400',
+                                            marginBottom: isMainTitle ? '0.8em' : (isHeader ? '1.2em' : '2.4em'),
+                                            lineHeight: (isMainTitle || isHeader) ? '1.2' : '1.75',
                                             textAlign: (isMainTitle || isHeader) ? 'center' : 'left',
-                                            fontFamily: (isMainTitle || isHeader) ? 'sans-serif' : 'serif',
-                                            letterSpacing: (isMainTitle || isHeader) ? '-0.03em' : 'normal',
-                                            borderTop: (isHeader && i !== 0) ? '1px solid #1c1c1e' : 'none',
-                                            paddingTop: (isHeader && i !== 0) ? '32px' : '0'
+                                            fontFamily: (isMainTitle || isHeader) ? 'system-ui' : 'Georgia, serif',
+                                            paddingTop: (isHeader && i !== 0) ? '40px' : '0',
+                                            borderTop: (isHeader && i !== 0) ? '1px solid #1c1c1e' : 'none'
                                         }}
                                     >
                                         {item.text}
@@ -280,41 +280,62 @@ const Reader = () => {
     );
 };
 
+// --- REFINED PILL COMPONENT ---
 const PillButton = ({ active, onClick, icon, label }) => (
-    <button onClick={onClick} style={{ ...styles.pill, backgroundColor: active ? '#4f46e5' : '#27272a' }}>{icon} {label}</button>
+    <button
+        onClick={onClick}
+        style={{
+            ...styles.pill,
+            backgroundColor: active ? '#4f46e5' : '#1c1c1e',
+            color: active ? '#fff' : '#a1a1aa'
+        }}
+    >
+        {icon}
+        <span style={{ marginLeft: '4px' }}>{label}</span>
+    </button>
 );
 
 const styles = {
     fullscreenCenter: { height: '100vh', backgroundColor: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' },
     container: { position: 'fixed', inset: 0, backgroundColor: '#000', display: 'flex', flexDirection: 'column', zIndex: 9999 },
-    topNav: { paddingTop: '8px' },
-    navRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 12px' },
+    topNav: { padding: '8px 0' },
+    navRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 12px', marginBottom: '8px' },
     backIcon: { background: 'none', border: 'none', color: '#fff', cursor: 'pointer' },
-    rightActions: { display: 'flex', gap: '8px' },
-    actionIcon: { background: 'none', border: 'none', color: '#fff', padding: '4px' },
-    pillScroll: { display: 'flex', gap: '6px', overflowX: 'auto', padding: '6px 16px' },
-    pill: { display: 'flex', alignItems: 'center', gap: '4px', color: '#fff', border: 'none', padding: '3px 8px', borderRadius: '10px', fontSize: '9px', whiteSpace: 'nowrap', fontWeight: '700', textTransform: 'uppercase' },
-    viewerContainer: { flex: 1, overflowY: 'auto' },
+    rightActions: { display: 'flex', gap: '4px' },
+    actionIcon: { background: 'none', border: 'none', color: '#fff', padding: '8px' },
+    pillScroll: { display: 'flex', gap: '8px', overflowX: 'auto', padding: '0 16px', scrollbarWidth: 'none' },
+    pill: {
+        display: 'flex',
+        alignItems: 'center',
+        border: 'none',
+        padding: '6px 12px',
+        borderRadius: '16px',
+        fontSize: '11px',
+        whiteSpace: 'nowrap',
+        fontWeight: '600',
+        transition: 'all 0.2s ease'
+    },
+    viewerContainer: { flex: 1, overflowY: 'auto', scrollBehavior: 'smooth' },
     iframe: { width: '100%', height: '100%', border: 'none' },
-    digitalTextContainer: { padding: '40px 24px 180px', color: '#fff', maxWidth: '600px', margin: '0 auto' },
-    digitalMainTitle: { fontSize: '34px', fontWeight: '900', marginBottom: '8px', lineHeight: '1.2' },
-    digitalBodyText: { fontSize: '18px', lineHeight: '1.7', letterSpacing: '-0.01em', fontFamily: 'serif' },
-    paragraphCard: { marginBottom: '2.2em', cursor: 'pointer', transition: 'color 0.3s ease' },
-    loadingTrigger: { padding: '40px', textAlign: 'center', color: '#71717a' },
-    bottomPlayer: { backgroundColor: '#000', padding: '12px 20px 30px', borderTop: '1px solid #1c1c1e' },
-    progressBase: { height: '3px', backgroundColor: '#27272a', borderRadius: '2px' },
-    progressFill: { height: '100%', backgroundColor: '#4f46e5' },
-    controlRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px' },
-    flagBox: { padding: '6px', backgroundColor: '#1c1c1e', borderRadius: '6px', fontSize: '14px' },
-    mainButtons: { display: 'flex', alignItems: 'center', gap: '20px' },
-    playBtn: { width: '56px', height: '56px', backgroundColor: '#4f46e5', borderRadius: '28px', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', boxShadow: '0 4px 12px rgba(79, 70, 229, 0.4)' },
-    skipBtn: { background: 'none', border: 'none', color: '#fff' },
-    speedPill: { color: '#fff', backgroundColor: '#1c1c1e', padding: '6px 12px', borderRadius: '12px', border: 'none', fontSize: '13px', fontWeight: '500' },
+    digitalTextContainer: { padding: '40px 24px 180px', color: '#fff', maxWidth: '650px', margin: '0 auto' },
+    digitalMainTitle: { fontSize: '34px', fontWeight: '800', marginBottom: '24px', textAlign: 'center' },
+    digitalBodyText: { fontSize: '20px', lineHeight: '1.75', fontFamily: 'Georgia, serif' },
+    paragraphCard: { marginBottom: '2.5em', cursor: 'pointer', transition: 'color 0.4s ease' },
+    loadingTrigger: { padding: '60px', textAlign: 'center', color: '#3f3f46', fontSize: '12px', letterSpacing: '2px' },
+    bottomPlayer: { backgroundColor: '#000', padding: '12px 20px 34px', borderTop: '1px solid #1c1c1e' },
+    progressBase: { height: '2px', backgroundColor: '#1c1c1e', borderRadius: '1px' },
+    progressFill: { height: '100%', backgroundColor: '#4f46e5', transition: 'width 0.3s ease' },
+    controlRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' },
+    flagBox: { width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#1c1c1e', borderRadius: '8px', fontSize: '14px' },
+    mainButtons: { display: 'flex', alignItems: 'center', gap: '24px' },
+    playBtn: { width: '60px', height: '60px', backgroundColor: '#4f46e5', borderRadius: '30px', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' },
+    skipBtn: { background: 'none', border: 'none', color: '#fff', opacity: 0.8 },
+    speedPill: { color: '#a1a1aa', backgroundColor: '#1c1c1e', padding: '6px 12px', borderRadius: '12px', border: 'none', fontSize: '12px', fontWeight: '700' },
 
-    skeletonContainer: { display: 'flex', flexDirection: 'column', gap: '16px' },
-    skeletonHeader: { height: '36px', width: '80%', backgroundColor: '#27272a', borderRadius: '8px' },
-    skeletonSubHeader: { height: '24px', width: '50%', backgroundColor: '#1c1c1e', borderRadius: '6px', marginBottom: '12px' },
-    skeletonPara: { display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' },
+    skeletonContainer: { display: 'flex', flexDirection: 'column', gap: '20px' },
+    skeletonHeader: { height: '40px', width: '70%', backgroundColor: '#1c1c1e', borderRadius: '8px', margin: '0 auto' },
+    skeletonSubHeader: { height: '20px', width: '40%', backgroundColor: '#1c1c1e', borderRadius: '6px', margin: '0 auto 20px' },
+    skeletonPara: { display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '20px' },
     skeletonLine: { height: '14px', backgroundColor: '#1c1c1e', borderRadius: '4px' }
 };
 
