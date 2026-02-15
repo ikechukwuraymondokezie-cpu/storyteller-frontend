@@ -10,8 +10,20 @@ const axios = require('axios');
 const Book = require("../models/Book");
 const router = express.Router();
 
-// Initialize Vision Client
-const visionClient = new vision.ImageAnnotatorClient();
+/* -------------------- GOOGLE VISION CONFIG -------------------- */
+let visionClient;
+try {
+    const credsEnv = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+    if (credsEnv && credsEnv.trim().startsWith('{')) {
+        visionClient = new vision.ImageAnnotatorClient({
+            credentials: JSON.parse(credsEnv)
+        });
+    } else {
+        visionClient = new vision.ImageAnnotatorClient();
+    }
+} catch (e) {
+    console.error("❌ Vision Init Error:", e.message);
+}
 
 // Setup paths for temporary processing
 const pdfDir = path.join(__dirname, "../temp/pdfs");
@@ -24,24 +36,16 @@ const upload = multer({ dest: "temp/uploads/" });
 
 /* ---------------- HELPERS ---------------- */
 
-/**
- * SMARTER TEXT EXTRACTION (PRE-PROCESSING)
- * This fixes the "horrible logic" by forcing breaks where the PDF smashed text together.
- */
 function smartClean(text) {
     if (!text) return "";
     return text
         // 1. Force break BEFORE Chapter/BOOKS BY if it's stuck to a previous sentence
         .replace(/([a-z0-9])\s*(Chapter\s+\d+|Psalm|Section|BOOKS\s+BY|Part|Book|Lesson)/gi, '$1\n\n$2')
-
         // 2. Force break AFTER a title but BEFORE the body text starts
-        // Specifically targets: "Chapter 1 The Prayers of Paul [Space] The authority of..."
         .replace(/(Chapter\s+\d+.*?)\s+(The\s+authority|Because|In\s+the|For\s+this|When\s+we)/gi, '$1\n\n$2')
-
         // 3. Clean up excessive horizontal whitespaces
         .replace(/[ \t]+/g, ' ')
-
-        // 4. Ensure we only use double newlines (not triples or more)
+        // 4. Ensure we only use double newlines
         .replace(/\n{3,}/g, '\n\n');
 }
 
@@ -56,6 +60,7 @@ function getPageCount(pdfPath) {
 }
 
 async function extractPageTextGoogle(pdfPath, pageNum) {
+    if (!visionClient) return "";
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
     const pageImgBase = path.join(coversDir, `google_tmp_${pageNum}_${uniqueId}`);
     const pageImgFull = `${pageImgBase}.png`;
@@ -71,8 +76,6 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
         const text = result.fullTextAnnotation ? result.fullTextAnnotation.text : "";
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
-
-        // Apply the cleaning logic before returning
         return smartClean(text);
     } catch (e) {
         console.error("OCR Error:", e);
@@ -89,7 +92,7 @@ router.get("/:id/load-pages", async (req, res) => {
         const book = await Book.findById(req.params.id);
         if (!book) return res.status(404).json({ error: "Book not found" });
 
-        const startPage = book.processedPages + 1;
+        const startPage = (book.processedPages || 0) + 1;
         const endPage = Math.min(startPage + 4, book.totalPages);
 
         if (startPage > book.totalPages) {
@@ -110,17 +113,17 @@ router.get("/:id/load-pages", async (req, res) => {
 
         const pagesResults = await Promise.all(pagePromises);
         const newText = pagesResults.filter(t => t).join("\n\n");
-        const updatedContent = book.content + "\n\n" + newText;
+        const updatedContent = (book.content || "").trim() + "\n\n" + newText;
         const actualWordCount = updatedContent.split(/\s+/).filter(w => w.length > 0).length;
 
         const updatedBook = await Book.findByIdAndUpdate(req.params.id, {
-            content: updatedContent,
+            content: updatedContent.trim(),
             processedPages: endPage,
             status: endPage >= book.totalPages ? 'completed' : 'processing',
             words: actualWordCount
         }, { new: true });
 
-        if (updatedBook.status === 'completed') {
+        if (updatedBook.status === 'completed' && await fs.pathExists(tempPath)) {
             await fs.remove(tempPath);
         }
 
@@ -141,7 +144,6 @@ router.post("/", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
         const pdfDiskPath = req.file.path;
-
         const totalPages = await getPageCount(pdfDiskPath);
 
         const book = await Book.create({
@@ -149,15 +151,17 @@ router.post("/", upload.single("file"), async (req, res) => {
             pdfPath: "pending",
             cover: "https://via.placeholder.com/300x450?text=Processing...",
             folder: req.body.folder || "All",
-            content: "Scanning first pages...",
+            content: "", // Empty so Frontend Skeleton Loader starts
             totalPages,
             processedPages: 0,
             status: 'processing',
             words: 0
         });
 
+        // Send initial response so UI can move to Reader immediately
         res.status(201).json(book);
 
+        // Background Worker (Cloudinary + OCR)
         (async () => {
             try {
                 const baseName = path.parse(req.file.filename).name;
@@ -181,11 +185,11 @@ router.post("/", upload.single("file"), async (req, res) => {
                 const limit = Math.min(5, totalPages);
                 for (let i = 1; i <= limit; i++) {
                     const text = await extractPageTextGoogle(pdfDiskPath, i);
-                    runningText += text + "\n\n";
+                    if (text) runningText += text + "\n\n";
                     const wordCount = runningText.split(/\s+/).filter(w => w.length > 0).length;
 
                     await Book.findByIdAndUpdate(book._id, {
-                        content: runningText,
+                        content: runningText.trim(),
                         processedPages: i,
                         words: wordCount,
                         status: i >= totalPages ? 'completed' : 'processing'

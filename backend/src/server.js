@@ -8,7 +8,6 @@ const fs = require("fs-extra");
 const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
 const axios = require("axios");
-
 const vision = require('@google-cloud/vision');
 
 const app = express();
@@ -103,34 +102,20 @@ const formatBook = (book) => ({
     ttsRequests: book.ttsRequests,
     words: book.words || 0,
     content: book.content || "",
-    status: book.status || "completed",
+    status: book.status || "processing",
     totalPages: book.totalPages || 0,
     processedPages: book.processedPages || 0,
     summary: book.summary || "",
     createdAt: book.createdAt
 });
 
-/**
- * SMARTER TEXT EXTRACTION (PRE-PROCESSING)
- * This forces newlines where headers like "Chapter 1" or "BOOKS BY" appear 
- * so the frontend can properly split them into separate lines/cards.
- */
 function smartClean(text) {
     if (!text) return "";
     return text
-        // 1. Force break BEFORE Chapter/BOOKS BY if it's preceded by text
         .replace(/([a-z0-9])\s*(Chapter\s+\d+|Psalm|Section|BOOKS\s+BY|Part)/gi, '$1\n\n$2')
-
-        // 2. Force break AFTER a title like "Chapter 1 The Prayers of Paul" 
-        // if it's immediately followed by body text keywords (The, Because, In)
         .replace(/(Chapter\s+\d+.*?)\s+(The\s+authority|Because|In\s+the|For\s+this)/gi, '$1\n\n$2')
-
-        // 3. Force a break before numeric sections like "2. 2 The Law"
         .replace(/([a-z0-9])\s*(\d+\.\s+\d+\s+[A-Z])/g, '$1\n\n$2')
-
-        // 4. Clean up excessive whitespaces/tabs
         .replace(/[ \t]+/g, ' ')
-        // 5. Ensure we only use double newlines (not triples)
         .replace(/\n{3,}/g, '\n\n');
 }
 
@@ -161,8 +146,6 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
         const text = result.fullTextAnnotation ? result.fullTextAnnotation.text : "";
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
-
-        // Apply the Smart Cleaning here before returning to database/frontend
         return smartClean(text);
     } catch (e) {
         console.error(`❌ Google OCR Error on page ${pageNum}:`, e.message);
@@ -172,14 +155,13 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
 /* -------------------- API ROUTES -------------------- */
 
-// LAZY LOAD ADJUSTED
 app.get("/api/books/:id/load-pages", async (req, res) => {
     let tempPdfPath = "";
     try {
         const book = await Book.findById(req.params.id);
         if (!book) return res.status(404).json({ error: "Book not found" });
 
-        const startPage = book.processedPages + 1;
+        const startPage = (book.processedPages || 0) + 1;
         const endPage = Math.min(startPage + 4, book.totalPages);
 
         if (startPage > book.totalPages) {
@@ -201,20 +183,18 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
         const results = await Promise.all(pagePromises);
         const newText = results.filter(t => t).join("\n\n");
 
-        const updatedContent = (book.content || "") + "\n\n" + newText;
+        const updatedContent = (book.content || "").trim() + "\n\n" + newText;
         const newWordCount = updatedContent.split(/\s+/).filter(w => w.length > 0).length;
         const isFinished = endPage >= book.totalPages;
 
         const updatedBook = await Book.findByIdAndUpdate(req.params.id, {
-            content: updatedContent,
+            content: updatedContent.trim(),
             processedPages: endPage,
             words: newWordCount,
             status: isFinished ? 'completed' : 'processing'
         }, { new: true });
 
-        if (isFinished && await fs.pathExists(tempPdfPath)) {
-            await fs.remove(tempPdfPath);
-        }
+        if (isFinished && await fs.pathExists(tempPdfPath)) await fs.remove(tempPdfPath);
 
         res.json({
             addedText: newText,
@@ -227,21 +207,19 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
     }
 });
 
-// UPLOAD ADJUSTED
 app.post("/api/books", upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
         const pdfPath = req.file.path;
         const totalPages = await getPageCount(pdfPath);
-        console.log(`✅ File: ${req.file.originalname} | Total Pages: ${totalPages}`);
 
         const book = await Book.create({
             title: req.body.title || req.file.originalname.replace(/\.[^/.]+$/, ""),
             folder: req.body.folder || "All",
             pdfPath: "pending",
             cover: "https://via.placeholder.com/300x450?text=Processing...",
-            content: "Scanning initial pages...",
+            content: "", // Clean start for the frontend
             totalPages,
             words: 0,
             status: 'processing'
@@ -272,11 +250,12 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
                 const limit = Math.min(5, totalPages);
                 for (let i = 1; i <= limit; i++) {
                     const pageText = await extractPageTextGoogle(pdfPath, i);
-                    runningContent += pageText + "\n\n";
+                    if (pageText) runningContent += pageText + "\n\n";
+
                     const actualWords = runningContent.split(/\s+/).filter(w => w.length > 0).length;
 
                     await Book.findByIdAndUpdate(book._id, {
-                        content: runningContent,
+                        content: runningContent.trim(),
                         processedPages: i,
                         words: actualWords,
                         status: i >= totalPages ? 'completed' : 'processing'
