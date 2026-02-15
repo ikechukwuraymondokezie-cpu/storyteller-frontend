@@ -26,22 +26,23 @@ const upload = multer({ dest: "temp/uploads/" });
 
 /**
  * SMARTER TEXT EXTRACTION (PRE-PROCESSING)
- * Ensures headers are separated and hyphenated words are joined.
+ * This fixes the "horrible logic" by forcing breaks where the PDF smashed text together.
  */
 function smartClean(text) {
     if (!text) return "";
     return text
-        // 1. Join words split by hyphens at the end of a line
-        .replace(/(\w)-\s*\n(\w)/g, '$1$2')
-        // 2. Force break BEFORE Chapter/Psalm/Section/Lesson etc.
+        // 1. Force break BEFORE Chapter/BOOKS BY if it's stuck to a previous sentence
         .replace(/([a-z0-9])\s*(Chapter\s+\d+|Psalm|Section|BOOKS\s+BY|Part|Book|Lesson)/gi, '$1\n\n$2')
-        // 3. Force break AFTER a title but BEFORE body text starts
+
+        // 2. Force break AFTER a title but BEFORE the body text starts
+        // Specifically targets: "Chapter 1 The Prayers of Paul [Space] The authority of..."
         .replace(/(Chapter\s+\d+.*?)\s+(The\s+authority|Because|In\s+the|For\s+this|When\s+we)/gi, '$1\n\n$2')
-        // 4. Clean up excessive horizontal whitespaces
+
+        // 3. Clean up excessive horizontal whitespaces
         .replace(/[ \t]+/g, ' ')
-        // 5. Standardize double newlines
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
+
+        // 4. Ensure we only use double newlines (not triples or more)
+        .replace(/\n{3,}/g, '\n\n');
 }
 
 function getPageCount(pdfPath) {
@@ -54,48 +55,25 @@ function getPageCount(pdfPath) {
     });
 }
 
-/**
- * UPDATED OCR ENGINE
- * Uses documentTextDetection to respect layout and group words into sentences.
- */
 async function extractPageTextGoogle(pdfPath, pageNum) {
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
     const pageImgBase = path.join(coversDir, `google_tmp_${pageNum}_${uniqueId}`);
     const pageImgFull = `${pageImgBase}.png`;
 
     try {
-        // Convert PDF page to Image
         await new Promise((resolve, reject) => {
             exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
 
-        // Use documentTextDetection for structural layout analysis
-        const [result] = await visionClient.documentTextDetection(pageImgFull);
-        const fullTextAnnotation = result.fullTextAnnotation;
+        const [result] = await visionClient.textDetection(pageImgFull);
+        const text = result.fullTextAnnotation ? result.fullTextAnnotation.text : "";
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
 
-        if (!fullTextAnnotation) return "";
-
-        let reconstructedText = "";
-
-        // Loop through the layout hierarchy: Pages -> Blocks -> Paragraphs -> Words
-        fullTextAnnotation.pages.forEach(page => {
-            page.blocks.forEach(block => {
-                block.paragraphs.forEach(para => {
-                    const paraString = para.words
-                        .map(word => word.symbols.map(s => s.text).join(''))
-                        .join(' ');
-
-                    reconstructedText += paraString + "\n\n";
-                });
-            });
-        });
-
-        // Final cleanup of the reconstructed string
-        return smartClean(reconstructedText);
+        // Apply the cleaning logic before returning
+        return smartClean(text);
     } catch (e) {
         console.error("OCR Error:", e);
         return "";
@@ -132,7 +110,7 @@ router.get("/:id/load-pages", async (req, res) => {
 
         const pagesResults = await Promise.all(pagePromises);
         const newText = pagesResults.filter(t => t).join("\n\n");
-        const updatedContent = (book.content || "") + "\n\n" + newText;
+        const updatedContent = book.content + "\n\n" + newText;
         const actualWordCount = updatedContent.split(/\s+/).filter(w => w.length > 0).length;
 
         const updatedBook = await Book.findByIdAndUpdate(req.params.id, {
@@ -171,7 +149,7 @@ router.post("/", upload.single("file"), async (req, res) => {
             pdfPath: "pending",
             cover: "https://via.placeholder.com/300x450?text=Processing...",
             folder: req.body.folder || "All",
-            content: "",
+            content: "Scanning first pages...",
             totalPages,
             processedPages: 0,
             status: 'processing',
@@ -203,8 +181,7 @@ router.post("/", upload.single("file"), async (req, res) => {
                 const limit = Math.min(5, totalPages);
                 for (let i = 1; i <= limit; i++) {
                     const text = await extractPageTextGoogle(pdfDiskPath, i);
-                    if (text) runningText += text + "\n\n";
-
+                    runningText += text + "\n\n";
                     const wordCount = runningText.split(/\s+/).filter(w => w.length > 0).length;
 
                     await Book.findByIdAndUpdate(book._id, {
