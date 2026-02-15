@@ -47,7 +47,7 @@ const Reader = () => {
     const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
 
     const synth = window.speechSynthesis;
-    const BACKEND_URL = "https://storyteller-b1i3.onrender.com";
+    const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
     // --- ENGINE: PARSE BACKEND CONTENT ---
     const visualParagraphs = useMemo(() => {
