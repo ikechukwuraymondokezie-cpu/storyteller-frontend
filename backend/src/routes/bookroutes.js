@@ -39,13 +39,9 @@ const upload = multer({ dest: "temp/uploads/" });
 function smartClean(text) {
     if (!text) return "";
     return text
-        // 1. Force break BEFORE Chapter/BOOKS BY if it's stuck to a previous sentence
         .replace(/([a-z0-9])\s*(Chapter\s+\d+|Psalm|Section|BOOKS\s+BY|Part|Book|Lesson)/gi, '$1\n\n$2')
-        // 2. Force break AFTER a title but BEFORE the body text starts
         .replace(/(Chapter\s+\d+.*?)\s+(The\s+authority|Because|In\s+the|For\s+this|When\s+we)/gi, '$1\n\n$2')
-        // 3. Clean up excessive horizontal whitespaces
         .replace(/[ \t]+/g, ' ')
-        // 4. Ensure we only use double newlines
         .replace(/\n{3,}/g, '\n\n');
 }
 
@@ -59,6 +55,10 @@ function getPageCount(pdfPath) {
     });
 }
 
+/**
+ * UPDATED: Uses documentTextDetection and coordinate sorting
+ * to prevent "Scattered" words.
+ */
 async function extractPageTextGoogle(pdfPath, pageNum) {
     if (!visionClient) return "";
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
@@ -66,17 +66,47 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
     const pageImgFull = `${pageImgBase}.png`;
 
     try {
+        // Convert PDF page to Image
         await new Promise((resolve, reject) => {
-            exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
+            exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -r 300 -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
 
-        const [result] = await visionClient.textDetection(pageImgFull);
-        const text = result.fullTextAnnotation ? result.fullTextAnnotation.text : "";
+        // Use documentTextDetection for rich layout data
+        const [result] = await visionClient.documentTextDetection(pageImgFull);
+        const fullAnnotation = result.fullTextAnnotation;
+        if (!fullAnnotation) return "";
+
+        let pageBlocks = [];
+
+        // Extract blocks with their bounding box coordinates
+        fullAnnotation.pages.forEach(page => {
+            page.blocks.forEach(block => {
+                const vertices = block.boundingBox.vertices;
+                const yCoord = vertices[0].y; // Top-most point
+                const xCoord = vertices[0].x; // Left-most point
+
+                const blockText = block.paragraphs.map(para =>
+                    para.words.map(word =>
+                        word.symbols.map(s => s.text).join('')
+                    ).join(' ')
+                ).join('\n');
+
+                pageBlocks.push({ text: blockText, x: xCoord, y: yCoord });
+            });
+        });
+
+        // SORT BLOCKS: Top-to-Bottom (y), then Left-to-Right (x)
+        const orderedText = pageBlocks
+            .sort((a, b) => (a.y - b.y) || (a.x - b.x))
+            .map(b => b.text)
+            .join('\n\n');
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
-        return smartClean(text);
+
+        // Final clean and return
+        return smartClean(orderedText);
     } catch (e) {
         console.error("OCR Error:", e);
         return "";
@@ -151,14 +181,13 @@ router.post("/", upload.single("file"), async (req, res) => {
             pdfPath: "pending",
             cover: "https://via.placeholder.com/300x450?text=Processing...",
             folder: req.body.folder || "All",
-            content: "", // Empty so Frontend Skeleton Loader starts
+            content: "",
             totalPages,
             processedPages: 0,
             status: 'processing',
             words: 0
         });
 
-        // Send initial response so UI can move to Reader immediately
         res.status(201).json(book);
 
         // Background Worker (Cloudinary + OCR)
@@ -167,6 +196,7 @@ router.post("/", upload.single("file"), async (req, res) => {
                 const baseName = path.parse(req.file.filename).name;
                 const outputPrefix = path.join(coversDir, baseName);
 
+                // IMPORTANT: Upload PDF first so URL is available for Reader immediately
                 const [cloudUrl, coverUrl] = await Promise.all([
                     cloudinary.uploader.upload(pdfDiskPath, { folder: "storyteller_pdfs", resource_type: "raw" }).then(r => r.secure_url),
                     new Promise((resolve) => {

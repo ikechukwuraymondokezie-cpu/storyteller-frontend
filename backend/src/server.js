@@ -20,7 +20,7 @@ try {
         visionClient = new vision.ImageAnnotatorClient({
             credentials: JSON.parse(credsEnv)
         });
-        console.log("✅ Google Vision Client Initialized");
+        console.log("✅ Google Vision Client Initialized (Structured Mode)");
     } else {
         console.warn("⚠️ GOOGLE_APPLICATION_CREDENTIALS_JSON missing or invalid");
     }
@@ -129,6 +129,7 @@ function getPageCount(pdfPath) {
     });
 }
 
+// UPDATED: OCR with Coordinate sorting
 async function extractPageTextGoogle(pdfPath, pageNum) {
     if (!visionClient) return "";
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
@@ -137,16 +138,35 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
     try {
         await new Promise((resolve, reject) => {
-            exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
+            exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -r 300 -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
 
-        const [result] = await visionClient.textDetection(pageImgFull);
-        const text = result.fullTextAnnotation ? result.fullTextAnnotation.text : "";
+        const [result] = await visionClient.documentTextDetection(pageImgFull);
+        const fullAnnotation = result.fullTextAnnotation;
+        if (!fullAnnotation) return "";
+
+        let pageBlocks = [];
+        fullAnnotation.pages.forEach(page => {
+            page.blocks.forEach(block => {
+                const yCoord = block.boundingBox.vertices[0].y;
+                const xCoord = block.boundingBox.vertices[0].x;
+                const blockText = block.paragraphs.map(p =>
+                    p.words.map(w => w.symbols.map(s => s.text).join('')).join(' ')
+                ).join('\n');
+                pageBlocks.push({ text: blockText, x: xCoord, y: yCoord });
+            });
+        });
+
+        // Re-sort to fix the "scattered" words issue
+        const orderedText = pageBlocks
+            .sort((a, b) => (a.y - b.y) || (a.x - b.x))
+            .map(b => b.text)
+            .join('\n\n');
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
-        return smartClean(text);
+        return smartClean(orderedText);
     } catch (e) {
         console.error(`❌ Google OCR Error on page ${pageNum}:`, e.message);
         return "";
@@ -169,7 +189,6 @@ app.get("/api/books/:id/load-pages", async (req, res) => {
         }
 
         tempPdfPath = path.join(uploadDir, `temp_load_${book._id}.pdf`);
-
         if (!(await fs.pathExists(tempPdfPath))) {
             const response = await axios.get(book.pdfPath, { responseType: 'arraybuffer' });
             await fs.writeFile(tempPdfPath, Buffer.from(response.data));
@@ -219,7 +238,7 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
             folder: req.body.folder || "All",
             pdfPath: "pending",
             cover: "https://via.placeholder.com/300x450?text=Processing...",
-            content: "", // Clean start for the frontend
+            content: "",
             totalPages,
             words: 0,
             status: 'processing'
@@ -229,29 +248,30 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
 
         (async () => {
             try {
+                // 1. Upload to Cloudinary immediately so PDF viewer works
+                const pdfRes = await cloudinary.uploader.upload(pdfPath, { folder: "storyteller_pdfs", resource_type: "raw" });
+
                 const baseName = path.parse(req.file.filename).name;
                 const outputPrefix = path.join(coversDir, baseName);
 
-                const [pdfUrl, coverUrl] = await Promise.all([
-                    cloudinary.uploader.upload(pdfPath, { folder: "storyteller_pdfs", resource_type: "raw" }).then(r => r.secure_url),
-                    new Promise((resolve) => {
-                        exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfPath}" "${outputPrefix}"`, async (err) => {
-                            if (err) return resolve(null);
-                            const uploadRes = await cloudinary.uploader.upload(`${outputPrefix}.png`, { folder: "storyteller_covers" });
-                            await fs.remove(`${outputPrefix}.png`);
-                            resolve(uploadRes.secure_url);
-                        });
-                    })
-                ]);
+                // 2. Extract Cover
+                const coverUrl = await new Promise((resolve) => {
+                    exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfPath}" "${outputPrefix}"`, async (err) => {
+                        if (err) return resolve(null);
+                        const uploadRes = await cloudinary.uploader.upload(`${outputPrefix}.png`, { folder: "storyteller_covers" });
+                        await fs.remove(`${outputPrefix}.png`);
+                        resolve(uploadRes.secure_url);
+                    });
+                });
 
-                await Book.findByIdAndUpdate(book._id, { pdfPath: pdfUrl, cover: coverUrl });
+                await Book.findByIdAndUpdate(book._id, { pdfPath: pdfRes.secure_url, cover: coverUrl });
 
+                // 3. OCR Batch
                 let runningContent = "";
                 const limit = Math.min(5, totalPages);
                 for (let i = 1; i <= limit; i++) {
                     const pageText = await extractPageTextGoogle(pdfPath, i);
                     if (pageText) runningContent += pageText + "\n\n";
-
                     const actualWords = runningContent.split(/\s+/).filter(w => w.length > 0).length;
 
                     await Book.findByIdAndUpdate(book._id, {
@@ -263,7 +283,6 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
                 }
 
                 if (await fs.pathExists(pdfPath)) await fs.remove(pdfPath);
-                console.log(`✅ Initial batch complete for: ${book.title}`);
             } catch (bgErr) {
                 console.error("BG Worker Error:", bgErr.message);
             }
@@ -275,7 +294,7 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
     }
 });
 
-/* --- OTHER ROUTES --- */
+/* --- OTHER ROUTES (RESTORED) --- */
 app.get("/api/books/folders", async (_, res) => {
     try {
         const folders = await Folder.find().sort({ name: 1 });
