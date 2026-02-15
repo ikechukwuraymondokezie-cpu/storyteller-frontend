@@ -41,15 +41,15 @@ const Reader = () => {
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
-    const [isDigitalMode, setIsDigitalMode] = useState(true); // Default to digital for best experience
+    const [isDigitalMode, setIsDigitalMode] = useState(true);
     const [viewMode, setViewMode] = useState('reading');
     const [currentParaIndex, setCurrentParaIndex] = useState(0);
     const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
 
     const synth = window.speechSynthesis;
+    // UPDATED BACKEND URL
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
-    // --- ENGINE: PARSE BACKEND CONTENT ---
     const visualParagraphs = useMemo(() => {
         if (!book?.content) return [];
         return book.content.split(/\n\s*\n/)
@@ -62,7 +62,7 @@ const Reader = () => {
 
                 return {
                     text,
-                    ttsText: text.replace(/(\d+[\.:]\s?)/g, '$1... '), // Natural pause for verse numbers
+                    ttsText: text.replace(/(\d+[\.:]\s?)/g, '$1... '),
                     type: isMainTitle ? 'mainTitle' : (isHeader ? 'header' : 'body')
                 };
             });
@@ -73,6 +73,7 @@ const Reader = () => {
         setLoadingMore(true);
         try {
             const response = await fetch(`${BACKEND_URL}/api/books/${id}/load-pages`);
+            if (!response.ok) throw new Error('Failed to load more pages');
             const data = await response.json();
             if (data.addedText) {
                 setBook(prev => ({
@@ -123,17 +124,30 @@ const Reader = () => {
         const fetchBook = async () => {
             try {
                 const response = await fetch(`${BACKEND_URL}/api/books/${id}`);
+
+                // --- ROBUST JSON CHECK ---
+                const contentType = response.headers.get("content-type");
+                if (!response.ok || !contentType || !contentType.includes("application/json")) {
+                    throw new Error("Backend not returning JSON. Check routes.");
+                }
+
                 const data = await response.json();
                 setBook(data);
                 if (data.status === 'processing') {
                     pollInterval = setInterval(async () => {
                         const res = await fetch(`${BACKEND_URL}/api/books/${id}`);
-                        const updated = await res.json();
-                        setBook(updated);
-                        if (updated.status === 'completed') clearInterval(pollInterval);
+                        if (res.ok) {
+                            const updated = await res.json();
+                            setBook(updated);
+                            if (updated.status === 'completed') clearInterval(pollInterval);
+                        }
                     }, 5000);
                 }
-            } catch (err) { console.error(err); } finally { setLoading(false); }
+            } catch (err) {
+                console.error("Fetch error:", err);
+            } finally {
+                setLoading(false);
+            }
         };
         fetchBook();
         return () => { clearInterval(pollInterval); synth.cancel(); };
@@ -172,10 +186,11 @@ const Reader = () => {
                         <button style={styles.actionIcon}><MoreHorizontal size={20} /></button>
                     </div>
                 </div>
+                {/* --- REDUCED SIZE PILLS --- */}
                 <nav style={styles.pillScroll}>
-                    <PillButton active={viewMode === 'reading'} onClick={() => setViewMode('reading')} icon={<MessageSquare size={11} />} label="Reader" />
-                    <PillButton active={viewMode === 'summary'} onClick={() => setViewMode('summary')} icon={<Sparkles size={11} />} label="AI Summary" />
-                    <PillButton icon={<Mic2 size={11} />} label="Podcast" />
+                    <PillButton active={viewMode === 'reading'} onClick={() => setViewMode('reading')} icon={<MessageSquare size={10} />} label="Reader" />
+                    <PillButton active={viewMode === 'summary'} onClick={() => setViewMode('summary')} icon={<Sparkles size={10} />} label="Summary" />
+                    <PillButton icon={<Mic2 size={10} />} label="Podcast" />
                 </nav>
             </header>
 
@@ -183,7 +198,7 @@ const Reader = () => {
                 {viewMode === 'summary' ? (
                     <div style={styles.digitalTextContainer}>
                         <h1 style={styles.digitalMainTitle}>Executive Summary</h1>
-                        <p style={styles.digitalBodyText}>{book?.summary || "Analyzing document themes and key insights..."}</p>
+                        <p style={styles.digitalBodyText}>{book?.summary || "Analyzing document themes..."}</p>
                     </div>
                 ) : isDigitalMode ? (
                     <div style={styles.digitalTextContainer}>
@@ -259,13 +274,13 @@ const PillButton = ({ active, onClick, icon, label }) => (
 const styles = {
     fullscreenCenter: { height: '100vh', backgroundColor: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' },
     container: { position: 'fixed', inset: 0, backgroundColor: '#000', display: 'flex', flexDirection: 'column', zIndex: 9999 },
-    topNav: { paddingTop: '12px', backgroundColor: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(10px)' },
+    topNav: { paddingTop: '10px', backgroundColor: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(10px)' },
     navRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 16px' },
     backIcon: { background: 'none', border: 'none', color: '#fff', cursor: 'pointer' },
     rightActions: { display: 'flex', gap: '12px' },
     actionIcon: { background: 'none', border: 'none', color: '#fff', padding: '6px' },
-    pillScroll: { display: 'flex', gap: '8px', overflowX: 'auto', padding: '12px 16px' },
-    pill: { display: 'flex', alignItems: 'center', gap: '6px', color: '#fff', padding: '5px 12px', borderRadius: '20px', fontSize: '11px', whiteSpace: 'nowrap', fontWeight: '600', transition: 'all 0.2s' },
+    pillScroll: { display: 'flex', gap: '6px', overflowX: 'auto', padding: '8px 16px' },
+    pill: { display: 'flex', alignItems: 'center', gap: '4px', color: '#fff', padding: '4px 10px', borderRadius: '16px', fontSize: '10px', whiteSpace: 'nowrap', fontWeight: '600', transition: 'all 0.2s' },
     viewerContainer: { flex: 1, overflowY: 'auto', backgroundColor: '#000' },
     iframe: { width: '100%', height: '100%', border: 'none' },
     digitalTextContainer: { padding: '20px 24px 200px', color: '#fff', maxWidth: '650px', margin: '0 auto' },
