@@ -7,9 +7,6 @@ import {
     Sparkles, Mic2, FileText
 } from 'lucide-react';
 
-// Import the new modular component
-import ActionSheet from './ActionSheet';
-
 // --- SKELETON COMPONENT ---
 const SkeletonLoader = () => (
     <div style={styles.skeletonContainer}>
@@ -50,14 +47,13 @@ const Reader = () => {
     const [currentParaIndex, setCurrentParaIndex] = useState(0);
     const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
 
-    // UI State for the Action Sheet
-    const [isSheetOpen, setIsSheetOpen] = useState(false);
-
     const synth = window.speechSynthesis;
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
 
+    /* --- PATH RESOLVER (Fixed for Cloudinary) --- */
     const finalPdfPath = useMemo(() => {
         if (!book?.url) return null;
+        // Logic matched from Storyteller.js
         return book.url.startsWith("http")
             ? book.url
             : `${BACKEND_URL}${book.url}`;
@@ -80,13 +76,6 @@ const Reader = () => {
                 };
             });
     }, [book?.content]);
-
-    // Derived chapters for the Table of Contents
-    const chapters = useMemo(() => {
-        return visualParagraphs
-            .map((para, index) => ({ ...para, index }))
-            .filter(item => item.type === 'header' || item.type === 'mainTitle');
-    }, [visualParagraphs]);
 
     const loadMorePages = async () => {
         if (loadingMore || !book || book.status === 'completed') return;
@@ -137,13 +126,6 @@ const Reader = () => {
 
         paragraphRefs.current[index]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         synth.speak(utterance);
-    };
-
-    const handleSelectChapter = (index) => {
-        resumeOffsetRef.current = 0;
-        setCurrentParaIndex(index);
-        paragraphRefs.current[index]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        if (isPlayingRef.current) speak(index);
     };
 
     useEffect(() => {
@@ -205,8 +187,7 @@ const Reader = () => {
                             style={{ ...styles.actionIcon, color: isDigitalMode ? '#4f46e5' : '#fff' }}>
                             <FileText size={18} />
                         </button>
-                        {/* TRIGGER FOR ACTION SHEET */}
-                        <button onClick={() => setIsSheetOpen(true)} style={styles.actionIcon}><MoreHorizontal size={18} /></button>
+                        <button style={styles.actionIcon}><MoreHorizontal size={18} /></button>
                     </div>
                 </div>
 
@@ -253,6 +234,7 @@ const Reader = () => {
                         </div>
                     </div>
                 ) : (
+                    /* FIXED: Using finalPdfPath with improved embed parameters */
                     <iframe
                         src={`${finalPdfPath}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`}
                         style={styles.iframe}
@@ -288,16 +270,6 @@ const Reader = () => {
                     <button onClick={() => setPlaybackSpeed(s => s >= 2 ? 0.75 : s + 0.25)} style={styles.speedPill}>{playbackSpeed}x</button>
                 </div>
             </footer>
-
-            {/* ACTION SHEET COMPONENT */}
-            <ActionSheet
-                isOpen={isSheetOpen}
-                onClose={() => setIsSheetOpen(false)}
-                book={book}
-                chapters={chapters}
-                currentParaIndex={currentParaIndex}
-                onSelectChapter={handleSelectChapter}
-            />
         </div>,
         document.body
     );
@@ -311,7 +283,7 @@ const PillButton = ({ active, onClick, icon, label }) => (
             backgroundColor: active ? '#4f46e5' : '#1c1c1e',
             border: active ? '1px solid #6366f1' : '1px solid #27272a',
             padding: '4px 10px',
-            height: '28px' // Kept small per request
+            height: '28px'
         }}
     >
         {icon} <span style={{ fontSize: '11px', fontWeight: '600' }}>{label}</span>
@@ -319,5 +291,36 @@ const PillButton = ({ active, onClick, icon, label }) => (
 );
 
 const styles = {
-    // ... all existing styles remain the same
+    fullscreenCenter: { height: '100vh', backgroundColor: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' },
+    container: { position: 'fixed', inset: 0, backgroundColor: '#000', display: 'flex', flexDirection: 'column', zIndex: 9999 },
+    topNav: { paddingTop: '8px', backgroundColor: 'rgba(0,0,0,0.9)', backdropFilter: 'blur(10px)' },
+    navRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 16px', marginBottom: '4px' },
+    backIcon: { background: 'none', border: 'none', color: '#fff', cursor: 'pointer' },
+    rightActions: { display: 'flex', gap: '10px' },
+    actionIcon: { background: 'none', border: 'none', color: '#fff', padding: '4px' },
+    pillScroll: { display: 'flex', gap: '8px', overflowX: 'auto', padding: '6px 16px', scrollbarWidth: 'none' },
+    pill: { display: 'flex', alignItems: 'center', gap: '6px', color: '#fff', borderRadius: '14px', whiteSpace: 'nowrap', transition: 'all 0.2s', cursor: 'pointer' },
+    viewerContainer: { flex: 1, overflowY: 'auto', backgroundColor: '#000' },
+    iframe: { width: '100%', height: '100%', border: 'none', display: 'block' },
+    digitalTextContainer: { padding: '20px 24px 200px', color: '#fff', maxWidth: '650px', margin: '0 auto' },
+    digitalMainTitle: { fontSize: '28px', fontWeight: '900', marginBottom: '16px', lineHeight: '1.2' },
+    digitalBodyText: { fontSize: '17px', lineHeight: '1.7', fontFamily: 'serif' },
+    paragraphCard: { marginBottom: '1.5em', cursor: 'pointer', transition: 'all 0.3s ease', lineHeight: '1.6' },
+    loadingTrigger: { padding: '40px', textAlign: 'center', color: '#3f3f46', fontSize: '13px' },
+    bottomPlayer: { backgroundColor: '#09090b', padding: '12px 24px 30px', borderTop: '1px solid #18181b' },
+    progressBase: { height: '3px', backgroundColor: '#18181b', borderRadius: '2px', overflow: 'hidden' },
+    progressFill: { height: '100%', backgroundColor: '#4f46e5', transition: 'width 0.4s ease' },
+    controlRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px' },
+    flagBox: { width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#18181b', borderRadius: '8px', fontSize: '16px' },
+    mainButtons: { display: 'flex', alignItems: 'center', gap: '28px' },
+    playBtn: { width: '48px', height: '48px', backgroundColor: '#4f46e5', borderRadius: '24px', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', boxShadow: '0 4px 12px rgba(79, 70, 229, 0.4)' },
+    skipBtn: { background: 'none', border: 'none', color: '#a1a1aa' },
+    speedPill: { color: '#fff', backgroundColor: '#18181b', padding: '5px 10px', borderRadius: '6px', border: 'none', fontSize: '12px', fontWeight: '700' },
+    skeletonContainer: { display: 'flex', flexDirection: 'column', gap: '20px' },
+    skeletonHeader: { height: '28px', width: '70%', backgroundColor: '#18181b', borderRadius: '6px' },
+    skeletonSubHeader: { height: '16px', width: '40%', backgroundColor: '#09090b', borderRadius: '4px' },
+    skeletonPara: { display: 'flex', flexDirection: 'column', gap: '10px' },
+    skeletonLine: { height: '10px', backgroundColor: '#18181b', borderRadius: '3px' }
 };
+
+export default Reader;
