@@ -67,8 +67,11 @@ const Reader = () => {
             .filter(block => block.length > 0)
             .map((text, index) => {
                 const isMainTitle = index === 0 && text.length < 100;
-                const isHeader = /^(Chapter|Section|Part|Lesson|Psalm|BOOKS BY|Romans|John|The)\s+\d+/i.test(text) ||
-                    (text.length < 50 && !/[.!?]$/.test(text));
+
+                // STRICTOR TOC LOGIC:
+                // Must be short (under 50 chars) AND NOT end in standard sentence punctuation
+                const isHeader = (text.length < 50 && !/[.!?]$/.test(text)) ||
+                    /^(Chapter|Section|Part|Lesson)\s+\d+/i.test(text);
 
                 return {
                     text,
@@ -238,7 +241,7 @@ const Reader = () => {
                         </div>
                     </div>
                 ) : (
-                    <iframe src={`${finalPdfPath}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`} style={styles.iframe} title="PDF Viewer" frameBorder="0" />
+                    <iframe src={finalPdfPath} style={styles.iframe} title="PDF Viewer" frameBorder="0" />
                 )}
             </main>
 
@@ -285,8 +288,6 @@ const PillButton = ({ active, onClick, icon, label }) => (
         ...styles.pill,
         backgroundColor: active ? '#4f46e5' : '#1c1c1e',
         border: active ? '1px solid #6366f1' : '1px solid #27272a',
-        padding: '4px 10px',
-        height: '28px'
     }}>
         {icon} <span style={{ fontSize: '11px', fontWeight: '600' }}>{label}</span>
     </button>
@@ -301,7 +302,18 @@ const styles = {
     rightActions: { display: 'flex', gap: '10px' },
     actionIcon: { background: 'none', border: 'none', color: '#fff', padding: '4px' },
     pillScroll: { display: 'flex', gap: '8px', overflowX: 'auto', padding: '6px 16px', scrollbarWidth: 'none' },
-    pill: { display: 'flex', alignItems: 'center', gap: '6px', color: '#fff', borderRadius: '14px', whiteSpace: 'nowrap', transition: 'all 0.2s', cursor: 'pointer', border: 'none' },
+    pill: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        color: '#fff',
+        borderRadius: '20px',
+        whiteSpace: 'nowrap',
+        transition: 'all 0.2s',
+        cursor: 'pointer',
+        padding: '3px 10px', // Reduced vertical padding to shrink pill
+        height: '26px'        // Explicit height reduction
+    },
     viewerContainer: { flex: 1, overflowY: 'auto', backgroundColor: '#000' },
     iframe: { width: '100%', height: '100%', border: 'none', display: 'block' },
     digitalTextContainer: { padding: '20px 24px 200px', color: '#fff', maxWidth: '650px', margin: '0 auto' },
