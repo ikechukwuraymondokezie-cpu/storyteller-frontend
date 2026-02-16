@@ -7,6 +7,9 @@ import {
     Sparkles, Mic2, FileText
 } from 'lucide-react';
 
+// Import the modular component
+import ActionSheet from './Asreader';
+
 // --- SKELETON COMPONENT ---
 const SkeletonLoader = () => (
     <div style={styles.skeletonContainer}>
@@ -42,14 +45,23 @@ const Reader = () => {
     const [loadingMore, setLoadingMore] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
 
-    // Default to PDF mode
     const [isDigitalMode, setIsDigitalMode] = useState(false);
     const [viewMode, setViewMode] = useState('reading');
     const [currentParaIndex, setCurrentParaIndex] = useState(0);
     const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
 
+    const [isSheetOpen, setIsSheetOpen] = useState(false);
+
     const synth = window.speechSynthesis;
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
+
+    // --- PDF FIX: USES GOOGLE VIEWER TO FORCE RENDER ON UI ---
+    const finalPdfPath = useMemo(() => {
+        if (!book?.url) return null;
+        const rawUrl = book.url.startsWith("http") ? book.url : `${BACKEND_URL}${book.url}`;
+        // This ensures the PDF opens immediately in the frame instead of showing a download button
+        return `https://docs.google.com/viewer?url=${encodeURIComponent(rawUrl)}&embedded=true`;
+    }, [book?.url]);
 
     const visualParagraphs = useMemo(() => {
         if (!book?.content) return [];
@@ -58,8 +70,11 @@ const Reader = () => {
             .filter(block => block.length > 0)
             .map((text, index) => {
                 const isMainTitle = index === 0 && text.length < 100;
-                const isHeader = /^(Chapter|Section|Part|Lesson|Psalm|BOOKS BY|Romans|John|The)\s+\d+/i.test(text) ||
-                    (text.length < 50 && !/[.!?]$/.test(text));
+
+                // STRICTOR TOC LOGIC: 
+                // Ignore strings ending in periods/punctuation to avoid "random stuff"
+                const isHeader = (text.length < 55 && !/[.!?]$/.test(text)) ||
+                    /^(Chapter|Section|Part|Lesson|Psalm)\s+\d+/i.test(text);
 
                 return {
                     text,
@@ -68,6 +83,12 @@ const Reader = () => {
                 };
             });
     }, [book?.content]);
+
+    const chapters = useMemo(() => {
+        return visualParagraphs
+            .map((para, index) => ({ ...para, index }))
+            .filter(item => item.type === 'header' || item.type === 'mainTitle');
+    }, [visualParagraphs]);
 
     const loadMorePages = async () => {
         if (loadingMore || !book || book.status === 'completed') return;
@@ -93,31 +114,34 @@ const Reader = () => {
             isPlayingRef.current = false;
             return;
         }
-
         synth.cancel();
         setCurrentParaIndex(index);
-
         const utterance = new SpeechSynthesisUtterance(visualParagraphs[index].ttsText.slice(offset));
         utterance.rate = playbackSpeed;
         const voices = synth.getVoices();
         utterance.voice = voices.find(v => v.name.includes("Google US English")) || voices[0];
-
         utterance.onboundary = (event) => {
             if (event.name === 'word') {
                 resumeOffsetRef.current = offset + event.charIndex;
                 if (index >= visualParagraphs.length - 2) loadMorePages();
             }
         };
-
         utterance.onend = () => {
             if (isPlayingRef.current) {
                 resumeOffsetRef.current = 0;
                 speak(index + 1);
             }
         };
-
         paragraphRefs.current[index]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
         synth.speak(utterance);
+    };
+
+    const handleSelectChapter = (index) => {
+        resumeOffsetRef.current = 0;
+        setCurrentParaIndex(index);
+        paragraphRefs.current[index]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (isPlayingRef.current) speak(index);
+        setIsSheetOpen(false);
     };
 
     useEffect(() => {
@@ -127,7 +151,6 @@ const Reader = () => {
                 const response = await fetch(`${BACKEND_URL}/api/books/${id}`);
                 const data = await response.json();
                 setBook(data);
-
                 if (data.status === 'processing') {
                     pollInterval = setInterval(async () => {
                         const res = await fetch(`${BACKEND_URL}/api/books/${id}`);
@@ -138,11 +161,7 @@ const Reader = () => {
                         }
                     }, 5000);
                 }
-            } catch (err) {
-                console.error("Fetch error:", err);
-            } finally {
-                setLoading(false);
-            }
+            } catch (err) { console.error("Fetch error:", err); } finally { setLoading(false); }
         };
         fetchBook();
         return () => { clearInterval(pollInterval); synth.cancel(); };
@@ -179,27 +198,13 @@ const Reader = () => {
                             style={{ ...styles.actionIcon, color: isDigitalMode ? '#4f46e5' : '#fff' }}>
                             <FileText size={18} />
                         </button>
-                        <button style={styles.actionIcon}><MoreHorizontal size={18} /></button>
+                        <button onClick={() => setIsSheetOpen(true)} style={styles.actionIcon}><MoreHorizontal size={18} /></button>
                     </div>
                 </div>
-
                 <nav style={styles.pillScroll}>
-                    <PillButton
-                        active={viewMode === 'reading'}
-                        onClick={() => setViewMode('reading')}
-                        icon={<MessageSquare size={12} />}
-                        label="Reader"
-                    />
-                    <PillButton
-                        active={viewMode === 'summary'}
-                        onClick={() => setViewMode('summary')}
-                        icon={<Sparkles size={12} />}
-                        label="Summary"
-                    />
-                    <PillButton
-                        icon={<Mic2 size={12} />}
-                        label="Podcast"
-                    />
+                    <PillButton active={viewMode === 'reading'} onClick={() => setViewMode('reading')} icon={<MessageSquare size={12} />} label="Reader" />
+                    <PillButton active={viewMode === 'summary'} onClick={() => setViewMode('summary')} icon={<Sparkles size={12} />} label="Summary" />
+                    <PillButton icon={<Mic2 size={12} />} label="Podcast" />
                 </nav>
             </header>
 
@@ -239,13 +244,7 @@ const Reader = () => {
                         </div>
                     </div>
                 ) : (
-                    /* FIXED: Native PDF Browser Viewer for Cloudinary Support */
-                    <iframe
-                        src={`${book?.pdfPath}#view=FitH`}
-                        style={styles.iframe}
-                        title="PDF Viewer"
-                        frameBorder="0"
-                    />
+                    <iframe src={finalPdfPath} style={styles.iframe} title="PDF Viewer" frameBorder="0" />
                 )}
             </main>
 
@@ -261,11 +260,9 @@ const Reader = () => {
                             const prev = Math.max(0, currentParaIndex - 1);
                             if (isPlayingRef.current) speak(prev); else setCurrentParaIndex(prev);
                         }}><RotateCcw size={20} /></button>
-
                         <button onClick={handleTogglePlay} style={styles.playBtn}>
                             {isPlaying ? <Pause size={22} fill="white" /> : <Play size={22} fill="white" style={{ marginLeft: 3 }} />}
                         </button>
-
                         <button style={styles.skipBtn} onClick={() => {
                             resumeOffsetRef.current = 0;
                             const next = Math.min(visualParagraphs.length - 1, currentParaIndex + 1);
@@ -275,23 +272,26 @@ const Reader = () => {
                     <button onClick={() => setPlaybackSpeed(s => s >= 2 ? 0.75 : s + 0.25)} style={styles.speedPill}>{playbackSpeed}x</button>
                 </div>
             </footer>
+
+            <ActionSheet
+                isOpen={isSheetOpen}
+                onClose={() => setIsSheetOpen(false)}
+                book={book}
+                chapters={chapters}
+                currentParaIndex={currentParaIndex}
+                onSelectChapter={handleSelectChapter}
+            />
         </div>,
         document.body
     );
 };
 
-// --- UPDATED PILL COMPONENT (SMALLER) ---
 const PillButton = ({ active, onClick, icon, label }) => (
-    <button
-        onClick={onClick}
-        style={{
-            ...styles.pill,
-            backgroundColor: active ? '#4f46e5' : '#1c1c1e',
-            border: active ? '1px solid #6366f1' : '1px solid #27272a',
-            padding: '4px 10px', // Smaller padding
-            height: '28px'       // Fixed smaller height
-        }}
-    >
+    <button onClick={onClick} style={{
+        ...styles.pill,
+        backgroundColor: active ? '#4f46e5' : '#1c1c1e',
+        border: active ? '1px solid #6366f1' : '1px solid #27272a',
+    }}>
         {icon} <span style={{ fontSize: '11px', fontWeight: '600' }}>{label}</span>
     </button>
 );
@@ -305,7 +305,18 @@ const styles = {
     rightActions: { display: 'flex', gap: '10px' },
     actionIcon: { background: 'none', border: 'none', color: '#fff', padding: '4px' },
     pillScroll: { display: 'flex', gap: '8px', overflowX: 'auto', padding: '6px 16px', scrollbarWidth: 'none' },
-    pill: { display: 'flex', alignItems: 'center', gap: '6px', color: '#fff', borderRadius: '14px', whiteSpace: 'nowrap', transition: 'all 0.2s', cursor: 'pointer' },
+    pill: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '4px',
+        color: '#fff',
+        borderRadius: '16px',
+        whiteSpace: 'nowrap',
+        transition: 'all 0.2s',
+        cursor: 'pointer',
+        padding: '0 10px',
+        height: '24px' // Reduced height for smaller pills
+    },
     viewerContainer: { flex: 1, overflowY: 'auto', backgroundColor: '#000' },
     iframe: { width: '100%', height: '100%', border: 'none', display: 'block' },
     digitalTextContainer: { padding: '20px 24px 200px', color: '#fff', maxWidth: '650px', margin: '0 auto' },
