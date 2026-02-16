@@ -42,7 +42,7 @@ const Reader = () => {
     const [loadingMore, setLoadingMore] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
 
-    // Default to PDF mode (Digital Mode = false)
+    // Default to PDF mode
     const [isDigitalMode, setIsDigitalMode] = useState(false);
     const [viewMode, setViewMode] = useState('reading');
     const [currentParaIndex, setCurrentParaIndex] = useState(0);
@@ -172,21 +172,34 @@ const Reader = () => {
         <div style={styles.container}>
             <header style={styles.topNav}>
                 <div style={styles.navRow}>
-                    <button onClick={() => navigate(-1)} style={styles.backIcon}><ChevronLeft size={28} /></button>
+                    <button onClick={() => navigate(-1)} style={styles.backIcon}><ChevronLeft size={24} /></button>
                     <div style={styles.rightActions}>
-                        <button style={styles.actionIcon}><Type size={20} /></button>
+                        <button style={styles.actionIcon}><Type size={18} /></button>
                         <button onClick={() => setIsDigitalMode(!isDigitalMode)}
                             style={{ ...styles.actionIcon, color: isDigitalMode ? '#4f46e5' : '#fff' }}>
-                            <FileText size={20} />
+                            <FileText size={18} />
                         </button>
-                        <button style={styles.actionIcon}><MoreHorizontal size={20} /></button>
+                        <button style={styles.actionIcon}><MoreHorizontal size={18} /></button>
                     </div>
                 </div>
 
                 <nav style={styles.pillScroll}>
-                    <PillButton active={viewMode === 'reading'} onClick={() => setViewMode('reading')} icon={<MessageSquare size={10} />} label="Reader" />
-                    <PillButton active={viewMode === 'summary'} onClick={() => setViewMode('summary')} icon={<Sparkles size={10} />} label="Summary" />
-                    <PillButton icon={<Mic2 size={10} />} label="Podcast" />
+                    <PillButton
+                        active={viewMode === 'reading'}
+                        onClick={() => setViewMode('reading')}
+                        icon={<MessageSquare size={12} />}
+                        label="Reader"
+                    />
+                    <PillButton
+                        active={viewMode === 'summary'}
+                        onClick={() => setViewMode('summary')}
+                        icon={<Sparkles size={12} />}
+                        label="Summary"
+                    />
+                    <PillButton
+                        icon={<Mic2 size={12} />}
+                        label="Podcast"
+                    />
                 </nav>
             </header>
 
@@ -212,7 +225,7 @@ const Reader = () => {
                                         ...styles.paragraphCard,
                                         opacity: i === currentParaIndex ? 1 : 0.6,
                                         color: i === currentParaIndex ? '#fff' : '#a1a1aa',
-                                        fontSize: item.type === 'mainTitle' ? '32px' : (item.type === 'header' ? '22px' : '18px'),
+                                        fontSize: item.type === 'mainTitle' ? '28px' : (item.type === 'header' ? '20px' : '17px'),
                                         fontWeight: item.type !== 'body' ? '800' : '400',
                                         fontFamily: item.type !== 'body' ? 'system-ui' : 'serif'
                                     }}
@@ -226,19 +239,13 @@ const Reader = () => {
                         </div>
                     </div>
                 ) : (
-                    /* Direct Cloudinary Link - No Google Middleman */
-                    book?.pdfPath && book.pdfPath !== "pending" ? (
-                        <iframe
-                            src={`${book.pdfPath}#toolbar=0&navpanes=0&scrollbar=0`}
-                            style={styles.iframe}
-                            title="PDF Viewer"
-                        />
-                    ) : (
-                        <div style={styles.fullscreenCenter}>
-                            <Loader2 className="animate-spin" size={30} />
-                            <p style={{ marginLeft: '10px' }}>Fetching document...</p>
-                        </div>
-                    )
+                    /* FIXED: Native PDF Browser Viewer for Cloudinary Support */
+                    <iframe
+                        src={`${book?.pdfPath}#view=FitH`}
+                        style={styles.iframe}
+                        title="PDF Viewer"
+                        frameBorder="0"
+                    />
                 )}
             </main>
 
@@ -253,17 +260,17 @@ const Reader = () => {
                             resumeOffsetRef.current = 0;
                             const prev = Math.max(0, currentParaIndex - 1);
                             if (isPlayingRef.current) speak(prev); else setCurrentParaIndex(prev);
-                        }}><RotateCcw size={22} /></button>
+                        }}><RotateCcw size={20} /></button>
 
                         <button onClick={handleTogglePlay} style={styles.playBtn}>
-                            {isPlaying ? <Pause size={24} fill="white" /> : <Play size={24} fill="white" style={{ marginLeft: 4 }} />}
+                            {isPlaying ? <Pause size={22} fill="white" /> : <Play size={22} fill="white" style={{ marginLeft: 3 }} />}
                         </button>
 
                         <button style={styles.skipBtn} onClick={() => {
                             resumeOffsetRef.current = 0;
                             const next = Math.min(visualParagraphs.length - 1, currentParaIndex + 1);
                             if (isPlayingRef.current) speak(next); else setCurrentParaIndex(next);
-                        }}><RotateCw size={22} /></button>
+                        }}><RotateCw size={20} /></button>
                     </div>
                     <button onClick={() => setPlaybackSpeed(s => s >= 2 ? 0.75 : s + 0.25)} style={styles.speedPill}>{playbackSpeed}x</button>
                 </div>
@@ -273,43 +280,53 @@ const Reader = () => {
     );
 };
 
+// --- UPDATED PILL COMPONENT (SMALLER) ---
 const PillButton = ({ active, onClick, icon, label }) => (
-    <button onClick={onClick} style={{ ...styles.pill, backgroundColor: active ? '#4f46e5' : '#1c1c1e', border: active ? '1px solid #6366f1' : '1px solid #27272a' }}>
-        {icon} <span>{label}</span>
+    <button
+        onClick={onClick}
+        style={{
+            ...styles.pill,
+            backgroundColor: active ? '#4f46e5' : '#1c1c1e',
+            border: active ? '1px solid #6366f1' : '1px solid #27272a',
+            padding: '4px 10px', // Smaller padding
+            height: '28px'       // Fixed smaller height
+        }}
+    >
+        {icon} <span style={{ fontSize: '11px', fontWeight: '600' }}>{label}</span>
     </button>
 );
 
 const styles = {
     fullscreenCenter: { height: '100vh', backgroundColor: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' },
     container: { position: 'fixed', inset: 0, backgroundColor: '#000', display: 'flex', flexDirection: 'column', zIndex: 9999 },
-    topNav: { paddingTop: '10px', backgroundColor: 'rgba(0,0,0,0.8)', backdropFilter: 'blur(10px)' },
-    navRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 16px' },
+    topNav: { paddingTop: '8px', backgroundColor: 'rgba(0,0,0,0.9)', backdropFilter: 'blur(10px)' },
+    navRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 16px', marginBottom: '4px' },
     backIcon: { background: 'none', border: 'none', color: '#fff', cursor: 'pointer' },
-    rightActions: { display: 'flex', gap: '12px' },
-    actionIcon: { background: 'none', border: 'none', color: '#fff', padding: '6px' },
-    pillScroll: { display: 'flex', gap: '6px', overflowX: 'auto', padding: '8px 16px' },
-    pill: { display: 'flex', alignItems: 'center', gap: '4px', color: '#fff', padding: '4px 10px', borderRadius: '16px', fontSize: '10px', whiteSpace: 'nowrap', fontWeight: '600', transition: 'all 0.2s' },
+    rightActions: { display: 'flex', gap: '10px' },
+    actionIcon: { background: 'none', border: 'none', color: '#fff', padding: '4px' },
+    pillScroll: { display: 'flex', gap: '8px', overflowX: 'auto', padding: '6px 16px', scrollbarWidth: 'none' },
+    pill: { display: 'flex', alignItems: 'center', gap: '6px', color: '#fff', borderRadius: '14px', whiteSpace: 'nowrap', transition: 'all 0.2s', cursor: 'pointer' },
     viewerContainer: { flex: 1, overflowY: 'auto', backgroundColor: '#000' },
-    iframe: { width: '100%', height: '100%', border: 'none' },
+    iframe: { width: '100%', height: '100%', border: 'none', display: 'block' },
     digitalTextContainer: { padding: '20px 24px 200px', color: '#fff', maxWidth: '650px', margin: '0 auto' },
-    digitalMainTitle: { fontSize: '32px', fontWeight: '900', marginBottom: '16px', lineHeight: '1.2' },
-    digitalBodyText: { fontSize: '18px', lineHeight: '1.7', fontFamily: 'serif' },
-    paragraphCard: { marginBottom: '1.8em', cursor: 'pointer', transition: 'all 0.3s ease', lineHeight: '1.6' },
+    digitalMainTitle: { fontSize: '28px', fontWeight: '900', marginBottom: '16px', lineHeight: '1.2' },
+    digitalBodyText: { fontSize: '17px', lineHeight: '1.7', fontFamily: 'serif' },
+    paragraphCard: { marginBottom: '1.5em', cursor: 'pointer', transition: 'all 0.3s ease', lineHeight: '1.6' },
     loadingTrigger: { padding: '40px', textAlign: 'center', color: '#3f3f46', fontSize: '13px' },
-    bottomPlayer: { backgroundColor: '#09090b', padding: '16px 24px 34px', borderTop: '1px solid #18181b' },
-    progressBase: { height: '4px', backgroundColor: '#18181b', borderRadius: '2px', overflow: 'hidden' },
+    bottomPlayer: { backgroundColor: '#09090b', padding: '12px 24px 30px', borderTop: '1px solid #18181b' },
+    progressBase: { height: '3px', backgroundColor: '#18181b', borderRadius: '2px', overflow: 'hidden' },
     progressFill: { height: '100%', backgroundColor: '#4f46e5', transition: 'width 0.4s ease' },
-    controlRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px' },
-    flagBox: { width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#18181b', borderRadius: '10px', fontSize: '18px' },
-    mainButtons: { display: 'flex', alignItems: 'center', gap: '24px' },
-    playBtn: { width: '52px', height: '52px', backgroundColor: '#4f46e5', borderRadius: '26px', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' },
+    controlRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px' },
+    flagBox: { width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#18181b', borderRadius: '8px', fontSize: '16px' },
+    mainButtons: { display: 'flex', alignItems: 'center', gap: '28px' },
+    playBtn: { width: '48px', height: '48px', backgroundColor: '#4f46e5', borderRadius: '24px', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', boxShadow: '0 4px 12px rgba(79, 70, 229, 0.4)' },
     skipBtn: { background: 'none', border: 'none', color: '#a1a1aa' },
-    speedPill: { color: '#fff', backgroundColor: '#18181b', padding: '6px 12px', borderRadius: '8px', border: 'none', fontSize: '13px', fontWeight: '700' },
+    speedPill: { color: '#fff', backgroundColor: '#18181b', padding: '5px 10px', borderRadius: '6px', border: 'none', fontSize: '12px', fontWeight: '700' },
     skeletonContainer: { display: 'flex', flexDirection: 'column', gap: '20px' },
-    skeletonHeader: { height: '32px', width: '70%', backgroundColor: '#18181b', borderRadius: '6px' },
-    skeletonSubHeader: { height: '18px', width: '40%', backgroundColor: '#09090b', borderRadius: '4px' },
+    skeletonHeader: { height: '28px', width: '70%', backgroundColor: '#18181b', borderRadius: '6px' },
+    skeletonSubHeader: { height: '16px', width: '40%', backgroundColor: '#09090b', borderRadius: '4px' },
     skeletonPara: { display: 'flex', flexDirection: 'column', gap: '10px' },
-    skeletonLine: { height: '12px', backgroundColor: '#18181b', borderRadius: '3px' }
+    skeletonLine: { height: '10px', backgroundColor: '#18181b', borderRadius: '3px' }
 };
 
 export default Reader;
