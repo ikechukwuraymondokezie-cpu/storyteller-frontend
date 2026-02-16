@@ -42,9 +42,8 @@ const Reader = () => {
     const [loadingMore, setLoadingMore] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
 
-    // UPDATED: Start in PDF mode (false) instead of Digital mode (true)
+    // Default to PDF mode
     const [isDigitalMode, setIsDigitalMode] = useState(false);
-
     const [viewMode, setViewMode] = useState('reading');
     const [currentParaIndex, setCurrentParaIndex] = useState(0);
     const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
@@ -160,9 +159,7 @@ const Reader = () => {
     }, [isDigitalMode, viewMode, book?.status, loadingMore]);
 
     const handleTogglePlay = () => {
-        // Force Digital Mode if user hits play so they can see the word highlighting
         if (!isDigitalMode) setIsDigitalMode(true);
-
         isPlayingRef.current = !isPlaying;
         setIsPlaying(!isPlaying);
         if (!isPlaying) speak(currentParaIndex, resumeOffsetRef.current);
@@ -185,7 +182,7 @@ const Reader = () => {
                         <button style={styles.actionIcon}><MoreHorizontal size={18} /></button>
                     </div>
                 </div>
-                {/* --- REDUCED SIZE PILLS NAV --- */}
+
                 <nav style={styles.pillScroll}>
                     <PillButton
                         active={viewMode === 'reading'}
@@ -242,11 +239,12 @@ const Reader = () => {
                         </div>
                     </div>
                 ) : (
-                    /* PDF VIEWER MODE - Opens by default */
+                    /* FIXED: Native PDF Browser Viewer for Cloudinary Support */
                     <iframe
-                        src={`https://docs.google.com/viewer?url=${encodeURIComponent(book?.pdfPath)}&embedded=true`}
+                        src={`${book?.pdfPath}#view=FitH`}
                         style={styles.iframe}
                         title="PDF Viewer"
+                        frameBorder="0"
                     />
                 )}
             </main>
@@ -290,10 +288,11 @@ const PillButton = ({ active, onClick, icon, label }) => (
             ...styles.pill,
             backgroundColor: active ? '#4f46e5' : '#1c1c1e',
             border: active ? '1px solid #6366f1' : '1px solid #27272a',
-            padding: '5px 12px' // Smaller padding
+            padding: '4px 10px', // Smaller padding
+            height: '28px'       // Fixed smaller height
         }}
     >
-        {icon} <span style={{ fontSize: '11px' }}>{label}</span>
+        {icon} <span style={{ fontSize: '11px', fontWeight: '600' }}>{label}</span>
     </button>
 );
 
@@ -305,10 +304,10 @@ const styles = {
     backIcon: { background: 'none', border: 'none', color: '#fff', cursor: 'pointer' },
     rightActions: { display: 'flex', gap: '10px' },
     actionIcon: { background: 'none', border: 'none', color: '#fff', padding: '4px' },
-    pillScroll: { display: 'flex', gap: '8px', overflowX: 'auto', padding: '8px 16px', scrollbarWidth: 'none' },
-    pill: { display: 'flex', alignItems: 'center', gap: '6px', color: '#fff', borderRadius: '20px', whiteSpace: 'nowrap', fontWeight: '500', transition: 'all 0.2s', cursor: 'pointer' },
+    pillScroll: { display: 'flex', gap: '8px', overflowX: 'auto', padding: '6px 16px', scrollbarWidth: 'none' },
+    pill: { display: 'flex', alignItems: 'center', gap: '6px', color: '#fff', borderRadius: '14px', whiteSpace: 'nowrap', transition: 'all 0.2s', cursor: 'pointer' },
     viewerContainer: { flex: 1, overflowY: 'auto', backgroundColor: '#000' },
-    iframe: { width: '100%', height: '100%', border: 'none' },
+    iframe: { width: '100%', height: '100%', border: 'none', display: 'block' },
     digitalTextContainer: { padding: '20px 24px 200px', color: '#fff', maxWidth: '650px', margin: '0 auto' },
     digitalMainTitle: { fontSize: '28px', fontWeight: '900', marginBottom: '16px', lineHeight: '1.2' },
     digitalBodyText: { fontSize: '17px', lineHeight: '1.7', fontFamily: 'serif' },

@@ -109,14 +109,21 @@ const formatBook = (book) => ({
     createdAt: book.createdAt
 });
 
+/**
+ * Clean and format text with awareness of Book structure.
+ */
 function smartClean(text) {
     if (!text) return "";
     return text
+        // Force break before common Chapter/Section markers if missed by gap detection
         .replace(/([a-z0-9])\s*(Chapter\s+\d+|Psalm|Section|BOOKS\s+BY|Part)/gi, '$1\n\n$2')
-        .replace(/(Chapter\s+\d+.*?)\s+(The\s+authority|Because|In\s+the|For\s+this)/gi, '$1\n\n$2')
-        .replace(/([a-z0-9])\s*(\d+\.\s+\d+\s+[A-Z])/g, '$1\n\n$2')
+        // Force break between chapter titles and body text start
+        .replace(/(Chapter\s+\d+.*?)\s+(The\s+authority|Because|In\s+the|For\s+this|When|If)/gi, '$1\n\n$2')
+        // Clean horizontal white spaces
         .replace(/[ \t]+/g, ' ')
-        .replace(/\n{3,}/g, '\n\n');
+        // Cap excessive newlines at 3 (enough for visual space, not too much)
+        .replace(/\n{4,}/g, '\n\n\n')
+        .trim();
 }
 
 function getPageCount(pdfPath) {
@@ -129,7 +136,9 @@ function getPageCount(pdfPath) {
     });
 }
 
-// UPDATED: OCR with Coordinate sorting
+/**
+ * UPDATED OCR: Uses Vertical Coordinates to detect lines and page headers.
+ */
 async function extractPageTextGoogle(pdfPath, pageNum) {
     if (!visionClient) return "";
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
@@ -150,22 +159,53 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
         let pageBlocks = [];
         fullAnnotation.pages.forEach(page => {
             page.blocks.forEach(block => {
-                const yCoord = block.boundingBox.vertices[0].y;
-                const xCoord = block.boundingBox.vertices[0].x;
+                const vertices = block.boundingBox.vertices;
+                const yTop = vertices[0].y;
+                const yBottom = vertices[3].y;
+                const xCoord = vertices[0].x;
+                const blockHeight = yBottom - yTop;
+
                 const blockText = block.paragraphs.map(p =>
                     p.words.map(w => w.symbols.map(s => s.text).join('')).join(' ')
                 ).join('\n');
-                pageBlocks.push({ text: blockText, x: xCoord, y: yCoord });
+
+                pageBlocks.push({ text: blockText, x: xCoord, y: yTop, h: blockHeight });
             });
         });
 
-        // Re-sort to fix the "scattered" words issue
-        const orderedText = pageBlocks
-            .sort((a, b) => (a.y - b.y) || (a.x - b.x))
-            .map(b => b.text)
-            .join('\n\n');
+        // 1. Sort blocks strictly by vertical (y) then horizontal (x)
+        pageBlocks.sort((a, b) => (a.y - b.y) || (a.x - b.x));
+
+        let orderedText = "";
+        const TOP_MARGIN_THRESHOLD = 150; // Detect if text starts low on the page (Header)
+
+        for (let i = 0; i < pageBlocks.length; i++) {
+            const current = pageBlocks[i];
+            const next = pageBlocks[i + 1];
+
+            // 2. Handle the very first block of the page
+            if (i === 0 && current.y > TOP_MARGIN_THRESHOLD) {
+                // If it starts way down, give it section spacing
+                orderedText += "\n\n";
+            }
+
+            orderedText += current.text;
+
+            // 3. Handle gaps between blocks
+            if (next) {
+                const verticalGap = next.y - (current.y + current.h);
+
+                // If gap is significant (e.g. 1.8x the height of current text)
+                if (verticalGap > current.h * 1.8) {
+                    orderedText += "\n\n\n"; // Large visual break
+                } else {
+                    orderedText += "\n\n";   // Standard paragraph break
+                }
+            }
+        }
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
+
         return smartClean(orderedText);
     } catch (e) {
         console.error(`❌ Google OCR Error on page ${pageNum}:`, e.message);
@@ -248,7 +288,7 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
 
         (async () => {
             try {
-                // 1. Upload to Cloudinary immediately so PDF viewer works
+                // 1. Upload to Cloudinary immediately
                 const pdfRes = await cloudinary.uploader.upload(pdfPath, { folder: "storyteller_pdfs", resource_type: "raw" });
 
                 const baseName = path.parse(req.file.filename).name;
@@ -266,7 +306,7 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
 
                 await Book.findByIdAndUpdate(book._id, { pdfPath: pdfRes.secure_url, cover: coverUrl });
 
-                // 3. OCR Batch
+                // 3. Initial OCR Batch (First 5 pages)
                 let runningContent = "";
                 const limit = Math.min(5, totalPages);
                 for (let i = 1; i <= limit; i++) {
@@ -294,7 +334,7 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
     }
 });
 
-/* --- OTHER ROUTES (RESTORED) --- */
+/* --- OTHER ROUTES --- */
 app.get("/api/books/folders", async (_, res) => {
     try {
         const folders = await Folder.find().sort({ name: 1 });
