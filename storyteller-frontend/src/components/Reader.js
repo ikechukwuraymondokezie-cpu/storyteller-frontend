@@ -50,7 +50,6 @@ const Reader = () => {
     const [currentParaIndex, setCurrentParaIndex] = useState(0);
     const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
 
-    // UI State for the Action Sheet
     const [isSheetOpen, setIsSheetOpen] = useState(false);
 
     const synth = window.speechSynthesis;
@@ -81,8 +80,8 @@ const Reader = () => {
 
     const chapters = useMemo(() => {
         return visualParagraphs
-            .map((para, index) => ({ text: para.text, index }))
-            .filter(item => visualParagraphs[item.index].type === 'header' || visualParagraphs[item.index].type === 'mainTitle');
+            .map((para, index) => ({ ...para, index }))
+            .filter(item => item.type === 'header' || item.type === 'mainTitle');
     }, [visualParagraphs]);
 
     const loadMorePages = async () => {
@@ -136,7 +135,7 @@ const Reader = () => {
         setCurrentParaIndex(index);
         paragraphRefs.current[index]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         if (isPlayingRef.current) speak(index);
-        setIsSheetOpen(false); // Close after selection
+        setIsSheetOpen(false);
     };
 
     useEffect(() => {
@@ -162,6 +161,16 @@ const Reader = () => {
         return () => { clearInterval(pollInterval); synth.cancel(); };
     }, [id]);
 
+    useEffect(() => {
+        if (!isDigitalMode || viewMode !== 'reading' || book?.status === 'completed') return;
+        const observer = new IntersectionObserver(
+            (entries) => { if (entries[0].isIntersecting && !loadingMore) loadMorePages(); },
+            { threshold: 0.1, rootMargin: '400px' }
+        );
+        if (bottomObserverRef.current) observer.observe(bottomObserverRef.current);
+        return () => observer.disconnect();
+    }, [isDigitalMode, viewMode, book?.status, loadingMore]);
+
     const handleTogglePlay = () => {
         if (!isDigitalMode) setIsDigitalMode(true);
         isPlayingRef.current = !isPlaying;
@@ -183,12 +192,9 @@ const Reader = () => {
                             style={{ ...styles.actionIcon, color: isDigitalMode ? '#4f46e5' : '#fff' }}>
                             <FileText size={18} />
                         </button>
-                        <button onClick={() => setIsSheetOpen(true)} style={styles.actionIcon}>
-                            <MoreHorizontal size={18} />
-                        </button>
+                        <button onClick={() => setIsSheetOpen(true)} style={styles.actionIcon}><MoreHorizontal size={18} /></button>
                     </div>
                 </div>
-
                 <nav style={styles.pillScroll}>
                     <PillButton active={viewMode === 'reading'} onClick={() => setViewMode('reading')} icon={<MessageSquare size={12} />} label="Reader" />
                     <PillButton active={viewMode === 'summary'} onClick={() => setViewMode('summary')} icon={<Sparkles size={12} />} label="Summary" />
@@ -204,24 +210,32 @@ const Reader = () => {
                     </div>
                 ) : isDigitalMode ? (
                     <div style={styles.digitalTextContainer}>
-                        {visualParagraphs.map((item, i) => (
-                            <p key={i} ref={el => paragraphRefs.current[i] = el}
-                                onClick={() => {
-                                    resumeOffsetRef.current = 0;
-                                    setCurrentParaIndex(i);
-                                    if (isPlayingRef.current) speak(i);
-                                }}
-                                style={{
-                                    ...styles.paragraphCard,
-                                    opacity: i === currentParaIndex ? 1 : 0.6,
-                                    color: i === currentParaIndex ? '#fff' : '#a1a1aa',
-                                    fontSize: item.type === 'mainTitle' ? '28px' : (item.type === 'header' ? '20px' : '17px'),
-                                    fontWeight: item.type !== 'body' ? '800' : '400'
-                                }}
-                            >
-                                {item.text}
-                            </p>
-                        ))}
+                        {visualParagraphs.length === 0 ? (
+                            <SkeletonLoader />
+                        ) : (
+                            visualParagraphs.map((item, i) => (
+                                <p key={i} ref={el => paragraphRefs.current[i] = el}
+                                    onClick={() => {
+                                        resumeOffsetRef.current = 0;
+                                        setCurrentParaIndex(i);
+                                        if (isPlayingRef.current) speak(i);
+                                    }}
+                                    style={{
+                                        ...styles.paragraphCard,
+                                        opacity: i === currentParaIndex ? 1 : 0.6,
+                                        color: i === currentParaIndex ? '#fff' : '#a1a1aa',
+                                        fontSize: item.type === 'mainTitle' ? '28px' : (item.type === 'header' ? '20px' : '17px'),
+                                        fontWeight: item.type !== 'body' ? '800' : '400',
+                                        fontFamily: item.type !== 'body' ? 'system-ui' : 'serif'
+                                    }}
+                                >
+                                    {item.text}
+                                </p>
+                            ))
+                        )}
+                        <div ref={bottomObserverRef} style={styles.loadingTrigger}>
+                            {book?.status !== 'completed' ? <Loader2 className="animate-spin" /> : "• End of Document •"}
+                        </div>
                     </div>
                 ) : (
                     <iframe src={`${finalPdfPath}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`} style={styles.iframe} title="PDF Viewer" frameBorder="0" />
@@ -236,6 +250,7 @@ const Reader = () => {
                     <div style={styles.flagBox}>🇺🇸</div>
                     <div style={styles.mainButtons}>
                         <button style={styles.skipBtn} onClick={() => {
+                            resumeOffsetRef.current = 0;
                             const prev = Math.max(0, currentParaIndex - 1);
                             if (isPlayingRef.current) speak(prev); else setCurrentParaIndex(prev);
                         }}><RotateCcw size={20} /></button>
@@ -243,6 +258,7 @@ const Reader = () => {
                             {isPlaying ? <Pause size={22} fill="white" /> : <Play size={22} fill="white" style={{ marginLeft: 3 }} />}
                         </button>
                         <button style={styles.skipBtn} onClick={() => {
+                            resumeOffsetRef.current = 0;
                             const next = Math.min(visualParagraphs.length - 1, currentParaIndex + 1);
                             if (isPlayingRef.current) speak(next); else setCurrentParaIndex(next);
                         }}><RotateCw size={20} /></button>
