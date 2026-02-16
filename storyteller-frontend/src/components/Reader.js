@@ -42,6 +42,7 @@ const Reader = () => {
     const [loadingMore, setLoadingMore] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
 
+    // Default to PDF mode
     const [isDigitalMode, setIsDigitalMode] = useState(false);
     const [viewMode, setViewMode] = useState('reading');
     const [currentParaIndex, setCurrentParaIndex] = useState(0);
@@ -49,15 +50,6 @@ const Reader = () => {
 
     const synth = window.speechSynthesis;
     const BACKEND_URL = "https://storyteller-frontend-x65b.onrender.com";
-
-    /* --- PATH RESOLVER (Fixed for Cloudinary) --- */
-    const finalPdfPath = useMemo(() => {
-        if (!book?.url) return null;
-        // Logic matched from Storyteller.js
-        return book.url.startsWith("http")
-            ? book.url
-            : `${BACKEND_URL}${book.url}`;
-    }, [book?.url]);
 
     const visualParagraphs = useMemo(() => {
         if (!book?.content) return [];
@@ -192,9 +184,22 @@ const Reader = () => {
                 </div>
 
                 <nav style={styles.pillScroll}>
-                    <PillButton active={viewMode === 'reading'} onClick={() => setViewMode('reading')} icon={<MessageSquare size={12} />} label="Reader" />
-                    <PillButton active={viewMode === 'summary'} onClick={() => setViewMode('summary')} icon={<Sparkles size={12} />} label="Summary" />
-                    <PillButton icon={<Mic2 size={12} />} label="Podcast" />
+                    <PillButton
+                        active={viewMode === 'reading'}
+                        onClick={() => setViewMode('reading')}
+                        icon={<MessageSquare size={12} />}
+                        label="Reader"
+                    />
+                    <PillButton
+                        active={viewMode === 'summary'}
+                        onClick={() => setViewMode('summary')}
+                        icon={<Sparkles size={12} />}
+                        label="Summary"
+                    />
+                    <PillButton
+                        icon={<Mic2 size={12} />}
+                        label="Podcast"
+                    />
                 </nav>
             </header>
 
@@ -234,9 +239,9 @@ const Reader = () => {
                         </div>
                     </div>
                 ) : (
-                    /* FIXED: Using finalPdfPath with improved embed parameters */
+                    /* FIXED: Native PDF Browser Viewer for Cloudinary Support */
                     <iframe
-                        src={`${finalPdfPath}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`}
+                        src={`${book?.pdfPath}#view=FitH`}
                         style={styles.iframe}
                         title="PDF Viewer"
                         frameBorder="0"
@@ -275,6 +280,7 @@ const Reader = () => {
     );
 };
 
+// --- UPDATED PILL COMPONENT (SMALLER) ---
 const PillButton = ({ active, onClick, icon, label }) => (
     <button
         onClick={onClick}
@@ -282,8 +288,8 @@ const PillButton = ({ active, onClick, icon, label }) => (
             ...styles.pill,
             backgroundColor: active ? '#4f46e5' : '#1c1c1e',
             border: active ? '1px solid #6366f1' : '1px solid #27272a',
-            padding: '4px 10px',
-            height: '28px'
+            padding: '4px 10px', // Smaller padding
+            height: '28px'       // Fixed smaller height
         }}
     >
         {icon} <span style={{ fontSize: '11px', fontWeight: '600' }}>{label}</span>
