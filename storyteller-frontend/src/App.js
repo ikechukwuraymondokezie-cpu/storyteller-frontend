@@ -1,5 +1,5 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { useState } from "react"; // Added for state management
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { useState } from "react";
 
 import TopNav from "./components/TopNav";
 import BottomNav from "./components/BottomNav";
@@ -10,8 +10,49 @@ import Library from "./components/Library";
 import Profile from "./components/Profile";
 import Reader from "./components/Reader";
 
+// This sub-component handles the conditional layout logic
+function AppContent({ refreshKey, triggerRefresh }) {
+  const location = useLocation();
+
+  // Check if we are on the profile page or the reader page (where you might also want it hidden)
+  const isProfilePage = location.pathname === "/profile";
+  const isReaderPage = location.pathname.startsWith("/reader/");
+  const hideTopNav = isProfilePage || isReaderPage;
+
+  return (
+    <div className="App min-h-screen flex flex-col md:flex-row bg-bg">
+
+      {/* Only show TopNav if we are NOT on the profile page */}
+      {!hideTopNav && <TopNav />}
+
+      {/* Personalization: We remove the left margin (md:ml-32) 
+          on the profile page so it uses the full width 
+      */}
+      <main className={`flex-1 pt-11 md:pt-6 pb-32 overflow-auto transition-all duration-500 ${hideTopNav ? "md:ml-0" : "md:ml-32"
+        }`}>
+        <Routes>
+          <Route path="/" element={<Storyteller />} />
+          <Route
+            path="/library"
+            element={<Library key={refreshKey} />}
+          />
+          <Route path="/profile" element={<Profile />} />
+          <Route path="/reader/:id" element={<Reader />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </main>
+
+      <div className="md:hidden">
+        <BottomNav />
+      </div>
+
+      {/* Hide upload button on Profile if you want a cleaner look, or keep it */}
+      {!isProfilePage && <FloatingUploadButton onUploadSuccess={triggerRefresh} />}
+    </div>
+  );
+}
+
 function App() {
-  // We use a simple counter to trigger re-fetches across components
   const [refreshKey, setRefreshKey] = useState(0);
 
   const triggerRefresh = () => {
@@ -20,44 +61,7 @@ function App() {
 
   return (
     <BrowserRouter>
-      <div className="App min-h-screen flex flex-col md:flex-row bg-bg">
-
-        {/* Sidebar / TopNav - Visible on Desktop/Mobile */}
-        <TopNav />
-
-        {/* Main content area */}
-        <main className="flex-1 pt-11 md:pt-6 pb-32 md:ml-32 overflow-auto">
-          <Routes>
-            {/* Home/Feed View */}
-            <Route path="/" element={<Storyteller />} />
-
-            {/* User Library View - Pass the refreshKey so it re-fetches on upload */}
-            <Route
-              path="/library"
-              element={<Library key={refreshKey} />}
-            />
-
-            {/* User Profile View */}
-            <Route path="/profile" element={<Profile />} />
-
-            {/* Dynamic Reader Route */}
-            <Route path="/reader/:id" element={<Reader />} />
-
-            {/* Catch-all redirect to Home */}
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </main>
-
-        {/* Mobile bottom navbar - Hidden on desktop */}
-        <div className="md:hidden">
-          <BottomNav />
-        </div>
-
-        {/* Global Floating upload button 
-            Pass the triggerRefresh function so the library updates after a successful upload
-        */}
-        <FloatingUploadButton onUploadSuccess={triggerRefresh} />
-      </div>
+      <AppContent refreshKey={refreshKey} triggerRefresh={triggerRefresh} />
     </BrowserRouter>
   );
 }
