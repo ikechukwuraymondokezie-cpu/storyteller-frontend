@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-    MoreHorizontal, Plus, Trash2, X, DownloadCloud, BarChart2
+    MoreHorizontal, Plus, Trash2, X, DownloadCloud
 } from "lucide-react";
 
 import Aslibrary from "./Aslibrary";
@@ -10,7 +10,7 @@ import defaultCover from "../assets/cover.jpg";
 /* ---------------- SKELETON LOADER COMPONENTS ---------------- */
 const ListSkeleton = () => (
     <div className="flex items-center gap-4 py-4 border-b border-zinc-900/50 animate-pulse">
-        <div className="w-[56px] h-[80px] rounded-md bg-zinc-900 flex-shrink-0" />
+        <div className="w-[52px] h-[78px] rounded-md bg-zinc-900 flex-shrink-0" />
         <div className="flex-1">
             <div className="h-4 w-3/4 bg-zinc-900 rounded mb-2" />
             <div className="h-3 w-1/4 bg-zinc-900 rounded" />
@@ -253,29 +253,21 @@ export default function Library() {
         });
 
     return (
-        <div className={`min-h-screen bg-black px-4 py-8 ${isSelectMode ? "pb-32" : ""}`}>
-            {/* Header Section */}
-            <div className="flex justify-between items-center mb-8">
-                <h1 className="text-3xl font-bold text-white tracking-tight">Library</h1>
+        <div className={`min-h-screen bg-[#09090b] px-6 py-8 ${isSelectMode ? "pb-32" : ""}`}>
+            <div className="flex justify-between items-center mb-6">
+                <h1 className="text-3xl md:text-5xl font-extrabold text-yellow-400">Your Collection</h1>
                 {!isSelectMode && (
-                    <label className="flex items-center gap-2 cursor-pointer bg-zinc-900 hover:bg-zinc-800 text-white py-2.5 px-5 rounded-full border border-white/5 transition-colors">
-                        <Plus size={20} className="text-yellow-400" />
-                        <span className="font-semibold">{uploading ? "..." : "Upload"}</span>
+                    <label className="flex items-center gap-2 cursor-pointer bg-yellow-600 hover:bg-yellow-500 text-white py-2 px-4 rounded-xl transition-colors">
+                        <Plus className="w-5 h-5" />
+                        {uploading ? "Uploading…" : "Upload"}
                         <input type="file" accept=".pdf" className="hidden" disabled={uploading} onChange={(e) => { if (e.target.files?.[0]) { handleUpload(e.target.files[0]); e.target.value = null; } }} />
                     </label>
                 )}
             </div>
 
-            {/* Folder Pills - Using original padding/size */}
-            <div className="flex items-center gap-3 overflow-x-auto pb-8 no-scrollbar">
+            <div className="flex items-center gap-2 overflow-x-auto pb-6 no-scrollbar">
                 {folders.map((folder) => (
-                    <button
-                        key={folder}
-                        onClick={() => setActiveFolder(folder)}
-                        className={`px-5 py-2 rounded-full text-sm font-semibold transition-all whitespace-nowrap border ${activeFolder === folder ? "bg-[#4f46e5] border-[#6366f1] text-white" : "bg-zinc-900 border-white/5 text-zinc-500 hover:text-white"}`}
-                    >
-                        {folder}
-                    </button>
+                    <button key={folder} onClick={() => setActiveFolder(folder)} className={`px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest transition-all whitespace-nowrap border ${activeFolder === folder ? "bg-yellow-400 border-yellow-400 text-black" : "bg-transparent border-white/10 text-zinc-500 hover:text-white"}`}>{folder}</button>
                 ))}
             </div>
 
@@ -293,7 +285,7 @@ export default function Library() {
                             onClick={() => isSelectMode ? setSelectedIds(p => p.includes(book._id) ? p.filter(i => i !== book._id) : [...p, book._id]) : navigate(`/reader/${book._id}`)}
                             className={viewMode === "grid"
                                 ? `group relative flex flex-col p-2 bg-zinc-900/30 rounded-xl transition ${selectedIds.includes(book._id) ? "ring-2 ring-indigo-500 bg-zinc-900/80" : "hover:bg-zinc-900/50"}`
-                                : `group relative flex items-center gap-4 py-3 border-b border-zinc-900/30 transition-colors ${selectedIds.includes(book._id) ? "bg-zinc-900/40" : "active:bg-zinc-900/20"}`
+                                : `group relative flex items-center gap-4 py-4 border-b border-zinc-900/50 ${selectedIds.includes(book._id) ? "bg-zinc-900/50" : ""}`
                             }
                         >
                             {/* Selection Checkmark */}
@@ -303,41 +295,41 @@ export default function Library() {
                                 </div>
                             )}
 
-                            {/* Book Cover - Matching Reference size */}
+                            {/* Book Cover */}
                             <div className={viewMode === "grid"
                                 ? "aspect-[2/3] w-full rounded-lg bg-zinc-900 overflow-hidden shadow-lg border border-white/5 mb-3"
-                                : "w-[56px] h-[80px] rounded-md bg-zinc-900 overflow-hidden flex-shrink-0 border border-white/5"
+                                : "w-[52px] h-[78px] rounded-md bg-zinc-900 overflow-hidden flex-shrink-0 shadow-lg border border-white/5"
                             }>
                                 <img src={getCoverUrl(book.cover)} alt={book.title} className="w-full h-full object-cover" onError={(e) => { e.currentTarget.src = defaultCover; }} />
                             </div>
 
-                            {/* Info Section - matching typography in reference */}
-                            <div className={viewMode === "grid" ? "text-center" : "flex-1 min-w-0"}>
-                                <div className={`flex items-center gap-2 mb-1 ${viewMode === 'grid' ? 'justify-center' : ''}`}>
-                                    {/* Visualizer - Reference style bars */}
+                            {/* Info Section */}
+                            <div className={viewMode === "grid" ? "text-center" : "flex-1 min-w-0 pr-2"}>
+                                <div className={`flex items-center gap-2 mb-0.5 ${viewMode === 'grid' ? 'justify-center' : ''}`}>
+                                    {/* Visualizer for Active State */}
                                     {index === 0 && (
-                                        <div className="flex items-end gap-[2px] h-3 mb-1 flex-shrink-0">
-                                            <div className="w-[2px] h-[7px] bg-[#6366f1] rounded-sm"></div>
-                                            <div className="w-[2px] h-[10px] bg-[#6366f1] rounded-sm"></div>
-                                            <div className="w-[2px] h-[7px] bg-[#6366f1] rounded-sm"></div>
+                                        <div className="flex items-end gap-[1.5px] h-3 mb-0.5 flex-shrink-0">
+                                            <div className="w-[2px] h-2 bg-indigo-400 rounded-full animate-pulse"></div>
+                                            <div className="w-[2px] h-3 bg-indigo-400 rounded-full"></div>
+                                            <div className="w-[2px] h-2 bg-indigo-400 rounded-full animate-pulse"></div>
                                         </div>
                                     )}
-                                    <h3 className={`font-bold text-white truncate tracking-tight ${viewMode === 'grid' ? 'text-sm' : 'text-[18px]'}`}>
+                                    <h3 className={`font-semibold text-white truncate tracking-tight ${viewMode === 'grid' ? 'text-sm' : 'text-[17px]'}`}>
                                         {book.title}
                                     </h3>
                                 </div>
 
-                                <p className={`text-[#71717a] font-normal ${viewMode === 'grid' ? 'text-[10px]' : 'text-[15px]'}`}>
+                                <p className={`text-zinc-500 font-medium ${viewMode === 'grid' ? 'text-[10px]' : 'text-sm'}`}>
                                     {book.progress || '0'}% • {book.pdfPath?.includes('.pdf') ? 'pdf' : 'book'}
                                 </p>
                             </div>
 
                             {/* Actions (List Mode Only) */}
                             {viewMode === "list" && (
-                                <div className="flex items-center gap-4 px-2">
+                                <div className="flex items-center gap-3">
                                     {book.status === 'processing' && <DownloadCloud size={20} className="text-zinc-600" />}
                                     {!isSelectMode && (
-                                        <button onClick={(e) => { e.stopPropagation(); setActiveBook(book); setIsMoving(false); }} className="p-1 text-zinc-700 hover:text-zinc-400">
+                                        <button onClick={(e) => { e.stopPropagation(); setActiveBook(book); setIsMoving(false); }} className="p-1.5 text-zinc-700 hover:text-zinc-400 transition">
                                             <MoreHorizontal size={22} />
                                         </button>
                                     )}
