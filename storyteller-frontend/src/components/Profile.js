@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import {
-    Book, Download, Headphones, Folder, Trash2,
-    User, ChevronRight, Zap, Award, Settings as SettingsIcon
+    Book, Download, Headphones, Folder,
+    User, Zap, Settings as SettingsIcon
 } from 'lucide-react';
-// Import your new Settings component
 import Settings from './Settings';
 
 const API_BASE = "https://storyteller-frontend-x65b.onrender.com";
@@ -17,7 +16,6 @@ const Profile = () => {
         totalTTS: 0,
         folderCount: 0
     });
-    const [folders, setFolders] = useState([]);
     const [loading, setLoading] = useState(true);
 
     const getUserRank = (count) => {
@@ -45,7 +43,6 @@ const Profile = () => {
                 totalTTS: books.reduce((sum, b) => sum + (b.ttsRequests || 0), 0),
                 folderCount: customFolders.length
             });
-            setFolders(customFolders);
             setLoading(false);
         } catch (err) {
             console.error("Error fetching profile:", err);
@@ -53,7 +50,6 @@ const Profile = () => {
         }
     };
 
-    // 1. Logic to show Settings view
     if (showSettings) {
         return <Settings onBack={() => setShowSettings(false)} />;
     }
@@ -67,32 +63,33 @@ const Profile = () => {
     const rank = getUserRank(stats.totalBooks);
 
     return (
-        <div className="min-h-screen bg-black text-white px-6 pt-12 pb-24 animate-in fade-in duration-700">
+        <div className="min-h-screen bg-black text-white pb-24 animate-in fade-in duration-700">
 
-            {/* 2. TOP NAVIGATION (Name top-left, Settings top-right) */}
-            <div className="flex justify-between items-center mb-12 max-w-4xl mx-auto">
-                <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-yellow-400 rounded-2xl flex items-center justify-center">
-                        <User size={24} className="text-black" />
+            {/* TOP NAVIGATION */}
+            <nav className="sticky top-0 z-50 bg-black/60 backdrop-blur-xl border-b border-white/5 px-6 py-4 mb-8">
+                <div className="flex justify-between items-center max-w-4xl mx-auto">
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 bg-yellow-400 rounded-xl flex items-center justify-center shadow-[0_0_20px_rgba(250,204,21,0.3)]">
+                            <User size={20} className="text-black" />
+                        </div>
+                        <div>
+                            <h1 className="text-xl font-black tracking-tighter leading-none">Chief Reader</h1>
+                            <span className={`text-[9px] font-bold uppercase tracking-[0.2em] ${rank.color}`}>
+                                {rank.title}
+                            </span>
+                        </div>
                     </div>
-                    <div>
-                        <h1 className="text-2xl font-black tracking-tighter leading-none">Chief Reader</h1>
-                        <span className={`text-[10px] font-bold uppercase tracking-[0.2em] ${rank.color}`}>
-                            {rank.title}
-                        </span>
-                    </div>
+
+                    <button
+                        onClick={() => setShowSettings(true)}
+                        className="p-2.5 bg-zinc-900 border border-white/10 rounded-xl hover:bg-zinc-800 transition-all active:scale-95"
+                    >
+                        <SettingsIcon size={20} className="text-zinc-400 hover:text-yellow-400 transition-colors" />
+                    </button>
                 </div>
+            </nav>
 
-                {/* 3. Button to trigger Settings */}
-                <button
-                    onClick={() => setShowSettings(true)}
-                    className="p-3 bg-zinc-900 border border-white/5 rounded-2xl hover:bg-zinc-800 transition-all hover:scale-105"
-                >
-                    <SettingsIcon size={22} className="text-zinc-400 hover:text-yellow-400 transition-colors" />
-                </button>
-            </div>
-
-            <div className="max-w-4xl mx-auto space-y-10">
+            <div className="max-w-4xl mx-auto px-6 space-y-10">
                 {/* Dashboard Segment */}
                 <div className="relative bg-zinc-900/40 p-8 rounded-[2.5rem] border border-white/5 backdrop-blur-xl">
                     <div className="flex items-center gap-2 mb-3">
@@ -112,25 +109,9 @@ const Profile = () => {
                     <StatCard icon={<Headphones />} label="TTS Hits" value={stats.totalTTS} />
                 </div>
 
-                {/* Folders List */}
-                <div className="bg-[#0c0c0e] rounded-[2.5rem] border border-white/5 overflow-hidden">
-                    <div className="p-8 border-b border-white/5 flex justify-between items-center bg-zinc-900/20">
-                        <h2 className="text-xl font-black text-white tracking-tight">Manage Folders</h2>
-                        <span className="text-[10px] font-black bg-yellow-400 text-black px-3 py-1 rounded-lg">
-                            {folders.length}
-                        </span>
-                    </div>
-                    <div className="divide-y divide-white/5">
-                        {folders.map(folder => (
-                            <div key={folder} className="p-6 flex justify-between items-center group">
-                                <div className="flex items-center space-x-5">
-                                    <Folder className="w-6 h-6 text-yellow-400" />
-                                    <span className="text-white text-lg font-bold">{folder}</span>
-                                </div>
-                                <Trash2 className="w-5 h-5 text-zinc-600 hover:text-red-500 cursor-pointer" />
-                            </div>
-                        ))}
-                    </div>
+                {/* Visual Spacer to keep things balanced */}
+                <div className="pt-10 flex justify-center">
+                    <div className="w-1 h-1 bg-zinc-800 rounded-full"></div>
                 </div>
             </div>
         </div>
@@ -138,7 +119,7 @@ const Profile = () => {
 };
 
 const StatCard = ({ icon, label, value, active }) => (
-    <div className={`p-6 rounded-[2.2rem] border transition-all flex flex-col items-center justify-center text-center ${active ? "bg-yellow-400 border-yellow-400 shadow-lg" : "bg-zinc-900/40 border-white/5"
+    <div className={`p-6 rounded-[2.2rem] border transition-all flex flex-col items-center justify-center text-center ${active ? "bg-yellow-400 border-yellow-400 shadow-lg shadow-yellow-400/10" : "bg-zinc-900/40 border-white/5"
         }`}>
         <div className={`p-4 rounded-2xl mb-4 ${active ? "bg-black text-yellow-400" : "bg-zinc-800 text-yellow-400"}`}>
             {React.cloneElement(icon, { size: 24 })}
