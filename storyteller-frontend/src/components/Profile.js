@@ -2,14 +2,16 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import {
     Book, Download, Headphones, Folder,
-    User, Zap, Settings as SettingsIcon
+    User, BarChart3, Settings as SettingsIcon, ChevronRight
 } from 'lucide-react';
 import Settings from './Settings';
+import Statistics from './Statistics'; // Ensure this file exists
 
 const API_BASE = "https://storyteller-frontend-x65b.onrender.com";
 
 const Profile = () => {
     const [showSettings, setShowSettings] = useState(false);
+    const [showStats, setShowStats] = useState(false);
     const [stats, setStats] = useState({
         totalBooks: 0,
         totalDownloads: 0,
@@ -50,9 +52,9 @@ const Profile = () => {
         }
     };
 
-    if (showSettings) {
-        return <Settings onBack={() => setShowSettings(false)} />;
-    }
+    // Navigation Logic
+    if (showSettings) return <Settings onBack={() => setShowSettings(false)} />;
+    if (showStats) return <Statistics onBack={() => setShowStats(false)} stats={stats} />;
 
     if (loading) return (
         <div className="min-h-screen bg-black flex items-center justify-center text-yellow-400 font-bold animate-pulse">
@@ -90,18 +92,30 @@ const Profile = () => {
             </nav>
 
             <div className="max-w-4xl mx-auto px-6 space-y-10">
-                {/* Dashboard Segment */}
-                <div className="relative bg-zinc-900/40 p-8 rounded-[2.5rem] border border-white/5 backdrop-blur-xl">
-                    <div className="flex items-center gap-2 mb-3">
-                        <Zap size={14} className="text-yellow-400 fill-yellow-400" />
-                        <span className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.3em]">Daily Insight</span>
+
+                {/* INTERACTIVE STATS TRIGGER */}
+                <div
+                    onClick={() => setShowStats(true)}
+                    className="relative bg-zinc-900/40 p-8 rounded-[2.5rem] border border-white/5 backdrop-blur-xl cursor-pointer hover:border-yellow-400/40 transition-all active:scale-[0.98] group"
+                >
+                    <div className="flex justify-between items-center">
+                        <div className="space-y-2">
+                            <div className="flex items-center gap-2">
+                                <BarChart3 size={14} className="text-yellow-400" />
+                                <span className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.3em]">Insights & Activity</span>
+                            </div>
+                            <h2 className="text-2xl font-black tracking-tighter">View Your Statistics</h2>
+                            <p className="text-zinc-400 text-xs font-bold leading-tight">
+                                Hours read, word count, quiz scores, <br /> and active streaks.
+                            </p>
+                        </div>
+                        <div className="bg-zinc-800 p-4 rounded-full group-hover:bg-yellow-400 group-hover:text-black transition-colors">
+                            <ChevronRight size={24} />
+                        </div>
                     </div>
-                    <p className="text-white text-xl font-medium leading-tight italic">
-                        "Reading is a conversation. All books talk. But a good book listens as well."
-                    </p>
                 </div>
 
-                {/* Stats Grid */}
+                {/* Quick Stats Grid */}
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                     <StatCard icon={<Book />} label="Books" value={stats.totalBooks} active />
                     <StatCard icon={<Folder />} label="Folders" value={stats.folderCount} />
@@ -109,7 +123,6 @@ const Profile = () => {
                     <StatCard icon={<Headphones />} label="TTS Hits" value={stats.totalTTS} />
                 </div>
 
-                {/* Visual Spacer to keep things balanced */}
                 <div className="pt-10 flex justify-center">
                     <div className="w-1 h-1 bg-zinc-800 rounded-full"></div>
                 </div>
