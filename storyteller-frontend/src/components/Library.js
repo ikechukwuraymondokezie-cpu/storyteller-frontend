@@ -1,7 +1,10 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { MoreHorizontal, Plus, X, Trash2, CloudDownload } from "lucide-react";
-import Aslibrary from "./Aslibrary";
+import {
+    MoreHorizontal, Plus, Trash2, X, Folder
+} from "lucide-react";
+
+import Aslibrary from "./Aslibrary"; // The new file
 import defaultCover from "../assets/cover.jpg";
 
 /* ---------------- FOLDER MODAL COMPONENT ---------------- */
@@ -11,7 +14,7 @@ function FolderModal({ isOpen, onClose, onCreate }) {
 
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-            <div className="bg-zinc-900 border border-white/10 w-full max-w-sm rounded-2xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+            <div className="bg-zinc-900 border border-white/10 w-full max-sm rounded-2xl p-6 shadow-2xl animate-in zoom-in-95 duration-200">
                 <h2 className="text-xl font-bold text-white mb-1">New Folder</h2>
                 <p className="text-zinc-500 text-sm mb-4">Organize your collection by genre or mood.</p>
                 <input
@@ -46,26 +49,78 @@ export default function Library() {
     const [activeBook, setActiveBook] = useState(null);
     const [loading, setLoading] = useState(true);
     const [uploading, setUploading] = useState(false);
+
     const [folders, setFolders] = useState(["All", "Favorites", "Finished"]);
     const [activeFolder, setActiveFolder] = useState("All");
     const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
     const [isMoving, setIsMoving] = useState(false);
+
     const [isSelectMode, setIsSelectMode] = useState(false);
     const [selectedIds, setSelectedIds] = useState([]);
-    const [searchQuery, setSearchQuery] = useState("");
+
     const [sortType, setSortType] = useState("recent");
     const [viewMode, setViewMode] = useState(localStorage.getItem("libraryViewMode") || "grid");
+    const [searchQuery, setSearchQuery] = useState("");
 
     /* --- HELPERS --- */
     const getCoverUrl = (cover) => {
         if (!cover) return defaultCover;
-        return cover.startsWith('http') ? cover : `${API_URL}${cover.startsWith('/') ? cover : `/uploads/covers/${cover}`}`;
+        if (cover.startsWith('http')) return cover;
+        return `${API_URL}${cover.startsWith('/') ? cover : `/uploads/covers/${cover}`}`;
     };
 
     const getPdfUrl = (path) => {
         if (!path) return null;
-        return path.startsWith('http') ? path : `${API_URL}${path.startsWith('/') ? path : `/uploads/pdfs/${path}`}`;
+        if (path.startsWith('http')) return path;
+        return `${API_URL}${path.startsWith('/') ? path : `/uploads/pdfs/${path}`}`;
     };
+
+    /* --- RENAME LOGIC --- */
+    const handleRename = async (bookId) => {
+        if (!activeBook) return;
+        const newTitle = window.prompt("Rename file to:", activeBook.title);
+        if (!newTitle || newTitle === activeBook.title) return;
+
+        try {
+            const res = await fetch(`${API_URL}/api/books/${bookId}/rename`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ title: newTitle }),
+            });
+            if (res.ok) {
+                const updated = await res.json();
+                setBooks(prev => prev.map(b => b._id === bookId ? updated : b));
+                setActiveBook(null);
+            }
+        } catch (err) { console.error("❌ Rename failed:", err); }
+    };
+
+    /* --- EVENT LISTENERS --- */
+    useEffect(() => {
+        const handleToggle = () => { setIsSelectMode((prev) => !prev); setSelectedIds([]); };
+        const handleSearch = (e) => { setSearchQuery(e.detail.toLowerCase()); };
+        const handleOpenFolderModal = () => { setIsFolderModalOpen(true); };
+        const handleViewChange = (e) => {
+            const mode = e.detail === "grid" || e.detail === "list" ? e.detail : (viewMode === "grid" ? "list" : "grid");
+            setViewMode(mode);
+            localStorage.setItem("libraryViewMode", mode);
+        };
+        const handleSort = (e) => { setSortType(e.detail); };
+
+        window.addEventListener("toggle-selection-mode", handleToggle);
+        window.addEventListener("search-books", handleSearch);
+        window.addEventListener("open-folder-modal", handleOpenFolderModal);
+        window.addEventListener("toggle-view-mode", handleViewChange);
+        window.addEventListener("sort-library", handleSort);
+
+        return () => {
+            window.removeEventListener("toggle-selection-mode", handleToggle);
+            window.removeEventListener("search-books", handleSearch);
+            window.removeEventListener("open-folder-modal", handleOpenFolderModal);
+            window.removeEventListener("toggle-view-mode", handleViewChange);
+            window.removeEventListener("sort-library", handleSort);
+        };
+    }, [viewMode]);
 
     /* --- FETCH DATA --- */
     const fetchData = async () => {
@@ -86,7 +141,6 @@ export default function Library() {
 
     useEffect(() => { fetchData(); }, []);
 
-    /* --- DATA ACTIONS --- */
     const createNewFolder = async (name) => {
         if (folders.includes(name)) return;
         try {
@@ -117,7 +171,7 @@ export default function Library() {
     };
 
     const handleBulkDelete = async () => {
-        if (!window.confirm(`Delete ${selectedIds.length} books permanently?`)) return;
+        if (!window.confirm(`Delete ${selectedIds.length} books?`)) return;
         try {
             await fetch(`${API_URL}/api/books/bulk-delete`, {
                 method: "POST",
@@ -130,49 +184,48 @@ export default function Library() {
         } catch (err) { console.error("❌ Bulk delete failed:", err); }
     };
 
-    const handleRename = async (bookId) => {
-        const newTitle = window.prompt("Rename file to:", activeBook.title);
-        if (!newTitle || newTitle === activeBook.title) return;
-        try {
-            const res = await fetch(`${API_URL}/api/books/${bookId}/rename`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ title: newTitle }),
-            });
-            if (res.ok) {
-                const updated = await res.json();
-                setBooks(prev => prev.map(b => b._id === bookId ? updated : b));
-                setActiveBook(null);
-            }
-        } catch (err) { console.error(err); }
-    };
-
     const handleAction = async (bookId, action) => {
         if (action === "delete") {
             if (!window.confirm("Delete this book?")) return;
-            const res = await fetch(`${API_URL}/api/books/${bookId}`, { method: "DELETE" });
-            if (res.ok) { setBooks(p => p.filter(b => b._id !== bookId)); setActiveBook(null); }
-        } else if (action === "download") {
+            try {
+                const res = await fetch(`${API_URL}/api/books/${bookId}`, { method: "DELETE" });
+                if (res.ok) {
+                    setBooks((prev) => prev.filter((b) => b._id !== bookId));
+                    setActiveBook(null);
+                }
+            } catch (err) { console.error(err); }
+            return;
+        }
+
+        if (action === "download" && activeBook) {
             const link = document.createElement('a');
             link.href = getPdfUrl(activeBook.pdfPath);
             link.download = `${activeBook.title}.pdf`;
-            document.body.appendChild(link); link.click(); document.body.removeChild(link);
-        } else if (action.startsWith("move:")) {
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        if (action.startsWith("move:")) {
             const targetFolder = action.split(":")[1] || "All";
-            const res = await fetch(`${API_URL}/api/books/${bookId}/move`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ folder: targetFolder }),
-            });
-            const updated = await res.json();
-            setBooks(p => p.map(b => b._id === bookId ? updated : b));
-            setActiveBook(null); setIsMoving(false);
+            try {
+                const res = await fetch(`${API_URL}/api/books/${bookId}/move`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ folder: targetFolder }),
+                });
+                const updatedBook = await res.json();
+                setBooks((prev) => prev.map((b) => (b._id === bookId ? updatedBook : b)));
+                setActiveBook(null);
+                setIsMoving(false);
+            } catch (err) { console.error(err); }
+            return;
         }
     };
 
-    const filteredBooks = books
+    const filteredBooks = (books || [])
         .filter((book) => {
-            const matchesSearch = (book.title || "").toLowerCase().includes(searchQuery.toLowerCase());
+            const matchesSearch = (book.title || "").toLowerCase().includes(searchQuery);
             const matchesFolder = activeFolder === "All" || book.folder === activeFolder;
             return matchesSearch && matchesFolder;
         })
@@ -189,68 +242,57 @@ export default function Library() {
                     <label className="flex items-center gap-2 cursor-pointer bg-yellow-600 hover:bg-yellow-500 text-white py-2 px-4 rounded-xl transition-colors">
                         <Plus className="w-5 h-5" />
                         {uploading ? "Uploading…" : "Upload"}
-                        <input type="file" accept=".pdf" className="hidden" disabled={uploading} onChange={(e) => { if (e.target.files?.[0]) handleUpload(e.target.files[0]); }} />
+                        <input type="file" accept=".pdf" className="hidden" disabled={uploading} onChange={(e) => { if (e.target.files?.[0]) { handleUpload(e.target.files[0]); e.target.value = null; } }} />
                     </label>
                 )}
             </div>
 
-            {/* FOLDER PILLS */}
             <div className="flex items-center gap-2 overflow-x-auto pb-6 no-scrollbar">
                 {folders.map((folder) => (
-                    <button
-                        key={folder}
-                        onClick={() => setActiveFolder(folder)}
-                        className={`px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest transition-all whitespace-nowrap border ${activeFolder === folder ? "bg-yellow-400 border-yellow-400 text-black" : "bg-transparent border-white/10 text-zinc-500 hover:text-white"}`}
-                    >
-                        {folder}
-                    </button>
+                    <button key={folder} onClick={() => setActiveFolder(folder)} className={`px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest transition-all border ${activeFolder === folder ? "bg-yellow-400 border-yellow-400 text-black" : "bg-transparent border-white/10 text-zinc-500 hover:text-white"}`}>{folder}</button>
                 ))}
             </div>
 
-            {/* BOOK LIST/GRID */}
             {loading ? (
                 <div className="text-center text-zinc-400 mt-20 italic">Loading library...</div>
             ) : (
-                <div className={viewMode === "grid" ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4" : "flex flex-col gap-2"}>
+                <div className={viewMode === "grid" ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4" : "flex flex-col gap-2"}>
                     {filteredBooks.map((book) => (
                         <div
                             key={book._id}
                             onClick={() => isSelectMode ? setSelectedIds(p => p.includes(book._id) ? p.filter(i => i !== book._id) : [...p, book._id]) : navigate(`/reader/${book._id}`)}
-                            className={`relative bg-zinc-900 p-2 group cursor-pointer overflow-hidden ${viewMode === "grid" ? "rounded-lg flex-col" : "rounded-xl flex items-center gap-4"} ${selectedIds.includes(book._id) ? "ring-2 ring-yellow-400 bg-zinc-800" : "hover:bg-zinc-800"}`}
+                            className={`relative bg-zinc-900 transition group cursor-pointer overflow-hidden ${viewMode === "grid" ? "rounded-lg p-2 flex-col" : "rounded-xl p-3 flex items-center gap-4"} ${selectedIds.includes(book._id) ? "ring-2 ring-yellow-400 bg-zinc-800" : "hover:bg-zinc-800"}`}
                         >
                             {isSelectMode && (
-                                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center mr-2 ${selectedIds.includes(book._id) ? "bg-yellow-400 border-yellow-400" : "border-white/30"}`}>
+                                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition ${selectedIds.includes(book._id) ? "bg-yellow-400 border-yellow-400" : "border-white"}`}>
                                     {selectedIds.includes(book._id) && <X size={12} className="text-black stroke-[4px]" />}
                                 </div>
                             )}
                             <div className={`overflow-hidden rounded-md bg-zinc-800 flex-shrink-0 ${viewMode === "grid" ? "aspect-[2/3] w-full" : "w-12 h-16"}`}>
-                                <img src={getCoverUrl(book.cover)} className="w-full h-full object-cover" alt="" onError={(e) => e.target.src = defaultCover} />
+                                <img src={getCoverUrl(book.cover)} alt={book.title} className="w-full h-full object-cover" onError={(e) => { e.currentTarget.src = defaultCover; }} />
                             </div>
                             <div className="flex-1 overflow-hidden">
                                 <p className={`text-white font-medium truncate ${viewMode === "grid" ? "mt-2 text-sm px-1 text-center" : "text-base"}`}>{book.title}</p>
-                                <p className={`text-zinc-500 text-[10px] uppercase mt-0.5 ${viewMode === "grid" ? "text-center" : ""}`}>{book.words ? `${book.words.toLocaleString()} words` : "New Book"}</p>
+                                <p className={`text-zinc-500 text-[10px] uppercase tracking-widest mt-0.5 ${viewMode === "grid" ? "text-center" : ""}`}>{book.words ? `${book.words.toLocaleString()} words` : "New Book"}</p>
                             </div>
                             {!isSelectMode && (
-                                <button onClick={(e) => { e.stopPropagation(); setActiveBook(book); setIsMoving(false); }} className={`p-1 bg-black/40 rounded-full hover:bg-zinc-700 transition ${viewMode === "grid" ? "absolute top-2 right-2" : "ml-auto"}`}>
-                                    <MoreHorizontal className="w-5 h-5 text-white" />
-                                </button>
+                                <button onClick={(e) => { e.stopPropagation(); setActiveBook(book); setIsMoving(false); }} className={`p-1 rounded-full bg-black/40 hover:bg-zinc-700 transition flex-shrink-0 ${viewMode === "grid" ? "absolute top-2 right-2" : "ml-auto"}`}><MoreHorizontal className="w-5 h-5 text-white" /></button>
                             )}
                         </div>
                     ))}
                 </div>
             )}
 
-            {/* BULK DELETE BAR */}
             {isSelectMode && (
                 <div className="fixed bottom-6 left-1/2 -translate-x-1/2 w-[92%] max-w-md bg-zinc-900 border border-white/10 shadow-2xl rounded-2xl p-4 flex items-center justify-between z-[60] animate-in slide-in-from-bottom-10">
-                    <span className="text-white font-semibold">{selectedIds.length} selected</span>
-                    <button onClick={handleBulkDelete} disabled={selectedIds.length === 0} className="bg-red-500 text-white px-6 py-2 rounded-xl font-bold flex items-center gap-2">
-                        <Trash2 size={18} /> Delete
-                    </button>
+                    <div className="flex items-center gap-3">
+                        <button onClick={() => { setIsSelectMode(false); setSelectedIds([]); }} className="p-2 hover:bg-white/10 rounded-full text-zinc-400"><X size={20} /></button>
+                        <span className="text-white font-semibold">{selectedIds.length} selected</span>
+                    </div>
+                    <button onClick={handleBulkDelete} disabled={selectedIds.length === 0} className={`flex items-center gap-2 px-6 py-2 rounded-xl font-bold transition-all ${selectedIds.length > 0 ? "bg-red-500 text-white" : "bg-zinc-800 text-zinc-500"}`}><Trash2 size={18} /> Delete</button>
                 </div>
             )}
 
-            {/* EXTERNAL ACTIONSHEET COMPONENT */}
             <Aslibrary
                 activeBook={activeBook}
                 onClose={() => { setActiveBook(null); setIsMoving(false); }}
