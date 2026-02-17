@@ -165,8 +165,8 @@ const Profile = () => {
 const StatCard = ({ icon, label, value, active }) => {
     return (
         <div className={`p-6 rounded-[2.2rem] border transition-all duration-500 flex flex-col items-center justify-center text-center group ${active
-                ? "bg-yellow-400 border-yellow-400 shadow-[0_15px_35px_rgba(250,204,21,0.15)]"
-                : "bg-zinc-900/40 border-white/5 hover:border-yellow-400/20"
+            ? "bg-yellow-400 border-yellow-400 shadow-[0_15px_35px_rgba(250,204,21,0.15)]"
+            : "bg-zinc-900/40 border-white/5 hover:border-yellow-400/20"
             }`}>
             <div className={`p-4 rounded-2xl mb-4 transition-transform group-hover:rotate-6 duration-300 ${active ? "bg-black text-yellow-400" : "bg-zinc-800 text-yellow-400"
                 }`}>
