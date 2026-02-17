@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-    MoreHorizontal, Plus, Trash2, X, Folder
+    MoreHorizontal, Plus, Trash2, X, DownloadCloud
 } from "lucide-react";
 
-import Aslibrary from "./Aslibrary"; // The new file
+import Aslibrary from "./Aslibrary";
 import defaultCover from "../assets/cover.jpg";
 
 /* ---------------- FOLDER MODAL COMPONENT ---------------- */
@@ -59,10 +59,9 @@ export default function Library() {
     const [selectedIds, setSelectedIds] = useState([]);
 
     const [sortType, setSortType] = useState("recent");
-    const [viewMode, setViewMode] = useState(localStorage.getItem("libraryViewMode") || "grid");
+    const [viewMode, setViewMode] = useState(localStorage.getItem("libraryViewMode") || "list");
     const [searchQuery, setSearchQuery] = useState("");
 
-    /* --- HELPERS --- */
     const getCoverUrl = (cover) => {
         if (!cover) return defaultCover;
         if (cover.startsWith('http')) return cover;
@@ -75,7 +74,6 @@ export default function Library() {
         return `${API_URL}${path.startsWith('/') ? path : `/uploads/pdfs/${path}`}`;
     };
 
-    /* --- RENAME LOGIC --- */
     const handleRename = async (bookId) => {
         if (!activeBook) return;
         const newTitle = window.prompt("Rename file to:", activeBook.title);
@@ -95,7 +93,6 @@ export default function Library() {
         } catch (err) { console.error("❌ Rename failed:", err); }
     };
 
-    /* --- EVENT LISTENERS --- */
     useEffect(() => {
         const handleToggle = () => { setIsSelectMode((prev) => !prev); setSelectedIds([]); };
         const handleSearch = (e) => { setSearchQuery(e.detail.toLowerCase()); };
@@ -122,7 +119,6 @@ export default function Library() {
         };
     }, [viewMode]);
 
-    /* --- FETCH DATA --- */
     const fetchData = async () => {
         try {
             setLoading(true);
@@ -235,49 +231,87 @@ export default function Library() {
         });
 
     return (
-        <div className={`min-h-screen bg-[#09090b] px-6 py-8 ${isSelectMode ? "pb-32" : ""}`}>
+        <div className={`min-h-screen bg-[#000] px-4 py-8 ${isSelectMode ? "pb-32" : ""}`}>
             <div className="flex justify-between items-center mb-6">
-                <h1 className="text-3xl md:text-5xl font-extrabold text-yellow-400">Your Collection</h1>
+                <h1 className="text-2xl font-bold text-white">Library</h1>
                 {!isSelectMode && (
-                    <label className="flex items-center gap-2 cursor-pointer bg-yellow-600 hover:bg-yellow-500 text-white py-2 px-4 rounded-xl transition-colors">
-                        <Plus className="w-5 h-5" />
-                        {uploading ? "Uploading…" : "Upload"}
+                    <label className="flex items-center gap-2 cursor-pointer bg-zinc-800 hover:bg-zinc-700 text-white py-1.5 px-3 rounded-full transition-colors text-sm">
+                        <Plus className="w-4 h-4" />
+                        {uploading ? "..." : "Upload"}
                         <input type="file" accept=".pdf" className="hidden" disabled={uploading} onChange={(e) => { if (e.target.files?.[0]) { handleUpload(e.target.files[0]); e.target.value = null; } }} />
                     </label>
                 )}
             </div>
 
-            <div className="flex items-center gap-2 overflow-x-auto pb-6 no-scrollbar">
+            <div className="flex items-center gap-2 overflow-x-auto pb-8 no-scrollbar">
                 {folders.map((folder) => (
-                    <button key={folder} onClick={() => setActiveFolder(folder)} className={`px-4 py-1.5 rounded-full text-xs font-bold uppercase tracking-widest transition-all border ${activeFolder === folder ? "bg-yellow-400 border-yellow-400 text-black" : "bg-transparent border-white/10 text-zinc-500 hover:text-white"}`}>{folder}</button>
+                    <button
+                        key={folder}
+                        onClick={() => setActiveFolder(folder)}
+                        className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider transition-all ${activeFolder === folder ? "bg-indigo-600 text-white" : "bg-zinc-900 text-zinc-500"}`}
+                    >
+                        {folder}
+                    </button>
                 ))}
             </div>
 
             {loading ? (
-                <div className="text-center text-zinc-400 mt-20 italic">Loading library...</div>
+                <div className="text-center text-zinc-600 mt-20 text-sm">Loading...</div>
             ) : (
-                <div className={viewMode === "grid" ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4" : "flex flex-col gap-2"}>
-                    {filteredBooks.map((book) => (
+                <div className={viewMode === "grid" ? "grid grid-cols-2 gap-4" : "flex flex-col"}>
+                    {filteredBooks.map((book, index) => (
                         <div
                             key={book._id}
                             onClick={() => isSelectMode ? setSelectedIds(p => p.includes(book._id) ? p.filter(i => i !== book._id) : [...p, book._id]) : navigate(`/reader/${book._id}`)}
-                            className={`relative bg-zinc-900 transition group cursor-pointer overflow-hidden ${viewMode === "grid" ? "rounded-lg p-2 flex-col" : "rounded-xl p-3 flex items-center gap-4"} ${selectedIds.includes(book._id) ? "ring-2 ring-yellow-400 bg-zinc-800" : "hover:bg-zinc-800"}`}
+                            className={`group relative flex items-center gap-4 py-4 border-b border-zinc-900/50 ${selectedIds.includes(book._id) ? "bg-zinc-900/50" : ""}`}
                         >
+                            {/* Selection Checkmark */}
                             {isSelectMode && (
-                                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition ${selectedIds.includes(book._id) ? "bg-yellow-400 border-yellow-400" : "border-white"}`}>
-                                    {selectedIds.includes(book._id) && <X size={12} className="text-black stroke-[4px]" />}
+                                <div className={`w-5 h-5 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition ${selectedIds.includes(book._id) ? "bg-indigo-500 border-indigo-500" : "border-zinc-700"}`}>
+                                    {selectedIds.includes(book._id) && <X size={12} className="text-white stroke-[4px]" />}
                                 </div>
                             )}
-                            <div className={`overflow-hidden rounded-md bg-zinc-800 flex-shrink-0 ${viewMode === "grid" ? "aspect-[2/3] w-full" : "w-12 h-16"}`}>
+
+                            {/* Book Cover Container */}
+                            <div className="w-[52px] h-[78px] rounded-md bg-zinc-900 overflow-hidden flex-shrink-0 shadow-lg border border-white/5">
                                 <img src={getCoverUrl(book.cover)} alt={book.title} className="w-full h-full object-cover" onError={(e) => { e.currentTarget.src = defaultCover; }} />
                             </div>
-                            <div className="flex-1 overflow-hidden">
-                                <p className={`text-white font-medium truncate ${viewMode === "grid" ? "mt-2 text-sm px-1 text-center" : "text-base"}`}>{book.title}</p>
-                                <p className={`text-zinc-500 text-[10px] uppercase tracking-widest mt-0.5 ${viewMode === "grid" ? "text-center" : ""}`}>{book.words ? `${book.words.toLocaleString()} words` : "New Book"}</p>
+
+                            {/* Metadata Section */}
+                            <div className="flex-1 min-w-0 pr-2">
+                                <div className="flex items-center gap-2 mb-0.5">
+                                    {/* Visualizer - only shown for the first book as an example of 'Active' */}
+                                    {index === 0 && (
+                                        <div className="flex items-end gap-[1.5px] h-3 mb-0.5">
+                                            <div className="w-[2px] h-2 bg-indigo-400 rounded-full animate-pulse"></div>
+                                            <div className="w-[2px] h-3 bg-indigo-400 rounded-full"></div>
+                                            <div className="w-[2px] h-2 bg-indigo-400 rounded-full animate-pulse"></div>
+                                        </div>
+                                    )}
+                                    <h3 className="text-[17px] font-semibold text-white truncate tracking-tight">
+                                        {book.title}
+                                    </h3>
+                                </div>
+
+                                <p className="text-zinc-500 text-sm font-medium">
+                                    {book.progress || '0'}% • {book.pdfPath?.includes('.pdf') ? 'pdf' : 'book'}
+                                </p>
                             </div>
-                            {!isSelectMode && (
-                                <button onClick={(e) => { e.stopPropagation(); setActiveBook(book); setIsMoving(false); }} className={`p-1 rounded-full bg-black/40 hover:bg-zinc-700 transition flex-shrink-0 ${viewMode === "grid" ? "absolute top-2 right-2" : "ml-auto"}`}><MoreHorizontal className="w-5 h-5 text-white" /></button>
-                            )}
+
+                            {/* Action Buttons */}
+                            <div className="flex items-center gap-3">
+                                {book.status === 'processing' && (
+                                    <DownloadCloud size={20} className="text-zinc-600" />
+                                )}
+                                {!isSelectMode && (
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); setActiveBook(book); setIsMoving(false); }}
+                                        className="p-1.5 text-zinc-700 hover:text-zinc-400 transition"
+                                    >
+                                        <MoreHorizontal size={22} />
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     ))}
                 </div>
