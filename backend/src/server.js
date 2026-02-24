@@ -9,8 +9,8 @@ const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
 const axios = require("axios");
 const vision = require('@google-cloud/vision');
-const userRoutes = require("./src/routes/userRoutes");
-const authRoutes = require("./src/routes/authRoutes");
+const userRoutes = require("./routes/userRoutes");
+const authRoutes = require("./routes/authRoutes");
 
 const app = express();
 
