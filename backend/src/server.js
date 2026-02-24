@@ -9,6 +9,8 @@ const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
 const axios = require("axios");
 const vision = require('@google-cloud/vision');
+const userRoutes = require("./src/routes/userRoutes");
+const authRoutes = require("./src/routes/authRoutes");
 
 const app = express();
 
@@ -48,6 +50,8 @@ fs.ensureDirSync(uploadDir);
 fs.ensureDirSync(coversDir);
 
 app.use("/uploads", express.static(uploadsBase));
+app.use("/api/auth", authRoutes);
+app.use("/api/users", userRoutes);
 
 /* -------------------- MONGODB -------------------- */
 const MONGO_URI = process.env.MONGO_URI;
@@ -57,10 +61,12 @@ mongoose.connect(MONGO_URI)
 
 /* -------------------- SCHEMAS -------------------- */
 const Folder = mongoose.model("Folder", new mongoose.Schema({
-    name: { type: String, required: true, unique: true }
+    name: { type: String, required: true },
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' } // Link to user
 }));
 
 const bookSchema = new mongoose.Schema({
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Link book to owner
     title: { type: String, required: true },
     cover: String,
     pdfPath: String,
@@ -76,7 +82,6 @@ const bookSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const Book = mongoose.model("Book", bookSchema);
-
 /* -------------------- MULTER -------------------- */
 const storage = multer.diskStorage({
     destination: (_, __, cb) => cb(null, uploadDir),
@@ -335,55 +340,77 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
 });
 
 /* --- OTHER ROUTES --- */
-app.get("/api/books/folders", async (_, res) => {
+app.get("/api/books/folders", protect, async (req, res) => {
     try {
-        const folders = await Folder.find().sort({ name: 1 });
+        // Only find folders belonging to the logged-in user
+        const folders = await Folder.find({ user: req.user._id }).sort({ name: 1 });
         res.json(["All", ...folders.map(f => f.name)]);
-    } catch { res.status(500).json({ error: "Failed" }); }
+    } catch { res.status(500).json({ error: "Failed to fetch folders" }); }
 });
 
-app.post("/api/books/folders", async (req, res) => {
+app.post("/api/books/folders", protect, async (req, res) => {
     try {
-        const folder = await Folder.create({ name: req.body.name });
+        // Create folder linked to this specific user
+        const folder = await Folder.create({
+            name: req.body.name,
+            user: req.user._id
+        });
         res.status(201).json(folder);
-    } catch { res.status(400).json({ error: "Exists" }); }
+    } catch { res.status(400).json({ error: "Folder already exists or creation failed" }); }
 });
 
-app.delete("/api/books/folders/:name", async (req, res) => {
+app.delete("/api/books/folders/:name", protect, async (req, res) => {
     try {
-        await Folder.findOneAndDelete({ name: req.params.name });
-        await Book.updateMany({ folder: req.params.name }, { folder: "All" });
-        res.json({ message: "Deleted" });
-    } catch { res.status(500).json({ error: "Failed" }); }
+        // Ensure user can only delete THEIR folder
+        await Folder.findOneAndDelete({ name: req.params.name, user: req.user._id });
+        // Update only the user's books in that folder
+        await Book.updateMany(
+            { folder: req.params.name, user: req.user._id },
+            { folder: "All" }
+        );
+        res.json({ message: "Folder deleted and books moved to All" });
+    } catch { res.status(500).json({ error: "Failed to delete folder" }); }
 });
 
-app.get("/api/books", async (_, res) => {
+/* --- PROTECTED BOOK ROUTES --- */
+
+app.get("/api/books", protect, async (req, res) => {
     try {
-        const books = await Book.find().sort({ createdAt: -1 });
+        // Filter: Only show books where 'user' matches the logged-in ID
+        const books = await Book.find({ user: req.user._id }).sort({ createdAt: -1 });
         res.json(books.map(formatBook));
-    } catch { res.status(500).json({ error: "Failed" }); }
+    } catch { res.status(500).json({ error: "Failed to fetch books" }); }
 });
 
-app.get("/api/books/:id", async (req, res) => {
+app.get("/api/books/:id", protect, async (req, res) => {
     try {
-        const book = await Book.findById(req.params.id);
-        if (!book) return res.status(404).json({ error: "Not found" });
+        // Find by ID AND ensure the user owns it
+        const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
+        if (!book) return res.status(404).json({ error: "Book not found or unauthorized" });
         res.json(formatBook(book));
-    } catch { res.status(500).json({ error: "Error" }); }
+    } catch { res.status(500).json({ error: "Error fetching book" }); }
 });
 
-app.patch("/api/books/:id", async (req, res) => {
+app.patch("/api/books/:id", protect, async (req, res) => {
     try {
-        const book = await Book.findByIdAndUpdate(req.params.id, req.body, { new: true });
+        // Only update if the book belongs to the user
+        const book = await Book.findOneAndUpdate(
+            { _id: req.params.id, user: req.user._id },
+            req.body,
+            { new: true }
+        );
+        if (!book) return res.status(404).json({ error: "Update failed: Book not found" });
         res.json(formatBook(book));
-    } catch { res.status(500).json({ error: "Failed" }); }
+    } catch { res.status(500).json({ error: "Failed to update book" }); }
 });
 
-app.delete("/api/books/:id", async (req, res) => {
+app.delete("/api/books/:id", protect, async (req, res) => {
     try {
-        await Book.findByIdAndDelete(req.params.id);
-        res.json({ message: "Deleted" });
-    } catch { res.status(500).json({ error: "Failed" }); }
+        // Only delete if the book belongs to the user
+        const result = await Book.findOneAndDelete({ _id: req.params.id, user: req.user._id });
+        if (!result) return res.status(404).json({ error: "Delete failed: Unauthorized" });
+        res.json({ message: "Book deleted successfully" });
+    } catch { res.status(500).json({ error: "Failed to delete book" }); }
 });
 
 /* --- START --- */
