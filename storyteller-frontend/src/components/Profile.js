@@ -1,145 +1,116 @@
-import React, { useState, useEffect } from 'react';
-import axios from 'axios';
-import {
-    Book, Download, Headphones, Folder,
-    User, BarChart3, Settings as SettingsIcon, ChevronRight
+import React from 'react';
+import { 
+  ChevronLeft, Flame, Mic2, BookOpen, 
+  BrainCircuit, Clock, Crown, 
+  TrendingUp, Calendar
 } from 'lucide-react';
-import Settings from './Settings';
-import Statistics from './Statistics'; // Ensure this file exists
 
-const API_BASE = "https://storyteller-frontend-x65b.onrender.com";
+const Statistics = ({ onBack, stats }) => {
+  // Fallback data if stats aren't passed correctly
+  const displayStats = {
+    totalBooks: stats?.totalBooks || 0,
+    totalTTS: stats?.totalTTS || 0
+  };
 
-const Profile = () => {
-    const [showSettings, setShowSettings] = useState(false);
-    const [showStats, setShowStats] = useState(false);
-    const [stats, setStats] = useState({
-        totalBooks: 0,
-        totalDownloads: 0,
-        totalTTS: 0,
-        folderCount: 0
-    });
-    const [loading, setLoading] = useState(true);
+  return (
+    <div className="min-h-screen bg-black text-white px-6 pt-12 pb-24 animate-in slide-in-from-right duration-500">
+      
+      {/* Header */}
+      <div className="flex items-center mb-8 max-w-2xl mx-auto">
+        <button 
+          onClick={onBack} 
+          className="p-2 -ml-2 bg-zinc-900 border border-white/5 rounded-xl hover:text-yellow-400 transition-colors"
+        >
+          <ChevronLeft size={24} />
+        </button>
+        <h1 className="text-2xl font-black tracking-tighter ml-4">INSIGHTS</h1>
+      </div>
 
-    const getUserRank = (count) => {
-        if (count > 20) return { title: "Grand Scholar", color: "text-yellow-400" };
-        if (count > 10) return { title: "Dedicated Reader", color: "text-yellow-500" };
-        return { title: "Rising Reader", color: "text-zinc-500" };
-    };
-
-    useEffect(() => {
-        fetchProfileData();
-    }, []);
-
-    const fetchProfileData = async () => {
-        try {
-            const [booksRes, foldersRes] = await Promise.all([
-                axios.get(`${API_BASE}/api/books`),
-                axios.get(`${API_BASE}/api/books/folders`)
-            ]);
-            const books = booksRes.data;
-            const customFolders = foldersRes.data.filter(f => f !== "All" && f !== "default");
-
-            setStats({
-                totalBooks: books.length,
-                totalDownloads: books.reduce((sum, b) => sum + (b.downloads || 0), 0),
-                totalTTS: books.reduce((sum, b) => sum + (b.ttsRequests || 0), 0),
-                folderCount: customFolders.length
-            });
-            setLoading(false);
-        } catch (err) {
-            console.error("Error fetching profile:", err);
-            setLoading(false);
-        }
-    };
-
-    // Navigation Logic
-    if (showSettings) return <Settings onBack={() => setShowSettings(false)} />;
-    if (showStats) return <Statistics onBack={() => setShowStats(false)} stats={stats} />;
-
-    if (loading) return (
-        <div className="min-h-screen bg-black flex items-center justify-center text-yellow-400 font-bold animate-pulse">
-            LOADING PROFILE...
+      <div className="max-w-2xl mx-auto space-y-4">
+        
+        {/* Row 1: Streak & Subscription */}
+        <div className="grid grid-cols-2 gap-4">
+          <div className="bg-zinc-900/50 border border-white/5 p-6 rounded-[2.5rem] flex flex-col items-center justify-center text-center">
+            <Flame size={32} className="text-orange-500 fill-orange-500 mb-2 animate-pulse" />
+            <span className="text-3xl font-black tracking-tighter">12</span>
+            <span className="text-[10px] font-black uppercase text-zinc-500 tracking-widest">Day Streak</span>
+          </div>
+          
+          <div className="bg-yellow-400 p-6 rounded-[2.5rem] flex flex-col items-center justify-center text-center text-black shadow-[0_0_30px_rgba(250,204,21,0.2)]">
+            <Crown size={32} className="mb-2" />
+            <span className="text-xl font-black tracking-tighter uppercase leading-none">Pro Plan</span>
+            <span className="text-[10px] font-black opacity-60 uppercase tracking-widest">Active</span>
+          </div>
         </div>
-    );
 
-    const rank = getUserRank(stats.totalBooks);
-
-    return (
-        <div className="min-h-screen bg-black text-white pb-24 animate-in fade-in duration-700">
-
-            {/* TOP NAVIGATION */}
-            <nav className="sticky top-0 z-50 bg-black/60 backdrop-blur-xl border-b border-white/5 px-6 py-4 mb-8">
-                <div className="flex justify-between items-center max-w-4xl mx-auto">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-yellow-400 rounded-xl flex items-center justify-center shadow-[0_0_20px_rgba(250,204,21,0.3)]">
-                            <User size={20} className="text-black" />
-                        </div>
-                        <div>
-                            <h1 className="text-xl font-black tracking-tighter leading-none">Chief Reader</h1>
-                            <span className={`text-[9px] font-bold uppercase tracking-[0.2em] ${rank.color}`}>
-                                {rank.title}
-                            </span>
-                        </div>
-                    </div>
-
-                    <button
-                        onClick={() => setShowSettings(true)}
-                        className="p-2.5 bg-zinc-900 border border-white/10 rounded-xl hover:bg-zinc-800 transition-all active:scale-95"
-                    >
-                        <SettingsIcon size={20} className="text-zinc-400 hover:text-yellow-400 transition-colors" />
-                    </button>
+        {/* Row 2: Reading Time */}
+        <div className="bg-[#1c1c1e] border border-white/5 p-8 rounded-[2.5rem] relative overflow-hidden">
+            <div className="relative z-10">
+                <div className="flex items-center gap-2 mb-1">
+                    <Clock size={16} className="text-yellow-400" />
+                    <span className="text-zinc-500 text-[10px] font-black uppercase tracking-widest">Focus Time</span>
                 </div>
-            </nav>
+                <h3 className="text-4xl font-black tracking-tighter mb-1">124.5 <span className="text-lg text-zinc-600 font-bold">hrs</span></h3>
+                <p className="text-zinc-500 text-xs font-bold">Total time spent reading and listening</p>
+            </div>
+            <TrendingUp size={100} className="absolute -right-4 -bottom-4 text-white/5 -rotate-12" />
+        </div>
 
-            <div className="max-w-4xl mx-auto px-6 space-y-10">
+        {/* Detailed Stats List */}
+        <div className="space-y-3">
+            <DetailedStat 
+                icon={<Mic2 className="text-blue-400" />} 
+                label="Words TTS'd" 
+                value="842,031" 
+                sub="High Quality Neural Voices"
+            />
+            <DetailedStat 
+                icon={<BookOpen className="text-purple-400" />} 
+                label="Books Completed" 
+                value={displayStats.totalBooks} 
+                sub="From your library"
+            />
+            <DetailedStat 
+                icon={<BrainCircuit className="text-green-400" />} 
+                label="Quizzes Taken" 
+                value="42" 
+                sub="89% Average Accuracy"
+            />
+        </div>
 
-                {/* INTERACTIVE STATS TRIGGER */}
-                <div
-                    onClick={() => setShowStats(true)}
-                    className="relative bg-zinc-900/40 p-8 rounded-[2.5rem] border border-white/5 backdrop-blur-xl cursor-pointer hover:border-yellow-400/40 transition-all active:scale-[0.98] group"
-                >
-                    <div className="flex justify-between items-center">
-                        <div className="space-y-2">
-                            <div className="flex items-center gap-2">
-                                <BarChart3 size={14} className="text-yellow-400" />
-                                <span className="text-zinc-500 text-[10px] font-black uppercase tracking-[0.3em]">Insights & Activity</span>
-                            </div>
-                            <h2 className="text-2xl font-black tracking-tighter">View Your Statistics</h2>
-                            <p className="text-zinc-400 text-xs font-bold leading-tight">
-                                Hours read, word count, quiz scores, <br /> and active streaks.
-                            </p>
-                        </div>
-                        <div className="bg-zinc-800 p-4 rounded-full group-hover:bg-yellow-400 group-hover:text-black transition-colors">
-                            <ChevronRight size={24} />
-                        </div>
-                    </div>
-                </div>
-
-                {/* Quick Stats Grid */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                    <StatCard icon={<Book />} label="Books" value={stats.totalBooks} active />
-                    <StatCard icon={<Folder />} label="Folders" value={stats.folderCount} />
-                    <StatCard icon={<Download />} label="Saved" value={stats.totalDownloads} />
-                    <StatCard icon={<Headphones />} label="TTS Hits" value={stats.totalTTS} />
-                </div>
-
-                <div className="pt-10 flex justify-center">
-                    <div className="w-1 h-1 bg-zinc-800 rounded-full"></div>
-                </div>
+        {/* Activity Mini Map */}
+        <div className="bg-zinc-900/30 border border-white/5 p-6 rounded-[2.5rem]">
+            <div className="flex items-center gap-2 mb-4">
+                <Calendar size={14} className="text-yellow-400" />
+                <span className="text-zinc-500 text-[10px] font-black uppercase tracking-widest">Activity Map</span>
+            </div>
+            <div className="flex gap-2 justify-between">
+                {[...Array(14)].map((_, i) => (
+                    <div 
+                        key={i} 
+                        className={`h-8 w-full rounded-md ${i > 10 ? 'bg-yellow-400' : i % 3 === 0 ? 'bg-zinc-800' : 'bg-yellow-400/40'}`}
+                    />
+                ))}
             </div>
         </div>
-    );
+      </div>
+    </div>
+  );
 };
 
-const StatCard = ({ icon, label, value, active }) => (
-    <div className={`p-6 rounded-[2.2rem] border transition-all flex flex-col items-center justify-center text-center ${active ? "bg-yellow-400 border-yellow-400 shadow-lg shadow-yellow-400/10" : "bg-zinc-900/40 border-white/5"
-        }`}>
-        <div className={`p-4 rounded-2xl mb-4 ${active ? "bg-black text-yellow-400" : "bg-zinc-800 text-yellow-400"}`}>
-            {React.cloneElement(icon, { size: 24 })}
+const DetailedStat = ({ icon, label, value, sub }) => (
+  <div className="bg-[#1c1c1e] border border-white/5 p-5 rounded-3xl flex items-center justify-between">
+    <div className="flex items-center gap-4">
+        <div className="w-12 h-12 bg-black rounded-2xl flex items-center justify-center">
+            {icon}
         </div>
-        <div className={`text-4xl font-black tracking-tighter ${active ? "text-black" : "text-white"}`}>{value}</div>
-        <div className={`text-[10px] uppercase tracking-[0.25em] font-black mt-2 ${active ? "text-black/50" : "text-zinc-600"}`}>{label}</div>
+        <div>
+            <span className="text-zinc-500 text-[10px] font-black uppercase tracking-widest block">{label}</span>
+            <span className="text-xl font-black tracking-tighter">{value}</span>
+        </div>
     </div>
+    <span className="text-[10px] font-bold text-zinc-700 max-w-[80px] text-right leading-tight">{sub}</span>
+  </div>
 );
 
-export default Profile;
+export default Statistics; // Ensure this is here!
