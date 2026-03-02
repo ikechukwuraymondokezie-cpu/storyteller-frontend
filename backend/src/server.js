@@ -9,8 +9,18 @@ const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
 const axios = require("axios");
 const vision = require('@google-cloud/vision');
+
+// IMPORTS
 const userRoutes = require("./routes/userRoutes");
 const authRoutes = require("./routes/authRoutes");
+const { protect } = require("./middleware/authMiddleware");
+
+/* -------------------- DEBUG LOGS -------------------- */
+console.log("--- STARTUP DEBUGGING ---");
+console.log("userRoutes type:", typeof userRoutes);
+console.log("authRoutes type:", typeof authRoutes);
+console.log("protect function type:", typeof protect);
+console.log("-------------------------");
 
 const app = express();
 
@@ -50,6 +60,8 @@ fs.ensureDirSync(uploadDir);
 fs.ensureDirSync(coversDir);
 
 app.use("/uploads", express.static(uploadsBase));
+
+// The lines causing the crash on Render
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 
@@ -59,14 +71,14 @@ mongoose.connect(MONGO_URI)
     .then(() => console.log("✅ MongoDB connected"))
     .catch((err) => console.error("❌ MongoDB error:", err));
 
-/* -------------------- SCHEMAS -------------------- */
+/* -------------------- SCHEMAS & MODELS -------------------- */
 const Folder = mongoose.model("Folder", new mongoose.Schema({
     name: { type: String, required: true },
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' } // Link to user
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }));
 
 const bookSchema = new mongoose.Schema({
-    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, // Link book to owner
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     title: { type: String, required: true },
     cover: String,
     pdfPath: String,
@@ -82,6 +94,7 @@ const bookSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const Book = mongoose.model("Book", bookSchema);
+
 /* -------------------- MULTER -------------------- */
 const storage = multer.diskStorage({
     destination: (_, __, cb) => cb(null, uploadDir),
@@ -114,19 +127,12 @@ const formatBook = (book) => ({
     createdAt: book.createdAt
 });
 
-/**
- * Clean and format text with awareness of Book structure.
- */
 function smartClean(text) {
     if (!text) return "";
     return text
-        // Force break before common Chapter/Section markers if missed by gap detection
         .replace(/([a-z0-9])\s*(Chapter\s+\d+|Psalm|Section|BOOKS\s+BY|Part)/gi, '$1\n\n$2')
-        // Force break between chapter titles and body text start
         .replace(/(Chapter\s+\d+.*?)\s+(The\s+authority|Because|In\s+the|For\s+this|When|If)/gi, '$1\n\n$2')
-        // Clean horizontal white spaces
         .replace(/[ \t]+/g, ' ')
-        // Cap excessive newlines at 3 (enough for visual space, not too much)
         .replace(/\n{4,}/g, '\n\n\n')
         .trim();
 }
@@ -141,9 +147,6 @@ function getPageCount(pdfPath) {
     });
 }
 
-/**
- * UPDATED OCR: Uses Vertical Coordinates to detect lines and page headers.
- */
 async function extractPageTextGoogle(pdfPath, pageNum) {
     if (!visionClient) return "";
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
@@ -178,39 +181,22 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
             });
         });
 
-        // 1. Sort blocks strictly by vertical (y) then horizontal (x)
         pageBlocks.sort((a, b) => (a.y - b.y) || (a.x - b.x));
-
         let orderedText = "";
-        const TOP_MARGIN_THRESHOLD = 150; // Detect if text starts low on the page (Header)
+        const TOP_MARGIN_THRESHOLD = 150;
 
         for (let i = 0; i < pageBlocks.length; i++) {
             const current = pageBlocks[i];
             const next = pageBlocks[i + 1];
-
-            // 2. Handle the very first block of the page
-            if (i === 0 && current.y > TOP_MARGIN_THRESHOLD) {
-                // If it starts way down, give it section spacing
-                orderedText += "\n\n";
-            }
-
+            if (i === 0 && current.y > TOP_MARGIN_THRESHOLD) orderedText += "\n\n";
             orderedText += current.text;
-
-            // 3. Handle gaps between blocks
             if (next) {
                 const verticalGap = next.y - (current.y + current.h);
-
-                // If gap is significant (e.g. 1.8x the height of current text)
-                if (verticalGap > current.h * 1.8) {
-                    orderedText += "\n\n\n"; // Large visual break
-                } else {
-                    orderedText += "\n\n";   // Standard paragraph break
-                }
+                orderedText += (verticalGap > current.h * 1.8) ? "\n\n\n" : "\n\n";
             }
         }
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
-
         return smartClean(orderedText);
     } catch (e) {
         console.error(`❌ Google OCR Error on page ${pageNum}:`, e.message);
@@ -293,13 +279,10 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
 
         (async () => {
             try {
-                // 1. Upload to Cloudinary immediately
                 const pdfRes = await cloudinary.uploader.upload(pdfPath, { folder: "storyteller_pdfs", resource_type: "raw" });
-
                 const baseName = path.parse(req.file.filename).name;
                 const outputPrefix = path.join(coversDir, baseName);
 
-                // 2. Extract Cover
                 const coverUrl = await new Promise((resolve) => {
                     exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfPath}" "${outputPrefix}"`, async (err) => {
                         if (err) return resolve(null);
@@ -311,7 +294,6 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
 
                 await Book.findByIdAndUpdate(book._id, { pdfPath: pdfRes.secure_url, cover: coverUrl });
 
-                // 3. Initial OCR Batch (First 5 pages)
                 let runningContent = "";
                 const limit = Math.min(5, totalPages);
                 for (let i = 1; i <= limit; i++) {
@@ -326,13 +308,11 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
                         status: i >= totalPages ? 'completed' : 'processing'
                     });
                 }
-
                 if (await fs.pathExists(pdfPath)) await fs.remove(pdfPath);
             } catch (bgErr) {
                 console.error("BG Worker Error:", bgErr.message);
             }
         })();
-
     } catch (err) {
         console.error("Upload error:", err);
         res.status(500).json({ error: "Upload failed" });
@@ -342,7 +322,6 @@ app.post("/api/books", upload.single("file"), async (req, res) => {
 /* --- OTHER ROUTES --- */
 app.get("/api/books/folders", protect, async (req, res) => {
     try {
-        // Only find folders belonging to the logged-in user
         const folders = await Folder.find({ user: req.user._id }).sort({ name: 1 });
         res.json(["All", ...folders.map(f => f.name)]);
     } catch { res.status(500).json({ error: "Failed to fetch folders" }); }
@@ -350,33 +329,22 @@ app.get("/api/books/folders", protect, async (req, res) => {
 
 app.post("/api/books/folders", protect, async (req, res) => {
     try {
-        // Create folder linked to this specific user
-        const folder = await Folder.create({
-            name: req.body.name,
-            user: req.user._id
-        });
+        const folder = await Folder.create({ name: req.body.name, user: req.user._id });
         res.status(201).json(folder);
     } catch { res.status(400).json({ error: "Folder already exists or creation failed" }); }
 });
 
 app.delete("/api/books/folders/:name", protect, async (req, res) => {
     try {
-        // Ensure user can only delete THEIR folder
         await Folder.findOneAndDelete({ name: req.params.name, user: req.user._id });
-        // Update only the user's books in that folder
-        await Book.updateMany(
-            { folder: req.params.name, user: req.user._id },
-            { folder: "All" }
-        );
+        await Book.updateMany({ folder: req.params.name, user: req.user._id }, { folder: "All" });
         res.json({ message: "Folder deleted and books moved to All" });
     } catch { res.status(500).json({ error: "Failed to delete folder" }); }
 });
 
 /* --- PROTECTED BOOK ROUTES --- */
-
 app.get("/api/books", protect, async (req, res) => {
     try {
-        // Filter: Only show books where 'user' matches the logged-in ID
         const books = await Book.find({ user: req.user._id }).sort({ createdAt: -1 });
         res.json(books.map(formatBook));
     } catch { res.status(500).json({ error: "Failed to fetch books" }); }
@@ -384,7 +352,6 @@ app.get("/api/books", protect, async (req, res) => {
 
 app.get("/api/books/:id", protect, async (req, res) => {
     try {
-        // Find by ID AND ensure the user owns it
         const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
         if (!book) return res.status(404).json({ error: "Book not found or unauthorized" });
         res.json(formatBook(book));
@@ -393,12 +360,7 @@ app.get("/api/books/:id", protect, async (req, res) => {
 
 app.patch("/api/books/:id", protect, async (req, res) => {
     try {
-        // Only update if the book belongs to the user
-        const book = await Book.findOneAndUpdate(
-            { _id: req.params.id, user: req.user._id },
-            req.body,
-            { new: true }
-        );
+        const book = await Book.findOneAndUpdate({ _id: req.params.id, user: req.user._id }, req.body, { new: true });
         if (!book) return res.status(404).json({ error: "Update failed: Book not found" });
         res.json(formatBook(book));
     } catch { res.status(500).json({ error: "Failed to update book" }); }
@@ -406,7 +368,6 @@ app.patch("/api/books/:id", protect, async (req, res) => {
 
 app.delete("/api/books/:id", protect, async (req, res) => {
     try {
-        // Only delete if the book belongs to the user
         const result = await Book.findOneAndDelete({ _id: req.params.id, user: req.user._id });
         if (!result) return res.status(404).json({ error: "Delete failed: Unauthorized" });
         res.json({ message: "Book deleted successfully" });
