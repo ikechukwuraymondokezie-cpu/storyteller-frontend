@@ -8,7 +8,7 @@ const fs = require("fs-extra");
 // Route Imports
 const userRoutes = require("./routes/userRoutes");
 const authRoutes = require("./routes/authRoutes");
-const bookRoutes = require("./routes/bookRoutes");
+const bookRoutes = require("./routes/book_Routes");
 
 const app = express();
 
