@@ -6,9 +6,18 @@ const { exec } = require("child_process");
 const cloudinary = require("cloudinary").v2;
 const vision = require('@google-cloud/vision');
 const axios = require('axios');
+const mongoose = require("mongoose");
 
 const Book = require("../models/Book");
+const { protect } = require("../middleware/authMiddleware"); // Ensure this path is correct
 const router = express.Router();
+
+/* -------------------- MODELS (Internal fallback) -------------------- */
+// Folder model (moved from server.js)
+const Folder = mongoose.models.Folder || mongoose.model("Folder", new mongoose.Schema({
+    name: { type: String, required: true },
+    user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+}));
 
 /* -------------------- GOOGLE VISION CONFIG -------------------- */
 let visionClient;
@@ -18,6 +27,7 @@ try {
         visionClient = new vision.ImageAnnotatorClient({
             credentials: JSON.parse(credsEnv)
         });
+        console.log("✅ Vision Client Initialized in BookRoutes");
     } else {
         visionClient = new vision.ImageAnnotatorClient();
     }
@@ -25,7 +35,7 @@ try {
     console.error("❌ Vision Init Error:", e.message);
 }
 
-// Setup paths for temporary processing
+// Setup paths for processing
 const pdfDir = path.join(__dirname, "../temp/pdfs");
 const coversDir = path.join(__dirname, "../temp/covers");
 fs.ensureDirSync(pdfDir);
@@ -36,15 +46,29 @@ const upload = multer({ dest: "temp/uploads/" });
 
 /* ---------------- HELPERS ---------------- */
 
+const formatBook = (book) => ({
+    _id: book._id,
+    title: book.title,
+    cover: book.cover || null,
+    url: book.pdfPath || null,
+    folder: book.folder || "All",
+    downloads: book.downloads || 0,
+    ttsRequests: book.ttsRequests || 0,
+    words: book.words || 0,
+    content: book.content || "",
+    status: book.status || "processing",
+    totalPages: book.totalPages || 0,
+    processedPages: book.processedPages || 0,
+    summary: book.summary || "",
+    createdAt: book.createdAt
+});
+
 function smartClean(text) {
     if (!text) return "";
     return text
-        // Ensure standard headers get a break if OCR missed the physical gap
         .replace(/([a-z0-9])\s*(Chapter\s+\d+|Psalm|Section|BOOKS\s+BY|Part|Book|Lesson)/gi, '$1\n\n$2')
         .replace(/(Chapter\s+\d+.*?)\s+(The\s+authority|Because|In\s+the|For\s+this|When\s+we)/gi, '$1\n\n$2')
-        // Clean up horizontal whitespace junk
         .replace(/[ \t]+/g, ' ')
-        // Cap excessive newlines at 3 for a clean look
         .replace(/\n{4,}/g, '\n\n\n')
         .trim();
 }
@@ -52,17 +76,13 @@ function smartClean(text) {
 function getPageCount(pdfPath) {
     return new Promise((resolve) => {
         exec(`pdfinfo "${pdfPath}" | grep Pages: | awk '{print $2}'`, (err, stdout) => {
-            if (err) return resolve(0);
+            if (err) return resolve(1);
             const count = parseInt(stdout.trim());
-            resolve(isNaN(count) ? 0 : count);
+            resolve(isNaN(count) ? 1 : count);
         });
     });
 }
 
-/**
- * UPDATED: Uses documentTextDetection and vertical coordinate analysis
- * to handle paragraph gaps and page headers.
- */
 async function extractPageTextGoogle(pdfPath, pageNum) {
     if (!visionClient) return "";
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
@@ -70,7 +90,6 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
     const pageImgFull = `${pageImgBase}.png`;
 
     try {
-        // Convert PDF page to Image
         await new Promise((resolve, reject) => {
             exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -r 300 -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
@@ -82,7 +101,6 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
         if (!fullAnnotation) return "";
 
         let pageBlocks = [];
-
         fullAnnotation.pages.forEach(page => {
             page.blocks.forEach(block => {
                 const vertices = block.boundingBox.vertices;
@@ -92,47 +110,30 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
                 const height = yBottom - yTop;
 
                 const blockText = block.paragraphs.map(para =>
-                    para.words.map(word =>
-                        word.symbols.map(s => s.text).join('')
-                    ).join(' ')
+                    para.words.map(word => word.symbols.map(s => s.text).join('')).join(' ')
                 ).join('\n');
 
                 pageBlocks.push({ text: blockText, x: xCoord, y: yTop, h: height });
             });
         });
 
-        // 1. SORT BLOCKS: Top-to-Bottom (y), then Left-to-Right (x)
         pageBlocks.sort((a, b) => (a.y - b.y) || (a.x - b.x));
 
         let orderedText = "";
-        const TOP_OF_PAGE_THRESHOLD = 150; // Detects if the first line is far down (Header)
+        const TOP_OF_PAGE_THRESHOLD = 150;
 
         for (let i = 0; i < pageBlocks.length; i++) {
             const current = pageBlocks[i];
             const next = pageBlocks[i + 1];
-
-            // 2. Handle potential header at the very start of a page
-            if (i === 0 && current.y > TOP_OF_PAGE_THRESHOLD) {
-                orderedText += "\n\n";
-            }
-
+            if (i === 0 && current.y > TOP_OF_PAGE_THRESHOLD) orderedText += "\n\n";
             orderedText += current.text;
-
-            // 3. Handle vertical spacing between blocks
             if (next) {
                 const verticalGap = next.y - (current.y + current.h);
-
-                // If there is a big physical gap (1.8x text height), use triple newline
-                if (verticalGap > current.h * 1.8) {
-                    orderedText += "\n\n\n";
-                } else {
-                    orderedText += "\n\n";
-                }
+                orderedText += (verticalGap > current.h * 1.8) ? "\n\n\n" : "\n\n";
             }
         }
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
-
         return smartClean(orderedText);
     } catch (e) {
         console.error("OCR Error:", e);
@@ -142,11 +143,21 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
 /* ---------------- ROUTES ---------------- */
 
+// 0. GET ALL BOOKS (User Specific)
+router.get("/", protect, async (req, res) => {
+    try {
+        const books = await Book.find({ user: req.user._id }).sort({ createdAt: -1 });
+        res.json(books.map(formatBook));
+    } catch (err) {
+        res.status(500).json({ error: "Failed to fetch library" });
+    }
+});
+
 // 1. LAZY LOAD ROUTE
-router.get("/:id/load-pages", async (req, res) => {
+router.get("/:id/load-pages", protect, async (req, res) => {
     let tempPath = "";
     try {
-        const book = await Book.findById(req.params.id);
+        const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
         if (!book) return res.status(404).json({ error: "Book not found" });
 
         const startPage = (book.processedPages || 0) + 1;
@@ -197,13 +208,14 @@ router.get("/:id/load-pages", async (req, res) => {
 });
 
 // 2. UPLOAD ROUTE
-router.post("/", upload.single("file"), async (req, res) => {
+router.post("/", protect, upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
         const pdfDiskPath = req.file.path;
         const totalPages = await getPageCount(pdfDiskPath);
 
         const book = await Book.create({
+            user: req.user._id, // Assign ownership
             title: req.body.title || req.file.originalname.replace(/\.[^/.]+$/, ""),
             pdfPath: "pending",
             cover: "https://via.placeholder.com/300x450?text=Processing...",
@@ -215,8 +227,9 @@ router.post("/", upload.single("file"), async (req, res) => {
             words: 0
         });
 
-        res.status(201).json(book);
+        res.status(201).json(formatBook(book));
 
+        // Background Worker
         (async () => {
             try {
                 const baseName = path.parse(req.file.filename).name;
@@ -260,6 +273,38 @@ router.post("/", upload.single("file"), async (req, res) => {
         console.error("Upload Error:", err);
         res.status(500).json({ error: "Upload failed" });
     }
+});
+
+// 3. FOLDERS ROUTES (Moved from server.js)
+router.get("/folders", protect, async (req, res) => {
+    try {
+        const folders = await Folder.find({ user: req.user._id }).sort({ name: 1 });
+        res.json(["All", ...folders.map(f => f.name)]);
+    } catch { res.status(500).json({ error: "Failed to fetch folders" }); }
+});
+
+router.post("/folders", protect, async (req, res) => {
+    try {
+        const folder = await Folder.create({ name: req.body.name, user: req.user._id });
+        res.status(201).json(folder);
+    } catch { res.status(400).json({ error: "Folder creation failed" }); }
+});
+
+// 4. BOOK CRUD (Ownership enforced)
+router.get("/:id", protect, async (req, res) => {
+    try {
+        const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
+        if (!book) return res.status(404).json({ error: "Unauthorized" });
+        res.json(formatBook(book));
+    } catch { res.status(500).json({ error: "Error fetching" }); }
+});
+
+router.delete("/:id", protect, async (req, res) => {
+    try {
+        const result = await Book.findOneAndDelete({ _id: req.params.id, user: req.user._id });
+        if (!result) return res.status(404).json({ error: "Unauthorized" });
+        res.json({ message: "Deleted" });
+    } catch { res.status(500).json({ error: "Failed" }); }
 });
 
 module.exports = router;
