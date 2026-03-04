@@ -17,10 +17,14 @@ const bookSchema = new mongoose.Schema(
         folder: { type: String, default: "All" },
         downloads: { type: Number, default: 0 },
         ttsRequests: { type: Number, default: 0 },
-        chapters: [{
-            title: String,
-            page: Number
+
+        // Updated to match the "toc" naming convention in your routes
+        toc: [{
+            text: { type: String },
+            page: { type: Number },
+            type: { type: String, default: 'visual' } // 'visual' for OCR, 'native' for PDF metadata
         }],
+
         totalPages: { type: Number, default: 0 },
         processedPages: { type: Number, default: 0 },
         status: {
@@ -31,5 +35,8 @@ const bookSchema = new mongoose.Schema(
     },
     { timestamps: true }
 );
+
+// Optional: Add an index for faster user-library lookups
+bookSchema.index({ user: 1, createdAt: -1 });
 
 module.exports = mongoose.model("Book", bookSchema);

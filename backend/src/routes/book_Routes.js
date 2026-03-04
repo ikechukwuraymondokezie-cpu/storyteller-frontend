@@ -9,11 +9,10 @@ const axios = require('axios');
 const mongoose = require("mongoose");
 
 const Book = require("../models/Book");
-const { protect } = require("../middleware/authMiddleware"); // Ensure this path is correct
+const { protect } = require("../middleware/authMiddleware");
 const router = express.Router();
 
 /* -------------------- MODELS (Internal fallback) -------------------- */
-// Folder model (moved from server.js)
 const Folder = mongoose.models.Folder || mongoose.model("Folder", new mongoose.Schema({
     name: { type: String, required: true },
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
@@ -35,13 +34,11 @@ try {
     console.error("❌ Vision Init Error:", e.message);
 }
 
-// Setup paths for processing
 const pdfDir = path.join(__dirname, "../temp/pdfs");
 const coversDir = path.join(__dirname, "../temp/covers");
 fs.ensureDirSync(pdfDir);
 fs.ensureDirSync(coversDir);
 
-// Multer setup
 const upload = multer({ dest: "temp/uploads/" });
 
 /* ---------------- HELPERS ---------------- */
@@ -60,8 +57,28 @@ const formatBook = (book) => ({
     totalPages: book.totalPages || 0,
     processedPages: book.processedPages || 0,
     summary: book.summary || "",
+    toc: book.toc || [], // Included in format
     createdAt: book.createdAt
 });
+
+/**
+ * Scans text for Table of Content patterns: "Title .... PageNumber"
+ */
+function extractTOC(text) {
+    const tocEntries = [];
+    // Matches patterns like "Introduction ......... 1" or "Chapter Two - 45"
+    const tocRegex = /^(.*?)\s?[\.\-·_]{2,}\s?(\d+)$/gm;
+
+    let match;
+    while ((match = tocRegex.exec(text)) !== null) {
+        tocEntries.push({
+            text: match[1].trim(),
+            page: parseInt(match[2]),
+            type: 'visual'
+        });
+    }
+    return tocEntries;
+}
 
 function smartClean(text) {
     if (!text) return "";
@@ -143,7 +160,6 @@ async function extractPageTextGoogle(pdfPath, pageNum) {
 
 /* ---------------- ROUTES ---------------- */
 
-// 0. GET ALL BOOKS (User Specific)
 router.get("/", protect, async (req, res) => {
     try {
         const books = await Book.find({ user: req.user._id }).sort({ createdAt: -1 });
@@ -153,7 +169,6 @@ router.get("/", protect, async (req, res) => {
     }
 });
 
-// 1. LAZY LOAD ROUTE
 router.get("/:id/load-pages", protect, async (req, res) => {
     let tempPath = "";
     try {
@@ -180,15 +195,29 @@ router.get("/:id/load-pages", protect, async (req, res) => {
         }
 
         const pagesResults = await Promise.all(pagePromises);
+
+        // Scan for new TOC entries in the newly loaded pages
+        let newTOCEntries = [];
+        pagesResults.forEach(text => {
+            if (text) newTOCEntries.push(...extractTOC(text));
+        });
+
         const newText = pagesResults.filter(t => t).join("\n\n");
         const updatedContent = (book.content || "").trim() + "\n\n" + newText;
         const actualWordCount = updatedContent.split(/\s+/).filter(w => w.length > 0).length;
+
+        // Merge and deduplicate TOC
+        const existingTOC = book.toc || [];
+        const mergedTOC = [...existingTOC, ...newTOCEntries].filter((v, i, a) =>
+            a.findIndex(t => (t.text === v.text && t.page === v.page)) === i
+        );
 
         const updatedBook = await Book.findByIdAndUpdate(req.params.id, {
             content: updatedContent.trim(),
             processedPages: endPage,
             status: endPage >= book.totalPages ? 'completed' : 'processing',
-            words: actualWordCount
+            words: actualWordCount,
+            toc: mergedTOC
         }, { new: true });
 
         if (updatedBook.status === 'completed' && await fs.pathExists(tempPath)) {
@@ -199,7 +228,8 @@ router.get("/:id/load-pages", protect, async (req, res) => {
             addedText: newText,
             processedPages: endPage,
             status: updatedBook.status,
-            totalWords: actualWordCount
+            totalWords: actualWordCount,
+            toc: mergedTOC
         });
     } catch (err) {
         console.error("Lazy Load Error:", err);
@@ -207,7 +237,6 @@ router.get("/:id/load-pages", protect, async (req, res) => {
     }
 });
 
-// 2. UPLOAD ROUTE
 router.post("/", protect, upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -215,7 +244,7 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
         const totalPages = await getPageCount(pdfDiskPath);
 
         const book = await Book.create({
-            user: req.user._id, // Assign ownership
+            user: req.user._id,
             title: req.body.title || req.file.originalname.replace(/\.[^/.]+$/, ""),
             pdfPath: "pending",
             cover: "https://via.placeholder.com/300x450?text=Processing...",
@@ -224,12 +253,12 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
             totalPages,
             processedPages: 0,
             status: 'processing',
-            words: 0
+            words: 0,
+            toc: []
         });
 
         res.status(201).json(formatBook(book));
 
-        // Background Worker
         (async () => {
             try {
                 const baseName = path.parse(req.file.filename).name;
@@ -250,16 +279,22 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
                 await Book.findByIdAndUpdate(book._id, { pdfPath: cloudUrl, cover: coverUrl });
 
                 let runningText = "";
-                const limit = Math.min(5, totalPages);
+                let runningTOC = [];
+                // Scan first 10 pages for a comprehensive TOC
+                const limit = Math.min(10, totalPages);
                 for (let i = 1; i <= limit; i++) {
                     const text = await extractPageTextGoogle(pdfDiskPath, i);
-                    if (text) runningText += text + "\n\n";
+                    if (text) {
+                        runningText += text + "\n\n";
+                        runningTOC.push(...extractTOC(text));
+                    }
                     const wordCount = runningText.split(/\s+/).filter(w => w.length > 0).length;
 
                     await Book.findByIdAndUpdate(book._id, {
                         content: runningText.trim(),
                         processedPages: i,
                         words: wordCount,
+                        toc: runningTOC,
                         status: i >= totalPages ? 'completed' : 'processing'
                     });
                 }
@@ -275,7 +310,6 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
     }
 });
 
-// 3. FOLDERS ROUTES (Moved from server.js)
 router.get("/folders", protect, async (req, res) => {
     try {
         const folders = await Folder.find({ user: req.user._id }).sort({ name: 1 });
@@ -290,7 +324,6 @@ router.post("/folders", protect, async (req, res) => {
     } catch { res.status(400).json({ error: "Folder creation failed" }); }
 });
 
-// 4. BOOK CRUD (Ownership enforced)
 router.get("/:id", protect, async (req, res) => {
     try {
         const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
