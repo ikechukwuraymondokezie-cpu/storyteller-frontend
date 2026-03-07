@@ -1,36 +1,40 @@
-# Use a slim version of Node to keep the image lightweight
+# Use Bullseye-slim for better Python/OpenCV compatibility
 FROM node:20-bullseye-slim
 
 # Install system dependencies
-# 1. poppler-utils: for pdftoppm (Covers)
-# 2. tesseract-ocr: the engine for image extraction
-# 3. tesseract-ocr-eng: English language data (add others like -fra, -spa if needed)
-# 4. ca-certificates: for Cloudinary/MongoDB SSL
 RUN apt-get update && apt-get install -y \
     poppler-utils \
-    tesseract-ocr \
-    tesseract-ocr-eng \
+    python3 \
+    python3-pip \
+    libgl1 \
+    libglib2.0-0 \
+    libgomp1 \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+# Install Paddle AI engine (CPU-only version)
+# Using --no-cache-dir is vital to stay under Render's disk/RAM limits during build
+RUN pip3 install paddlepaddle==2.6.0 paddleocr==2.7.0 --no-cache-dir
+
 WORKDIR /app
 
-# Copy backend dependency files
+# 1. Install Node Dependencies
 COPY backend/package*.json ./
-
-# Install production dependencies
-# Note: Ensure 'tesseract.js' and 'pdf-parse' are in your package.json!
 RUN npm install --production
 
-# Copy the rest of your backend source code
+# 2. Copy all backend source code
 COPY backend/ ./
 
-# Create uploads directories to ensure they exist with correct permissions
-RUN mkdir -p uploads/pdfs uploads/covers uploads/audio
+# 3. Create essential directories
+RUN mkdir -p uploads/pdfs uploads/covers uploads/audio \
+    temp/pdfs temp/covers \
+    src/ocr_worker/model_cache
 
-# Expose the port Render expects
+# 4. Environment Variables
+ENV PYTHONUNBUFFERED=1
+ENV PADDLE_HOME=/app/src/ocr_worker/model_cache
+ENV OMP_NUM_THREADS=1
+
 EXPOSE 10000
 
-# Start the server
 CMD ["node", "src/server.js"]

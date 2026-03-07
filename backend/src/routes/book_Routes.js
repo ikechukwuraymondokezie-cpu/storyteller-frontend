@@ -2,9 +2,8 @@ const express = require("express");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs-extra");
-const { exec } = require("child_process");
+const { exec, execSync } = require("child_process");
 const cloudinary = require("cloudinary").v2;
-const vision = require('@google-cloud/vision');
 const axios = require('axios');
 const mongoose = require("mongoose");
 
@@ -18,22 +17,7 @@ const Folder = mongoose.models.Folder || mongoose.model("Folder", new mongoose.S
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }));
 
-/* -------------------- GOOGLE VISION CONFIG -------------------- */
-let visionClient;
-try {
-    const credsEnv = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
-    if (credsEnv && credsEnv.trim().startsWith('{')) {
-        visionClient = new vision.ImageAnnotatorClient({
-            credentials: JSON.parse(credsEnv)
-        });
-        console.log("✅ Vision Client Initialized in BookRoutes");
-    } else {
-        visionClient = new vision.ImageAnnotatorClient();
-    }
-} catch (e) {
-    console.error("❌ Vision Init Error:", e.message);
-}
-
+/* -------------------- CONFIG & DIRECTORIES -------------------- */
 const pdfDir = path.join(__dirname, "../temp/pdfs");
 const coversDir = path.join(__dirname, "../temp/covers");
 fs.ensureDirSync(pdfDir);
@@ -57,7 +41,7 @@ const formatBook = (book) => ({
     totalPages: book.totalPages || 0,
     processedPages: book.processedPages || 0,
     summary: book.summary || "",
-    toc: book.toc || [], // Included in format
+    toc: book.toc || [],
     createdAt: book.createdAt
 });
 
@@ -66,7 +50,6 @@ const formatBook = (book) => ({
  */
 function extractTOC(text) {
     const tocEntries = [];
-    // Matches patterns like "Introduction ......... 1" or "Chapter Two - 45"
     const tocRegex = /^(.*?)\s?[\.\-·_]{2,}\s?(\d+)$/gm;
 
     let match;
@@ -100,60 +83,49 @@ function getPageCount(pdfPath) {
     });
 }
 
-async function extractPageTextGoogle(pdfPath, pageNum) {
-    if (!visionClient) return "";
+/**
+ * HYBRID EXTRACTION:
+ * 1. Checks for Digital Text first (pdftotext).
+ * 2. Falls back to Local OCR (PaddleOCR) if page is an image.
+ */
+async function extractPageText(pdfPath, pageNum) {
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
-    const pageImgBase = path.join(coversDir, `google_tmp_${pageNum}_${uniqueId}`);
+    const pageImgBase = path.join(coversDir, `ocr_tmp_${pageNum}_${uniqueId}`);
     const pageImgFull = `${pageImgBase}.png`;
 
     try {
+        // --- STEP 1: Digital Check ---
+        const digitalText = execSync(`pdftotext -f ${pageNum} -l ${pageNum} -layout "${pdfPath}" -`, {
+            encoding: 'utf8'
+        }).trim();
+
+        if (digitalText && digitalText.length > 20) {
+            console.log(`✅ Page ${pageNum}: Digital text layer found.`);
+            return smartClean(digitalText);
+        }
+
+        // --- STEP 2: Local OCR Fallback ---
+        console.log(`📸 Page ${pageNum}: No text layer. Running Local AI OCR...`);
+
+        // Convert page to image
         await new Promise((resolve, reject) => {
             exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -r 300 -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
 
-        const [result] = await visionClient.documentTextDetection(pageImgFull);
-        const fullAnnotation = result.fullTextAnnotation;
-        if (!fullAnnotation) return "";
-
-        let pageBlocks = [];
-        fullAnnotation.pages.forEach(page => {
-            page.blocks.forEach(block => {
-                const vertices = block.boundingBox.vertices;
-                const yTop = vertices[0].y;
-                const yBottom = vertices[3].y;
-                const xCoord = vertices[0].x;
-                const height = yBottom - yTop;
-
-                const blockText = block.paragraphs.map(para =>
-                    para.words.map(word => word.symbols.map(s => s.text).join('')).join(' ')
-                ).join('\n');
-
-                pageBlocks.push({ text: blockText, x: xCoord, y: yTop, h: height });
-            });
+        const scriptPath = path.join(__dirname, "../ocr_worker/ocr_processor.py");
+        const ocrResult = execSync(`python3 "${scriptPath}" "${pageImgFull}"`, {
+            encoding: 'utf8',
+            maxBuffer: 1024 * 1024 * 10
         });
 
-        pageBlocks.sort((a, b) => (a.y - b.y) || (a.x - b.x));
-
-        let orderedText = "";
-        const TOP_OF_PAGE_THRESHOLD = 150;
-
-        for (let i = 0; i < pageBlocks.length; i++) {
-            const current = pageBlocks[i];
-            const next = pageBlocks[i + 1];
-            if (i === 0 && current.y > TOP_OF_PAGE_THRESHOLD) orderedText += "\n\n";
-            orderedText += current.text;
-            if (next) {
-                const verticalGap = next.y - (current.y + current.h);
-                orderedText += (verticalGap > current.h * 1.8) ? "\n\n\n" : "\n\n";
-            }
-        }
-
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
-        return smartClean(orderedText);
+        return smartClean(ocrResult);
+
     } catch (e) {
-        console.error("OCR Error:", e);
+        console.error(`❌ Extraction Error on Page ${pageNum}:`, e.message);
+        if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
         return "";
     }
 }
@@ -189,24 +161,22 @@ router.get("/:id/load-pages", protect, async (req, res) => {
             await fs.writeFile(tempPath, Buffer.from(response.data));
         }
 
-        const pagePromises = [];
+        // Sequential processing for Render Free Stability
+        let newTextParts = [];
+        let newTOCEntries = [];
+
         for (let i = startPage; i <= endPage; i++) {
-            pagePromises.push(extractPageTextGoogle(tempPath, i));
+            const text = await extractPageText(tempPath, i);
+            if (text) {
+                newTextParts.push(text);
+                newTOCEntries.push(...extractTOC(text));
+            }
         }
 
-        const pagesResults = await Promise.all(pagePromises);
-
-        // Scan for new TOC entries in the newly loaded pages
-        let newTOCEntries = [];
-        pagesResults.forEach(text => {
-            if (text) newTOCEntries.push(...extractTOC(text));
-        });
-
-        const newText = pagesResults.filter(t => t).join("\n\n");
+        const newText = newTextParts.join("\n\n");
         const updatedContent = (book.content || "").trim() + "\n\n" + newText;
         const actualWordCount = updatedContent.split(/\s+/).filter(w => w.length > 0).length;
 
-        // Merge and deduplicate TOC
         const existingTOC = book.toc || [];
         const mergedTOC = [...existingTOC, ...newTOCEntries].filter((v, i, a) =>
             a.findIndex(t => (t.text === v.text && t.page === v.page)) === i
@@ -280,10 +250,10 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
 
                 let runningText = "";
                 let runningTOC = [];
-                // Scan first 10 pages for a comprehensive TOC
                 const limit = Math.min(10, totalPages);
+
                 for (let i = 1; i <= limit; i++) {
-                    const text = await extractPageTextGoogle(pdfDiskPath, i);
+                    const text = await extractPageText(pdfDiskPath, i);
                     if (text) {
                         runningText += text + "\n\n";
                         runningTOC.push(...extractTOC(text));
