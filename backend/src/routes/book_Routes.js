@@ -46,9 +46,6 @@ const formatBook = (book) => ({
     createdAt: book.createdAt
 });
 
-/**
- * Scans text for Table of Content patterns
- */
 function extractTOC(text) {
     const tocEntries = [];
     const tocRegex = /^(.*?)\s?[\.\-·_]{2,}\s?(\d+)$/gm;
@@ -83,18 +80,12 @@ function getPageCount(pdfPath) {
     });
 }
 
-/**
- * HYBRID EXTRACTION:
- * 1. Digital Text first (pdftotext).
- * 2. Fallback to Local OCR (ocr_service.py) via Python.
- */
 async function extractPageText(pdfPath, pageNum) {
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
     const pageImgBase = path.join(coversDir, `ocr_tmp_${pageNum}_${uniqueId}`);
     const pageImgFull = `${pageImgBase}.png`;
 
     try {
-        // --- STEP 1: Digital Check ---
         const digitalText = execSync(`pdftotext -f ${pageNum} -l ${pageNum} -layout "${pdfPath}" -`, {
             encoding: 'utf8'
         }).trim();
@@ -104,17 +95,14 @@ async function extractPageText(pdfPath, pageNum) {
             return smartClean(digitalText);
         }
 
-        // --- STEP 2: Local OCR Fallback ---
         console.log(`📸 Page ${pageNum}: Running Local AI OCR (ocr_service.py)...`);
 
-        // Convert page to high-res image
         await new Promise((resolve, reject) => {
             exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -r 300 -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
 
-        // Call the python script we renamed to ocr_service.py
         const scriptPath = path.join(__dirname, "../ocr_worker/ocr_service.py");
         const ocrResult = execSync(`python3 "${scriptPath}" "${pageImgFull}"`, {
             encoding: 'utf8',
@@ -219,7 +207,6 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
 
         res.status(201).json(formatBook(book));
 
-        // Background Processing
         (async () => {
             try {
                 const baseName = path.parse(req.file.filename).name;
@@ -285,12 +272,41 @@ router.get("/:id", protect, async (req, res) => {
     } catch { res.status(500).json({ error: "Error fetching" }); }
 });
 
+// --- UPDATED DELETE ROUTE ---
 router.delete("/:id", protect, async (req, res) => {
     try {
-        const result = await Book.findOneAndDelete({ _id: req.params.id, user: req.user._id });
-        if (!result) return res.status(404).json({ error: "Unauthorized" });
-        res.json({ message: "Deleted" });
-    } catch { res.status(500).json({ error: "Failed" }); }
+        const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
+
+        if (!book) {
+            return res.status(404).json({ error: "Book not found or unauthorized" });
+        }
+
+        // 1. Cleanup Cloudinary (PDF and Cover)
+        try {
+            if (book.pdfPath && book.pdfPath.includes("cloudinary")) {
+                const pdfId = `storyteller_pdfs/${path.parse(book.pdfPath).name}`;
+                await cloudinary.uploader.destroy(pdfId, { resource_type: 'raw' });
+            }
+            if (book.cover && book.cover.includes("cloudinary")) {
+                const coverId = `storyteller_covers/${path.parse(book.cover).name}`;
+                await cloudinary.uploader.destroy(coverId);
+            }
+        } catch (cErr) {
+            console.warn("Cloudinary cleanup partially failed, continuing...", cErr.message);
+        }
+
+        // 2. Cleanup Local Temp Files
+        const tempPdf = path.join(pdfDir, `temp_load_${book._id}.pdf`);
+        if (await fs.pathExists(tempPdf)) await fs.remove(tempPdf);
+
+        // 3. Remove from Database
+        await Book.findByIdAndDelete(req.params.id);
+
+        res.json({ message: "Book deleted successfully" });
+    } catch (err) {
+        console.error("Delete Error:", err);
+        res.status(500).json({ error: "Failed to delete book" });
+    }
 });
 
 module.exports = router;
