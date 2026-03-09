@@ -18,8 +18,9 @@ const Folder = mongoose.models.Folder || mongoose.model("Folder", new mongoose.S
 }));
 
 /* -------------------- CONFIG & DIRECTORIES -------------------- */
-const pdfDir = path.join(__dirname, "../temp/pdfs");
-const coversDir = path.join(__dirname, "../temp/covers");
+// Using absolute paths based on the app root
+const pdfDir = path.join(__dirname, "../../temp/pdfs");
+const coversDir = path.join(__dirname, "../../temp/covers");
 fs.ensureDirSync(pdfDir);
 fs.ensureDirSync(coversDir);
 
@@ -46,12 +47,11 @@ const formatBook = (book) => ({
 });
 
 /**
- * Scans text for Table of Content patterns: "Title .... PageNumber"
+ * Scans text for Table of Content patterns
  */
 function extractTOC(text) {
     const tocEntries = [];
     const tocRegex = /^(.*?)\s?[\.\-·_]{2,}\s?(\d+)$/gm;
-
     let match;
     while ((match = tocRegex.exec(text)) !== null) {
         tocEntries.push({
@@ -85,8 +85,8 @@ function getPageCount(pdfPath) {
 
 /**
  * HYBRID EXTRACTION:
- * 1. Checks for Digital Text first (pdftotext).
- * 2. Falls back to Local OCR (PaddleOCR) if page is an image.
+ * 1. Digital Text first (pdftotext).
+ * 2. Fallback to Local OCR (ocr_service.py) via Python.
  */
 async function extractPageText(pdfPath, pageNum) {
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
@@ -99,22 +99,23 @@ async function extractPageText(pdfPath, pageNum) {
             encoding: 'utf8'
         }).trim();
 
-        if (digitalText && digitalText.length > 20) {
+        if (digitalText && digitalText.length > 50) {
             console.log(`✅ Page ${pageNum}: Digital text layer found.`);
             return smartClean(digitalText);
         }
 
         // --- STEP 2: Local OCR Fallback ---
-        console.log(`📸 Page ${pageNum}: No text layer. Running Local AI OCR...`);
+        console.log(`📸 Page ${pageNum}: Running Local AI OCR (ocr_service.py)...`);
 
-        // Convert page to image
+        // Convert page to high-res image
         await new Promise((resolve, reject) => {
             exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -r 300 -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
                 if (err) reject(err); else resolve();
             });
         });
 
-        const scriptPath = path.join(__dirname, "../ocr_worker/ocr_processor.py");
+        // Call the python script we renamed to ocr_service.py
+        const scriptPath = path.join(__dirname, "../ocr_worker/ocr_service.py");
         const ocrResult = execSync(`python3 "${scriptPath}" "${pageImgFull}"`, {
             encoding: 'utf8',
             maxBuffer: 1024 * 1024 * 10
@@ -136,9 +137,7 @@ router.get("/", protect, async (req, res) => {
     try {
         const books = await Book.find({ user: req.user._id }).sort({ createdAt: -1 });
         res.json(books.map(formatBook));
-    } catch (err) {
-        res.status(500).json({ error: "Failed to fetch library" });
-    }
+    } catch (err) { res.status(500).json({ error: "Failed to fetch library" }); }
 });
 
 router.get("/:id/load-pages", protect, async (req, res) => {
@@ -150,9 +149,7 @@ router.get("/:id/load-pages", protect, async (req, res) => {
         const startPage = (book.processedPages || 0) + 1;
         const endPage = Math.min(startPage + 4, book.totalPages);
 
-        if (startPage > book.totalPages) {
-            return res.json({ addedText: "", status: "completed" });
-        }
+        if (startPage > book.totalPages) return res.json({ addedText: "", status: "completed" });
 
         tempPath = path.join(pdfDir, `temp_load_${book._id}.pdf`);
 
@@ -161,7 +158,6 @@ router.get("/:id/load-pages", protect, async (req, res) => {
             await fs.writeFile(tempPath, Buffer.from(response.data));
         }
 
-        // Sequential processing for Render Free Stability
         let newTextParts = [];
         let newTOCEntries = [];
 
@@ -177,8 +173,7 @@ router.get("/:id/load-pages", protect, async (req, res) => {
         const updatedContent = (book.content || "").trim() + "\n\n" + newText;
         const actualWordCount = updatedContent.split(/\s+/).filter(w => w.length > 0).length;
 
-        const existingTOC = book.toc || [];
-        const mergedTOC = [...existingTOC, ...newTOCEntries].filter((v, i, a) =>
+        const mergedTOC = [...(book.toc || []), ...newTOCEntries].filter((v, i, a) =>
             a.findIndex(t => (t.text === v.text && t.page === v.page)) === i
         );
 
@@ -190,9 +185,7 @@ router.get("/:id/load-pages", protect, async (req, res) => {
             toc: mergedTOC
         }, { new: true });
 
-        if (updatedBook.status === 'completed' && await fs.pathExists(tempPath)) {
-            await fs.remove(tempPath);
-        }
+        if (updatedBook.status === 'completed' && await fs.pathExists(tempPath)) await fs.remove(tempPath);
 
         res.json({
             addedText: newText,
@@ -201,10 +194,7 @@ router.get("/:id/load-pages", protect, async (req, res) => {
             totalWords: actualWordCount,
             toc: mergedTOC
         });
-    } catch (err) {
-        console.error("Lazy Load Error:", err);
-        res.status(500).json({ error: "Lazy load failed" });
-    }
+    } catch (err) { res.status(500).json({ error: "Lazy load failed" }); }
 });
 
 router.post("/", protect, upload.single("file"), async (req, res) => {
@@ -229,6 +219,7 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
 
         res.status(201).json(formatBook(book));
 
+        // Background Processing
         (async () => {
             try {
                 const baseName = path.parse(req.file.filename).name;
@@ -258,26 +249,18 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
                         runningText += text + "\n\n";
                         runningTOC.push(...extractTOC(text));
                     }
-                    const wordCount = runningText.split(/\s+/).filter(w => w.length > 0).length;
-
                     await Book.findByIdAndUpdate(book._id, {
                         content: runningText.trim(),
                         processedPages: i,
-                        words: wordCount,
+                        words: runningText.split(/\s+/).filter(w => w.length > 0).length,
                         toc: runningTOC,
                         status: i >= totalPages ? 'completed' : 'processing'
                     });
                 }
-
                 if (await fs.pathExists(pdfDiskPath)) await fs.remove(pdfDiskPath);
-            } catch (e) {
-                console.error("Background Worker Error:", e);
-            }
+            } catch (e) { console.error("Worker Error:", e); }
         })();
-    } catch (err) {
-        console.error("Upload Error:", err);
-        res.status(500).json({ error: "Upload failed" });
-    }
+    } catch (err) { res.status(500).json({ error: "Upload failed" }); }
 });
 
 router.get("/folders", protect, async (req, res) => {

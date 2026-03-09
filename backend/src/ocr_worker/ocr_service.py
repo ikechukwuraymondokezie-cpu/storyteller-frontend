@@ -1,62 +1,57 @@
-from flask import Flask, request, jsonify
-from paddleocr import PaddleOCR
+import sys
 import os
+import logging
+import warnings
 
-app = Flask(__name__)
+# 1. Suppress all Paddle and System logs so Node.js only gets the text
+os.environ['GLOG_minloglevel'] = '3'
+logging.disable(logging.CRITICAL)
+warnings.filterwarnings("ignore")
 
-# Initialize PaddleOCR
-# use_angle_cls=True helps with rotated text
-ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False)
+try:
+    from paddleocr import PaddleOCR
+except ImportError:
+    sys.exit(0)
 
-@app.route("/ocr", methods=["POST"])
-def process():
-    try:
-        data = request.get_json()
-        image_path = data.get("image_path")
+# Initialize OCR once when the script runs
+# use_gpu=False is mandatory for Render Free
+ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False, use_gpu=False)
 
-        if not image_path or not os.path.exists(image_path):
-            return jsonify({"error": "File not found"}), 400
+def process_image(image_path):
+    if not os.path.exists(image_path):
+        return ""
 
-        # Run OCR
-        result = ocr.ocr(image_path, cls=True)
+    result = ocr.ocr(image_path, cls=True)
+    if not result or not result[0]:
+        return ""
 
-        if not result or not result[0]:
-            return jsonify({"text": ""})
+    # 2. Extract blocks (Your original sorting logic)
+    page_blocks = []
+    for line in result[0]:
+        box = line[0]
+        text = line[1][0]
+        # box[0] is the top-left corner: [x, y]
+        page_blocks.append({"text": text, "x": box[0][0], "y": box[0][1]})
 
-        # 1. Extract blocks with coordinates: [x, y, text]
-        # Paddle structure: [ [[ [x1,y1],[x2,y2],[x3,y3],[x4,y4] ], (text, score)] ]
-        page_blocks = []
-        for line in result[0]:
-            box = line[0]
-            text = line[1][0]
-            y_top = box[0][1]
-            x_left = box[0][0]
-            page_blocks.append({"text": text, "x": x_left, "y": y_top})
+    # 3. Sort: First by Y (divided by threshold for lines), then by X
+    # This keeps words on the same horizontal line together
+    page_blocks.sort(key=lambda b: (round(b['y'] / 15), b['x']))
 
-        # 2. Sort blocks: First by Y (top to bottom), then by X (left to right)
-        # We use a small threshold (10px) so that words on the same line 
-        # stay together even if they are slightly unaligned.
-        page_blocks.sort(key=lambda b: (round(b['y'] / 10), b['x']))
+    # 4. Join text with smart spacing
+    ordered_text = ""
+    last_y = -1
+    for block in page_blocks:
+        if last_y != -1 and (block['y'] - last_y) > 25:
+            ordered_text += "\n\n" + block['text']
+        else:
+            ordered_text += " " + block['text']
+        last_y = block['y']
 
-        # 3. Join text
-        ordered_text = ""
-        last_y = -1
-        for block in page_blocks:
-            # If the Y change is significant, start a new paragraph
-            if last_y != -1 and block['y'] - last_y > 20:
-                ordered_text += "\n\n" + block['text']
-            else:
-                ordered_text += " " + block['text']
-            last_y = block['y']
-
-        return jsonify({
-            "text": ordered_text.strip()
-        })
-
-    except Exception as e:
-        print(f"OCR Error: {str(e)}")
-        return jsonify({"error": str(e)}), 500
+    return ordered_text.strip()
 
 if __name__ == "__main__":
-    # threaded=True allows it to handle the 'Promise.all' calls from Node
-    app.run(port=5001, threaded=True)
+    if len(sys.argv) > 1:
+        # sys.argv[1] is the image path passed from Node.js
+        final_text = process_image(sys.argv[1])
+        sys.stdout.write(final_text)
+        sys.stdout.flush()
