@@ -3,55 +3,80 @@ import os
 import logging
 import warnings
 
-# 1. Suppress all Paddle and System logs so Node.js only gets the text
-os.environ['GLOG_minloglevel'] = '3'
+# -------------------- 1. Suppress logs --------------------
+os.environ['GLOG_minloglevel'] = '3'  # Suppress PaddleOCR logs
 logging.disable(logging.CRITICAL)
 warnings.filterwarnings("ignore")
 
+# -------------------- 2. Import PaddleOCR --------------------
 try:
     from paddleocr import PaddleOCR
 except ImportError:
     sys.exit(0)
 
-# Initialize OCR once when the script runs
-# use_gpu=False is mandatory for Render Free
+# -------------------- 3. Initialize OCR --------------------
+# use_gpu=False is required for Render Free
 ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False, use_gpu=False)
 
-def process_image(image_path):
+# -------------------- 4. OCR Processing Function --------------------
+def process_image(image_path, line_threshold=15, paragraph_threshold=25):
+    """
+    Process an image and return text with smart paragraph and line reconstruction.
+
+    Args:
+        image_path (str): Path to the image file.
+        line_threshold (int): Vertical threshold to group words on the same line.
+        paragraph_threshold (int): Vertical distance to start a new paragraph.
+
+    Returns:
+        str: Cleaned and ordered text.
+    """
     if not os.path.exists(image_path):
         return ""
 
+    # OCR the image
     result = ocr.ocr(image_path, cls=True)
     if not result or not result[0]:
         return ""
 
-    # 2. Extract blocks (Your original sorting logic)
+    # Extract text blocks with coordinates
     page_blocks = []
     for line in result[0]:
         box = line[0]
         text = line[1][0]
-        # box[0] is the top-left corner: [x, y]
-        page_blocks.append({"text": text, "x": box[0][0], "y": box[0][1]})
+        x, y = box[0]  # top-left coordinates
+        page_blocks.append({"text": text, "x": x, "y": y})
 
-    # 3. Sort: First by Y (divided by threshold for lines), then by X
-    # This keeps words on the same horizontal line together
-    page_blocks.sort(key=lambda b: (round(b['y'] / 15), b['x']))
+    # Sort: first by Y (line grouping), then by X (left-to-right)
+    page_blocks.sort(key=lambda b: (round(b['y'] / line_threshold), b['x']))
 
-    # 4. Join text with smart spacing
+    # Merge text intelligently
     ordered_text = ""
     last_y = -1
+    buffer_line = ""
+
     for block in page_blocks:
-        if last_y != -1 and (block['y'] - last_y) > 25:
-            ordered_text += "\n\n" + block['text']
+        # Start new paragraph if the vertical gap is large
+        if last_y != -1 and (block['y'] - last_y) > paragraph_threshold:
+            if buffer_line:
+                ordered_text += buffer_line.strip() + "\n\n"
+            buffer_line = block['text'] + " "
         else:
-            ordered_text += " " + block['text']
+            buffer_line += block['text'] + " "
         last_y = block['y']
 
-    return ordered_text.strip()
+    # Add remaining buffer
+    if buffer_line:
+        ordered_text += buffer_line.strip()
 
+    # Optional minor cleanup: remove extra spaces
+    ordered_text = ' '.join(ordered_text.split())
+
+    return ordered_text
+
+# -------------------- 5. CLI / Node.js Integration --------------------
 if __name__ == "__main__":
     if len(sys.argv) > 1:
-        # sys.argv[1] is the image path passed from Node.js
         final_text = process_image(sys.argv[1])
         sys.stdout.write(final_text)
         sys.stdout.flush()
