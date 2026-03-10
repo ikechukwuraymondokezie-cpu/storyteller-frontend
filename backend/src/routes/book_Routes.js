@@ -18,7 +18,6 @@ const Folder = mongoose.models.Folder || mongoose.model("Folder", new mongoose.S
 }));
 
 /* -------------------- CONFIG & DIRECTORIES -------------------- */
-// Using absolute paths based on the app root
 const pdfDir = path.join(__dirname, "../../temp/pdfs");
 const coversDir = path.join(__dirname, "../../temp/covers");
 fs.ensureDirSync(pdfDir);
@@ -60,13 +59,16 @@ function extractTOC(text) {
     return tocEntries;
 }
 
+/**
+ * GENTLE CLEAN:
+ * Removed the aggressive splitters that were causing "random word headers."
+ * Now it only handles spacing and excessive newlines.
+ */
 function smartClean(text) {
     if (!text) return "";
     return text
-        .replace(/([a-z0-9])\s*(Chapter\s+\d+|Psalm|Section|BOOKS\s+BY|Part|Book|Lesson)/gi, '$1\n\n$2')
-        .replace(/(Chapter\s+\d+.*?)\s+(The\s+authority|Because|In\s+the|For\s+this|When\s+we)/gi, '$1\n\n$2')
-        .replace(/[ \t]+/g, ' ')
-        .replace(/\n{4,}/g, '\n\n\n')
+        .replace(/[ \t]+/g, ' ')       // Normalize spaces/tabs
+        .replace(/\n{3,}/g, '\n\n')    // Max double spacing
         .trim();
 }
 
@@ -158,7 +160,10 @@ router.get("/:id/load-pages", protect, async (req, res) => {
         }
 
         const newText = newTextParts.join("\n\n");
-        const updatedContent = (book.content || "").trim() + "\n\n" + newText;
+        // Ensure we don't stack up too many newlines when merging
+        const currentContent = (book.content || "").trim();
+        const updatedContent = currentContent ? (currentContent + "\n\n" + newText) : newText;
+        
         const actualWordCount = updatedContent.split(/\s+/).filter(w => w.length > 0).length;
 
         const mergedTOC = [...(book.toc || []), ...newTOCEntries].filter((v, i, a) =>
@@ -166,7 +171,7 @@ router.get("/:id/load-pages", protect, async (req, res) => {
         );
 
         const updatedBook = await Book.findByIdAndUpdate(req.params.id, {
-            content: updatedContent.trim(),
+            content: updatedContent,
             processedPages: endPage,
             status: endPage >= book.totalPages ? 'completed' : 'processing',
             words: actualWordCount,
@@ -233,7 +238,9 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
                 for (let i = 1; i <= limit; i++) {
                     const text = await extractPageText(pdfDiskPath, i);
                     if (text) {
-                        runningText += text + "\n\n";
+                        // Concatenate smartly to avoid triple newlines
+                        const separator = (runningText.length > 0 && !runningText.endsWith('\n\n')) ? "\n\n" : "";
+                        runningText += separator + text;
                         runningTOC.push(...extractTOC(text));
                     }
                     await Book.findByIdAndUpdate(book._id, {
@@ -272,7 +279,6 @@ router.get("/:id", protect, async (req, res) => {
     } catch { res.status(500).json({ error: "Error fetching" }); }
 });
 
-// --- UPDATED DELETE ROUTE ---
 router.delete("/:id", protect, async (req, res) => {
     try {
         const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
@@ -281,7 +287,6 @@ router.delete("/:id", protect, async (req, res) => {
             return res.status(404).json({ error: "Book not found or unauthorized" });
         }
 
-        // 1. Cleanup Cloudinary (PDF and Cover)
         try {
             if (book.pdfPath && book.pdfPath.includes("cloudinary")) {
                 const pdfId = `storyteller_pdfs/${path.parse(book.pdfPath).name}`;
@@ -295,11 +300,9 @@ router.delete("/:id", protect, async (req, res) => {
             console.warn("Cloudinary cleanup partially failed, continuing...", cErr.message);
         }
 
-        // 2. Cleanup Local Temp Files
         const tempPdf = path.join(pdfDir, `temp_load_${book._id}.pdf`);
         if (await fs.pathExists(tempPdf)) await fs.remove(tempPdf);
 
-        // 3. Remove from Database
         await Book.findByIdAndDelete(req.params.id);
 
         res.json({ message: "Book deleted successfully" });
