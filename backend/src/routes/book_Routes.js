@@ -45,37 +45,54 @@ const formatBook = (book) => ({
     createdAt: book.createdAt
 });
 
+/**
+ * STRICT TOC EXTRACTION
+ * Only extracts if "Contents" or "Table of Contents" is found on the page.
+ */
 function extractTOC(text) {
+    const isTOCPage = /contents|table of contents/i.test(text);
+    if (!isTOCPage) return [];
+
     const tocEntries = [];
-    const tocRegex = /^(.*?)\s?[\.\-·_]{2,}\s?(\d+)$/gm;
+    // Regex matches: Title ... PageNumber OR Title [Spaces] PageNumber
+    const tocRegex = /^([a-z\s\(\)]{3,}.*?)\s?[\.\-·_ ]{2,}\s?(\d+)$/gim;
+
     let match;
     while ((match = tocRegex.exec(text)) !== null) {
-        tocEntries.push({
-            text: match[1].trim(),
-            page: parseInt(match[2]),
-            type: 'visual'
-        });
+        const title = match[1].trim();
+        // Filter out common false positives like "Page 1" or "Chapter"
+        if (title.length > 2 && !/^(page|contents)/i.test(title)) {
+            tocEntries.push({
+                text: title,
+                page: parseInt(match[2]),
+                type: 'visual'
+            });
+        }
     }
     return tocEntries;
 }
 
 /**
- * LAYOUT-AWARE CLEAN:
- * 1. Trims margin whitespace that causes skinny columns.
- * 2. Joins lines that were broken mid-sentence by the PDF layout.
+ * REFINED LAYOUT CLEAN:
+ * Fixes "Skinny Columns" while preserving "Short Headers"
  */
 function smartClean(text) {
     if (!text) return "";
 
     return text
-        // Split into lines to trim margin whitespace
+        // 1. Trim margin whitespace from every line
         .split('\n')
         .map(line => line.trim())
         .join('\n')
-        // Join lines that don't end in sentence-ending punctuation (fixes the choppy flow)
-        // This looks for a line NOT ending in . ! ? or : and joins it to the next line
-        .replace(/([^\.\!\?\:\n])\n([a-z0-9])/gi, '$1 $2')
-        // Normalize remaining whitespace
+        // 2. Join lines that don't end in punctuation
+        // EXCEPTION: If the line is very short (<20 chars), assume it's a Header and don't join.
+        .replace(/([^\.\!\?\:\n])\n([a-z0-9])/gi, (match, p1, p2) => {
+            if (p1.trim().length < 20) {
+                return p1 + '\n' + p2; // Keep as a header
+            }
+            return p1 + ' ' + p2; // Join into a paragraph
+        })
+        // 3. Final spacing normalization
         .replace(/[ \t]+/g, ' ')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
@@ -97,7 +114,6 @@ async function extractPageText(pdfPath, pageNum) {
     const pageImgFull = `${pageImgBase}.png`;
 
     try {
-        // REMOVED -layout to prevent margin/alignment issues from creating fake columns
         const digitalText = execSync(`pdftotext -f ${pageNum} -l ${pageNum} "${pdfPath}" -`, {
             encoding: 'utf8'
         }).trim();
@@ -146,9 +162,9 @@ router.get("/:id/load-pages", protect, async (req, res) => {
         const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
         if (!book) return res.status(404).json({ error: "Book not found" });
 
-        // FAILSAFE: Prevent multiple concurrent requests for the same book (Render RAM protection)
+        // FAILSAFE: RAM PROTECTION
         if (book.status === 'processing_pages') {
-            return res.status(429).json({ error: "Server is busy processing this book. Please wait." });
+            return res.status(429).json({ error: "Still processing. Please wait." });
         }
 
         const startPage = (book.processedPages || 0) + 1;
@@ -156,14 +172,13 @@ router.get("/:id/load-pages", protect, async (req, res) => {
 
         if (startPage > book.totalPages) return res.json({ addedText: "", status: "completed" });
 
-        // Lock status
+        // Lock record
         await Book.findByIdAndUpdate(req.params.id, { status: 'processing_pages' });
 
         tempPath = path.join(pdfDir, `temp_load_${book._id}.pdf`);
 
         if (!(await fs.pathExists(tempPath))) {
             const response = await axios.get(book.pdfPath, { responseType: 'arraybuffer' });
-            // Using writeFileSync to ensure file is fully written before next line executes
             fs.writeFileSync(tempPath, Buffer.from(response.data));
         }
 
@@ -173,15 +188,19 @@ router.get("/:id/load-pages", protect, async (req, res) => {
         for (let i = startPage; i <= endPage; i++) {
             const text = await extractPageText(tempPath, i);
             if (text) {
-                newTextParts.push(text);
-                newTOCEntries.push(...extractTOC(text));
+                // ADDING PAGE MARKER for Flutter navigation
+                newTextParts.push(`[PAGE_${i}]\n${text}`);
+
+                // ONLY extract TOC if we haven't found a solid one yet
+                if ((!book.toc || book.toc.length === 0) && i < 15) {
+                    newTOCEntries.push(...extractTOC(text));
+                }
             }
         }
 
         const newText = newTextParts.join("\n\n");
         const currentContent = (book.content || "").trim();
         const updatedContent = currentContent ? (currentContent + "\n\n" + newText) : newText;
-
         const actualWordCount = updatedContent.split(/\s+/).filter(w => w.length > 0).length;
 
         const mergedTOC = [...(book.toc || []), ...newTOCEntries].filter((v, i, a) =>
@@ -206,7 +225,6 @@ router.get("/:id/load-pages", protect, async (req, res) => {
             toc: mergedTOC
         });
     } catch (err) {
-        // Unlock on error
         await Book.findByIdAndUpdate(req.params.id, { status: 'processing' });
         res.status(500).json({ error: "Lazy load failed" });
     }
@@ -261,8 +279,8 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
                     const text = await extractPageText(pdfDiskPath, i);
                     if (text) {
                         const separator = (runningText.length > 0 && !runningText.endsWith('\n\n')) ? "\n\n" : "";
-                        runningText += separator + text;
-                        runningTOC.push(...extractTOC(text));
+                        runningText += separator + `[PAGE_${i}]\n` + text;
+                        if (i < 15) runningTOC.push(...extractTOC(text));
                     }
                     await Book.findByIdAndUpdate(book._id, {
                         content: runningText.trim(),
