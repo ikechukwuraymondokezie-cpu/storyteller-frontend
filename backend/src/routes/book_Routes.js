@@ -46,14 +46,15 @@ const formatBook = (book) => ({
 });
 
 /**
- * TOC EXTRACTION
- * Captures numbered chapters, punctuation (?), and handles messy spacing/dots.
+ * FIXED TOC EXTRACTION
+ * Captures numbered chapters (1.), punctuation (?), and handles messy spacing.
  */
 function extractTOC(text) {
     const isTOCPage = /contents|table of contents|index|chapters/i.test(text);
     if (!isTOCPage) return [];
 
     const tocEntries = [];
+    // Inclusive regex for titles starting with numbers/special chars and dots leading to a page number
     const tocRegex = /^\s*([\d\.]*\s*.*?)\s*[.\-·_ ]{2,}\s*(\d+)\s*$/gim;
 
     let match;
@@ -72,42 +73,18 @@ function extractTOC(text) {
     return tocEntries;
 }
 
-/**
- * REFINED SMART CLEAN
- * Preserves short headers and merges broken paragraph lines that lack punctuation.
- */
 function smartClean(text) {
     if (!text) return "";
-
-    // 1. Initial cleanup of margins and tabs
-    const lines = text.split('\n').map(line => line.trim());
-    let cleanedParts = [];
-
-    for (let i = 0; i < lines.length; i++) {
-        let currentLine = lines[i];
-        if (!currentLine) continue;
-
-        // 2. Identify Headers: Very short lines stay separate
-        if (currentLine.length < 25) {
-            cleanedParts.push("\n" + currentLine + "\n");
-            continue;
-        }
-
-        // 3. Sentence Check: If it doesn't end in . ! ? : or " merge it with the next line
-        const endsWithPunctuation = /[.!?:"]\s*$/.test(currentLine);
-
-        if (!endsWithPunctuation && i + 1 < lines.length && lines[i + 1].length > 0) {
-            // Peek at next line, merge with a space, and skip current index processing
-            lines[i + 1] = currentLine + " " + lines[i + 1];
-        } else {
-            cleanedParts.push(currentLine);
-        }
-    }
-
-    return cleanedParts
+    return text
+        .split('\n')
+        .map(line => line.trim())
         .join('\n')
-        .replace(/[ \t]+/g, ' ')     // Normalize spaces
-        .replace(/\n{3,}/g, '\n\n') // Fix spacing gaps
+        .replace(/([^\.\!\?\:\n])\n([a-z0-9])/gi, (match, p1, p2) => {
+            if (p1.trim().length < 20) return p1 + '\n' + p2;
+            return p1 + ' ' + p2;
+        })
+        .replace(/[ \t]+/g, ' ')
+        .replace(/\n{3,}/g, '\n\n')
         .trim();
 }
 
@@ -155,6 +132,7 @@ async function extractPageText(pdfPath, pageNum) {
 
 /* ---------------- ROUTES ---------------- */
 
+// GET LIBRARY
 router.get("/", protect, async (req, res) => {
     try {
         const books = await Book.find({ user: req.user._id }).sort({ createdAt: -1 });
@@ -162,6 +140,7 @@ router.get("/", protect, async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Failed to fetch library" }); }
 });
 
+// LAZY LOAD PAGES
 router.get("/:id/load-pages", protect, async (req, res) => {
     let tempPath = "";
     try {
@@ -187,6 +166,7 @@ router.get("/:id/load-pages", protect, async (req, res) => {
             const text = await extractPageText(tempPath, i);
             if (text) {
                 newTextParts.push(`[PAGE_${i}]\n${text}`);
+                // Always check for TOC in the first 15 pages
                 if (i < 15) {
                     const found = extractTOC(text);
                     if (found.length > 0) newTOCEntries.push(...found);
@@ -215,6 +195,7 @@ router.get("/:id/load-pages", protect, async (req, res) => {
     }
 });
 
+// UPLOAD BOOK
 router.post("/", protect, upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file" });
@@ -237,6 +218,7 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
 
         res.status(201).json(formatBook(book));
 
+        // Start Worker
         (async () => {
             try {
                 const baseName = path.parse(req.file.filename).name;
@@ -279,6 +261,7 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Upload failed" }); }
 });
 
+// FOLDERS
 router.get("/folders", protect, async (req, res) => {
     try {
         const folders = await Folder.find({ user: req.user._id }).sort({ name: 1 });
@@ -293,6 +276,7 @@ router.post("/folders", protect, async (req, res) => {
     } catch { res.status(400).json({ error: "Folder creation failed" }); }
 });
 
+// SINGLE BOOK
 router.get("/:id", protect, async (req, res) => {
     try {
         const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
@@ -301,11 +285,13 @@ router.get("/:id", protect, async (req, res) => {
     } catch { res.status(500).json({ error: "Error fetching" }); }
 });
 
+// DELETE BOOK
 router.delete("/:id", protect, async (req, res) => {
     try {
         const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
         if (!book) return res.status(404).json({ error: "Book not found" });
 
+        // Cloudinary Cleanup
         if (book.pdfPath?.includes("cloudinary")) {
             const pdfId = `storyteller_pdfs/${path.parse(book.pdfPath).name}`;
             await cloudinary.uploader.destroy(pdfId, { resource_type: 'raw' });
