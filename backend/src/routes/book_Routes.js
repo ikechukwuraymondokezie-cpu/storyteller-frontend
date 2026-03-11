@@ -11,13 +11,13 @@ const Book = require("../models/Book");
 const { protect } = require("../middleware/authMiddleware");
 const router = express.Router();
 
-/* -------------------- MODELS (Internal fallback) -------------------- */
+/* -------------------- MODELS -------------------- */
 const Folder = mongoose.models.Folder || mongoose.model("Folder", new mongoose.Schema({
     name: { type: String, required: true },
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }));
 
-/* -------------------- CONFIG & DIRECTORIES -------------------- */
+/* -------------------- CONFIG -------------------- */
 const pdfDir = path.join(__dirname, "../../temp/pdfs");
 const coversDir = path.join(__dirname, "../../temp/covers");
 fs.ensureDirSync(pdfDir);
@@ -46,25 +46,26 @@ const formatBook = (book) => ({
 });
 
 /**
- * STRICT TOC EXTRACTION
- * Only extracts if "Contents" or "Table of Contents" is found on the page.
+ * FIXED TOC EXTRACTION
+ * Captures numbered chapters (1.), punctuation (?), and handles messy spacing.
  */
 function extractTOC(text) {
-    const isTOCPage = /contents|table of contents/i.test(text);
+    const isTOCPage = /contents|table of contents|index|chapters/i.test(text);
     if (!isTOCPage) return [];
 
     const tocEntries = [];
-    // Regex matches: Title ... PageNumber OR Title [Spaces] PageNumber
-    const tocRegex = /^([a-z\s\(\)]{3,}.*?)\s?[\.\-·_ ]{2,}\s?(\d+)$/gim;
+    // Inclusive regex for titles starting with numbers/special chars and dots leading to a page number
+    const tocRegex = /^\s*([\d\.]*\s*.*?)\s*[.\-·_ ]{2,}\s*(\d+)\s*$/gim;
 
     let match;
     while ((match = tocRegex.exec(text)) !== null) {
         const title = match[1].trim();
-        // Filter out common false positives like "Page 1" or "Chapter"
-        if (title.length > 2 && !/^(page|contents)/i.test(title)) {
+        const pageNum = parseInt(match[2]);
+
+        if (title.length > 2 && !/^(page|contents|table of)/i.test(title)) {
             tocEntries.push({
                 text: title,
-                page: parseInt(match[2]),
+                page: pageNum,
                 type: 'visual'
             });
         }
@@ -72,27 +73,16 @@ function extractTOC(text) {
     return tocEntries;
 }
 
-/**
- * REFINED LAYOUT CLEAN:
- * Fixes "Skinny Columns" while preserving "Short Headers"
- */
 function smartClean(text) {
     if (!text) return "";
-
     return text
-        // 1. Trim margin whitespace from every line
         .split('\n')
         .map(line => line.trim())
         .join('\n')
-        // 2. Join lines that don't end in punctuation
-        // EXCEPTION: If the line is very short (<20 chars), assume it's a Header and don't join.
         .replace(/([^\.\!\?\:\n])\n([a-z0-9])/gi, (match, p1, p2) => {
-            if (p1.trim().length < 20) {
-                return p1 + '\n' + p2; // Keep as a header
-            }
-            return p1 + ' ' + p2; // Join into a paragraph
+            if (p1.trim().length < 20) return p1 + '\n' + p2;
+            return p1 + ' ' + p2;
         })
-        // 3. Final spacing normalization
         .replace(/[ \t]+/g, ' ')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
@@ -118,12 +108,7 @@ async function extractPageText(pdfPath, pageNum) {
             encoding: 'utf8'
         }).trim();
 
-        if (digitalText && digitalText.length > 50) {
-            console.log(`✅ Page ${pageNum}: Digital text layer found.`);
-            return smartClean(digitalText);
-        }
-
-        console.log(`📸 Page ${pageNum}: Running Local AI OCR...`);
+        if (digitalText && digitalText.length > 50) return smartClean(digitalText);
 
         await new Promise((resolve, reject) => {
             exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -r 300 -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
@@ -139,9 +124,7 @@ async function extractPageText(pdfPath, pageNum) {
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
         return smartClean(ocrResult);
-
     } catch (e) {
-        console.error(`❌ Extraction Error on Page ${pageNum}:`, e.message);
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
         return "";
     }
@@ -149,6 +132,7 @@ async function extractPageText(pdfPath, pageNum) {
 
 /* ---------------- ROUTES ---------------- */
 
+// GET LIBRARY
 router.get("/", protect, async (req, res) => {
     try {
         const books = await Book.find({ user: req.user._id }).sort({ createdAt: -1 });
@@ -156,25 +140,19 @@ router.get("/", protect, async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Failed to fetch library" }); }
 });
 
+// LAZY LOAD PAGES
 router.get("/:id/load-pages", protect, async (req, res) => {
     let tempPath = "";
     try {
         const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
         if (!book) return res.status(404).json({ error: "Book not found" });
-
-        // FAILSAFE: RAM PROTECTION
-        if (book.status === 'processing_pages') {
-            return res.status(429).json({ error: "Still processing. Please wait." });
-        }
+        if (book.status === 'processing_pages') return res.status(429).json({ error: "Processing..." });
 
         const startPage = (book.processedPages || 0) + 1;
         const endPage = Math.min(startPage + 4, book.totalPages);
-
         if (startPage > book.totalPages) return res.json({ addedText: "", status: "completed" });
 
-        // Lock record
         await Book.findByIdAndUpdate(req.params.id, { status: 'processing_pages' });
-
         tempPath = path.join(pdfDir, `temp_load_${book._id}.pdf`);
 
         if (!(await fs.pathExists(tempPath))) {
@@ -184,25 +162,20 @@ router.get("/:id/load-pages", protect, async (req, res) => {
 
         let newTextParts = [];
         let newTOCEntries = [];
-
         for (let i = startPage; i <= endPage; i++) {
             const text = await extractPageText(tempPath, i);
             if (text) {
-                // ADDING PAGE MARKER for Flutter navigation
                 newTextParts.push(`[PAGE_${i}]\n${text}`);
-
-                // ONLY extract TOC if we haven't found a solid one yet
-                if ((!book.toc || book.toc.length === 0) && i < 15) {
-                    newTOCEntries.push(...extractTOC(text));
+                // Always check for TOC in the first 15 pages
+                if (i < 15) {
+                    const found = extractTOC(text);
+                    if (found.length > 0) newTOCEntries.push(...found);
                 }
             }
         }
 
         const newText = newTextParts.join("\n\n");
-        const currentContent = (book.content || "").trim();
-        const updatedContent = currentContent ? (currentContent + "\n\n" + newText) : newText;
-        const actualWordCount = updatedContent.split(/\s+/).filter(w => w.length > 0).length;
-
+        const updatedContent = (book.content || "").trim() ? (book.content.trim() + "\n\n" + newText) : newText;
         const mergedTOC = [...(book.toc || []), ...newTOCEntries].filter((v, i, a) =>
             a.findIndex(t => (t.text === v.text && t.page === v.page)) === i
         );
@@ -211,28 +184,21 @@ router.get("/:id/load-pages", protect, async (req, res) => {
             content: updatedContent,
             processedPages: endPage,
             status: endPage >= book.totalPages ? 'completed' : 'processing',
-            words: actualWordCount,
+            words: updatedContent.split(/\s+/).filter(w => w.length > 0).length,
             toc: mergedTOC
         }, { new: true });
 
-        if (updatedBook.status === 'completed' && await fs.pathExists(tempPath)) await fs.remove(tempPath);
-
-        res.json({
-            addedText: newText,
-            processedPages: endPage,
-            status: updatedBook.status,
-            totalWords: actualWordCount,
-            toc: mergedTOC
-        });
+        res.json({ addedText: newText, processedPages: endPage, status: updatedBook.status, toc: mergedTOC });
     } catch (err) {
         await Book.findByIdAndUpdate(req.params.id, { status: 'processing' });
         res.status(500).json({ error: "Lazy load failed" });
     }
 });
 
+// UPLOAD BOOK
 router.post("/", protect, upload.single("file"), async (req, res) => {
     try {
-        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+        if (!req.file) return res.status(400).json({ error: "No file" });
         const pdfDiskPath = req.file.path;
         const totalPages = await getPageCount(pdfDiskPath);
 
@@ -252,11 +218,11 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
 
         res.status(201).json(formatBook(book));
 
+        // Start Worker
         (async () => {
             try {
                 const baseName = path.parse(req.file.filename).name;
                 const outputPrefix = path.join(coversDir, baseName);
-
                 const [cloudUrl, coverUrl] = await Promise.all([
                     cloudinary.uploader.upload(pdfDiskPath, { folder: "storyteller_pdfs", resource_type: "raw" }).then(r => r.secure_url),
                     new Promise((resolve) => {
@@ -278,9 +244,8 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
                 for (let i = 1; i <= limit; i++) {
                     const text = await extractPageText(pdfDiskPath, i);
                     if (text) {
-                        const separator = (runningText.length > 0 && !runningText.endsWith('\n\n')) ? "\n\n" : "";
-                        runningText += separator + `[PAGE_${i}]\n` + text;
-                        if (i < 15) runningTOC.push(...extractTOC(text));
+                        runningText += (runningText ? "\n\n" : "") + `[PAGE_${i}]\n` + text;
+                        runningTOC.push(...extractTOC(text));
                     }
                     await Book.findByIdAndUpdate(book._id, {
                         content: runningText.trim(),
@@ -296,6 +261,7 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Upload failed" }); }
 });
 
+// FOLDERS
 router.get("/folders", protect, async (req, res) => {
     try {
         const folders = await Folder.find({ user: req.user._id }).sort({ name: 1 });
@@ -310,6 +276,7 @@ router.post("/folders", protect, async (req, res) => {
     } catch { res.status(400).json({ error: "Folder creation failed" }); }
 });
 
+// SINGLE BOOK
 router.get("/:id", protect, async (req, res) => {
     try {
         const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
@@ -318,28 +285,28 @@ router.get("/:id", protect, async (req, res) => {
     } catch { res.status(500).json({ error: "Error fetching" }); }
 });
 
+// DELETE BOOK
 router.delete("/:id", protect, async (req, res) => {
     try {
         const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
         if (!book) return res.status(404).json({ error: "Book not found" });
 
-        try {
-            if (book.pdfPath && book.pdfPath.includes("cloudinary")) {
-                const pdfId = `storyteller_pdfs/${path.parse(book.pdfPath).name}`;
-                await cloudinary.uploader.destroy(pdfId, { resource_type: 'raw' });
-            }
-            if (book.cover && book.cover.includes("cloudinary")) {
-                const coverId = `storyteller_covers/${path.parse(book.cover).name}`;
-                await cloudinary.uploader.destroy(coverId);
-            }
-        } catch (cErr) { console.warn("Cloudinary cleanup failed", cErr.message); }
+        // Cloudinary Cleanup
+        if (book.pdfPath?.includes("cloudinary")) {
+            const pdfId = `storyteller_pdfs/${path.parse(book.pdfPath).name}`;
+            await cloudinary.uploader.destroy(pdfId, { resource_type: 'raw' });
+        }
+        if (book.cover?.includes("cloudinary")) {
+            const coverId = `storyteller_covers/${path.parse(book.cover).name}`;
+            await cloudinary.uploader.destroy(coverId);
+        }
 
         const tempPdf = path.join(pdfDir, `temp_load_${book._id}.pdf`);
         if (await fs.pathExists(tempPdf)) await fs.remove(tempPdf);
 
         await Book.findByIdAndDelete(req.params.id);
-        res.json({ message: "Book deleted successfully" });
-    } catch (err) { res.status(500).json({ error: "Failed to delete book" }); }
+        res.json({ message: "Book deleted" });
+    } catch (err) { res.status(500).json({ error: "Delete failed" }); }
 });
 
 module.exports = router;
