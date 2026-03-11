@@ -60,15 +60,24 @@ function extractTOC(text) {
 }
 
 /**
- * GENTLE CLEAN:
- * Removed the aggressive splitters that were causing "random word headers."
- * Now it only handles spacing and excessive newlines.
+ * LAYOUT-AWARE CLEAN:
+ * 1. Trims margin whitespace that causes skinny columns.
+ * 2. Joins lines that were broken mid-sentence by the PDF layout.
  */
 function smartClean(text) {
     if (!text) return "";
+
     return text
-        .replace(/[ \t]+/g, ' ')       // Normalize spaces/tabs
-        .replace(/\n{3,}/g, '\n\n')    // Max double spacing
+        // Split into lines to trim margin whitespace
+        .split('\n')
+        .map(line => line.trim())
+        .join('\n')
+        // Join lines that don't end in sentence-ending punctuation (fixes the choppy flow)
+        // This looks for a line NOT ending in . ! ? or : and joins it to the next line
+        .replace(/([^\.\!\?\:\n])\n([a-z0-9])/gi, '$1 $2')
+        // Normalize remaining whitespace
+        .replace(/[ \t]+/g, ' ')
+        .replace(/\n{3,}/g, '\n\n')
         .trim();
 }
 
@@ -88,7 +97,8 @@ async function extractPageText(pdfPath, pageNum) {
     const pageImgFull = `${pageImgBase}.png`;
 
     try {
-        const digitalText = execSync(`pdftotext -f ${pageNum} -l ${pageNum} -layout "${pdfPath}" -`, {
+        // REMOVED -layout to prevent margin/alignment issues from creating fake columns
+        const digitalText = execSync(`pdftotext -f ${pageNum} -l ${pageNum} "${pdfPath}" -`, {
             encoding: 'utf8'
         }).trim();
 
@@ -97,7 +107,7 @@ async function extractPageText(pdfPath, pageNum) {
             return smartClean(digitalText);
         }
 
-        console.log(`📸 Page ${pageNum}: Running Local AI OCR (ocr_service.py)...`);
+        console.log(`📸 Page ${pageNum}: Running Local AI OCR...`);
 
         await new Promise((resolve, reject) => {
             exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -r 300 -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
@@ -136,16 +146,25 @@ router.get("/:id/load-pages", protect, async (req, res) => {
         const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
         if (!book) return res.status(404).json({ error: "Book not found" });
 
+        // FAILSAFE: Prevent multiple concurrent requests for the same book (Render RAM protection)
+        if (book.status === 'processing_pages') {
+            return res.status(429).json({ error: "Server is busy processing this book. Please wait." });
+        }
+
         const startPage = (book.processedPages || 0) + 1;
         const endPage = Math.min(startPage + 4, book.totalPages);
 
         if (startPage > book.totalPages) return res.json({ addedText: "", status: "completed" });
 
+        // Lock status
+        await Book.findByIdAndUpdate(req.params.id, { status: 'processing_pages' });
+
         tempPath = path.join(pdfDir, `temp_load_${book._id}.pdf`);
 
         if (!(await fs.pathExists(tempPath))) {
             const response = await axios.get(book.pdfPath, { responseType: 'arraybuffer' });
-            await fs.writeFile(tempPath, Buffer.from(response.data));
+            // Using writeFileSync to ensure file is fully written before next line executes
+            fs.writeFileSync(tempPath, Buffer.from(response.data));
         }
 
         let newTextParts = [];
@@ -160,10 +179,9 @@ router.get("/:id/load-pages", protect, async (req, res) => {
         }
 
         const newText = newTextParts.join("\n\n");
-        // Ensure we don't stack up too many newlines when merging
         const currentContent = (book.content || "").trim();
         const updatedContent = currentContent ? (currentContent + "\n\n" + newText) : newText;
-        
+
         const actualWordCount = updatedContent.split(/\s+/).filter(w => w.length > 0).length;
 
         const mergedTOC = [...(book.toc || []), ...newTOCEntries].filter((v, i, a) =>
@@ -187,7 +205,11 @@ router.get("/:id/load-pages", protect, async (req, res) => {
             totalWords: actualWordCount,
             toc: mergedTOC
         });
-    } catch (err) { res.status(500).json({ error: "Lazy load failed" }); }
+    } catch (err) {
+        // Unlock on error
+        await Book.findByIdAndUpdate(req.params.id, { status: 'processing' });
+        res.status(500).json({ error: "Lazy load failed" });
+    }
 });
 
 router.post("/", protect, upload.single("file"), async (req, res) => {
@@ -238,7 +260,6 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
                 for (let i = 1; i <= limit; i++) {
                     const text = await extractPageText(pdfDiskPath, i);
                     if (text) {
-                        // Concatenate smartly to avoid triple newlines
                         const separator = (runningText.length > 0 && !runningText.endsWith('\n\n')) ? "\n\n" : "";
                         runningText += separator + text;
                         runningTOC.push(...extractTOC(text));
@@ -282,10 +303,7 @@ router.get("/:id", protect, async (req, res) => {
 router.delete("/:id", protect, async (req, res) => {
     try {
         const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
-
-        if (!book) {
-            return res.status(404).json({ error: "Book not found or unauthorized" });
-        }
+        if (!book) return res.status(404).json({ error: "Book not found" });
 
         try {
             if (book.pdfPath && book.pdfPath.includes("cloudinary")) {
@@ -296,20 +314,14 @@ router.delete("/:id", protect, async (req, res) => {
                 const coverId = `storyteller_covers/${path.parse(book.cover).name}`;
                 await cloudinary.uploader.destroy(coverId);
             }
-        } catch (cErr) {
-            console.warn("Cloudinary cleanup partially failed, continuing...", cErr.message);
-        }
+        } catch (cErr) { console.warn("Cloudinary cleanup failed", cErr.message); }
 
         const tempPdf = path.join(pdfDir, `temp_load_${book._id}.pdf`);
         if (await fs.pathExists(tempPdf)) await fs.remove(tempPdf);
 
         await Book.findByIdAndDelete(req.params.id);
-
         res.json({ message: "Book deleted successfully" });
-    } catch (err) {
-        console.error("Delete Error:", err);
-        res.status(500).json({ error: "Failed to delete book" });
-    }
+    } catch (err) { res.status(500).json({ error: "Failed to delete book" }); }
 });
 
 module.exports = router;
