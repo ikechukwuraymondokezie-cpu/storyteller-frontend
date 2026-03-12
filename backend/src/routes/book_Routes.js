@@ -47,7 +47,6 @@ const formatBook = (book) => ({
 
 /**
  * REFINED TOC EXTRACTION
- * Catures "Speechify" style patterns like "The Riddle House - 3"
  */
 function extractTOC(text) {
     const tocEntries = [];
@@ -71,8 +70,7 @@ function extractTOC(text) {
 
 /**
  * SPEECHIFY-STYLE SMART CLEAN
- * 1. Merges broken paragraph lines (missing punctuation).
- * 2. Keeps headers (Short, uppercase, or starting with "Chapter") separate.
+ * Merges broken sentences, removes hyphens, and protects headers.
  */
 function smartClean(text) {
     if (!text) return "";
@@ -84,34 +82,52 @@ function smartClean(text) {
     for (let i = 0; i < rawLines.length; i++) {
         let currentLine = rawLines[i];
 
-        // 1. Header Detection (Chapter headings or short lines)
-        const isChapterHeader = /^(chapter|part|section|one|two|three|four|five|[\d\.]{1,3})\b/i.test(currentLine);
-        const isShortHeader = currentLine.length < 35 && !/[.!?]$/.test(currentLine);
+        // 1. Header Detection
+        const isChapterHeader = /^(chapter|part|section|book|epilogue|prologue|one|two|three|four|five|[\d\.]{1,3})\b/i.test(currentLine);
+        const isShortHeader = currentLine.length < 40 && currentLine === currentLine.toUpperCase() && !/[.!?]$/.test(currentLine);
 
         if (isChapterHeader || isShortHeader) {
-            // Check if we should merge with next line (e.g., "CHAPTER ONE" + "THE SCAR")
-            if (i + 1 < rawLines.length && rawLines[i+1].length < 40 && !/[.!?]$/.test(rawLines[i+1])) {
+            // Check for multi-line headers (e.g. "CHAPTER 1" followed by "THE BOY")
+            if (i + 1 < rawLines.length && rawLines[i+1].length < 45 && !/[.!?]$/.test(rawLines[i+1])) {
                 processed.push(currentLine.toUpperCase() + " " + rawLines[i+1].toUpperCase());
-                i++; // Skip the merged line
+                i++; 
             } else {
                 processed.push(currentLine.toUpperCase());
             }
             continue;
         }
 
-        // 2. Sentence Stitching
-        // If line doesn't end in punctuation, merge with the next line
-        const endsInSentence = /[.!?:"]\s*$/.test(currentLine);
+        // 2. Sentence Stitching & Hyphen Removal
+        if (i + 1 < rawLines.length) {
+            let nextLine = rawLines[i + 1];
 
-        if (!endsInSentence && i + 1 < rawLines.length) {
-            rawLines[i + 1] = currentLine + " " + rawLines[i + 1];
-        } else {
-            processed.push(currentLine);
+            // Fix hyphens cut by border (e.g., "run-", "ning")
+            if (currentLine.endsWith('-')) {
+                rawLines[i + 1] = currentLine.slice(0, -1) + nextLine;
+                continue; 
+            }
+
+            // Detect if current line is a broken sentence at the border
+            const endsInSentence = /[.!?:"]\s*$/.test(currentLine);
+            const nextStartsLowercase = /^[a-z]/.test(nextLine);
+
+            // If not punctuated OR next line starts lower case, merge them
+            if (!endsInSentence || nextStartsLowercase) {
+                // Peek ahead: don't merge if next line is clearly a new header
+                const nextIsHeader = (nextLine === nextLine.toUpperCase() && nextLine.length < 40);
+                
+                if (!nextIsHeader) {
+                    rawLines[i + 1] = currentLine + " " + nextLine;
+                    continue; 
+                }
+            }
         }
+
+        processed.push(currentLine);
     }
 
     return processed
-        .join('\n\n') // Paragraphs separated by double newlines
+        .join('\n\n') 
         .replace(/[ \t]+/g, ' ')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
