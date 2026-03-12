@@ -2,114 +2,205 @@ import sys
 import os
 import logging
 import warnings
-import numpy as np
 
-# Suppress logs
+# -------------------- 1. Suppress logs --------------------
 os.environ['GLOG_minloglevel'] = '3'
 logging.disable(logging.CRITICAL)
 warnings.filterwarnings("ignore")
 
+# -------------------- 2. Import PaddleOCR --------------------
 try:
     from paddleocr import PaddleOCR
 except ImportError:
     sys.exit(0)
 
-ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False, use_gpu=False)
+# -------------------- 3. Initialize OCR --------------------
+ocr = PaddleOCR(
+    use_angle_cls=True,
+    lang='en',
+    show_log=False,
+    use_gpu=False
+)
 
-def find_gutter(blocks, max_x):
-    """Finds the widest vertical empty space to split columns."""
-    if not blocks: return max_x / 2
-    
-    # Create a histogram of occupied X-coordinates
-    x_hist = np.zeros(int(max_x) + 1)
+# -------------------- Detect column layout --------------------
+def split_columns(blocks):
+
+    if not blocks:
+        return [blocks]
+
+    xs = [b["x"] for b in blocks]
+    min_x = min(xs)
+    max_x = max(xs)
+
+    page_width = max_x - min_x
+
+    # midpoint of page
+    mid = min_x + page_width / 2
+
+    left = []
+    right = []
+
     for b in blocks:
-        x_hist[int(b['x_start']):int(b['x_end'])] = 1
-    
-    # Find the longest run of zeros (empty space) near the middle
-    zero_runs = []
-    current_run = 0
-    start_idx = 0
-    
-    for i, val in enumerate(x_hist):
-        if val == 0:
-            if current_run == 0: start_idx = i
-            current_run += 1
+        if b["x"] < mid:
+            left.append(b)
         else:
-            if current_run > 20: # Only care about gaps wider than 20px
-                zero_runs.append((start_idx, current_run))
-            current_run = 0
-            
-    if not zero_runs: return max_x / 2
-    
-    # Pick the gap closest to the center of the page
-    center = max_x / 2
-    best_gap_mid = center
-    min_dist = max_x
-    
-    for start, length in zero_runs:
-        gap_mid = start + (length / 2)
-        dist = abs(gap_mid - center)
-        if dist < min_dist:
-            min_dist = dist
-            best_gap_mid = gap_mid
-            
-    return best_gap_mid
+            right.append(b)
 
-def process_image(image_path, line_threshold=15):
-    if not os.path.exists(image_path): return ""
+    # If right column is too small, assume single column
+    if len(right) < len(blocks) * 0.2:
+        return [blocks]
 
-    result = ocr.ocr(image_path, cls=True)
-    if not result or not result[0]: return ""
+    return [left, right]
 
-    page_blocks = []
-    max_x = 0
-    for line in result[0]:
-        box, (text, score) = line
-        xs = [p[0] for p in box]
-        ys = [p[1] for p in box]
-        
-        x_start, x_end = min(xs), max(xs)
-        if x_end > max_x: max_x = x_end
-        
-        page_blocks.append({
-            "text": text.strip(),
-            "x_start": x_start,
-            "x_end": x_end,
-            "x_center": (x_start + x_end) / 2,
-            "y": min(ys)
+
+# -------------------- Process blocks into paragraphs --------------------
+def blocks_to_text(blocks, line_threshold, paragraph_threshold):
+
+    if not blocks:
+        return ""
+
+    # sort top → bottom
+    blocks.sort(key=lambda b: (round(b["y"] / line_threshold), b["x"]))
+
+    # ---- Build lines ----
+    lines = []
+    current_words = []
+    current_y = None
+
+    for block in blocks:
+
+        if current_y is None:
+            current_y = block["y"]
+
+        if abs(block["y"] - current_y) > line_threshold:
+
+            lines.append({
+                "y": current_y,
+                "text": " ".join(current_words)
+            })
+
+            current_words = [block["text"]]
+            current_y = block["y"]
+
+        else:
+            current_words.append(block["text"])
+
+    if current_words:
+        lines.append({
+            "y": current_y,
+            "text": " ".join(current_words)
         })
 
-    # DYNAMIC GUTTER DETECTION
-    gutter_x = find_gutter(page_blocks, max_x)
-    
-    left_col = [b for b in page_blocks if b["x_center"] < gutter_x]
-    right_col = [b for b in page_blocks if b["x_center"] >= gutter_x]
+    # ---- Build paragraphs ----
+    paragraphs = []
+    current_para = ""
+    last_y = None
 
-    # Sort
-    left_col.sort(key=lambda b: (round(b["y"] / line_threshold), b["x_start"]))
-    right_col.sort(key=lambda b: (round(b["y"] / line_threshold), b["x_start"]))
+    for line in lines:
 
-    def merge(blocks):
-        if not blocks: return ""
-        res = []
-        curr_words = [blocks[0]["text"]]
-        curr_y = blocks[0]["y"]
-        for i in range(1, len(blocks)):
-            if abs(blocks[i]["y"] - curr_y) > line_threshold:
-                res.append(" ".join(curr_words))
-                curr_words = [blocks[i]["text"]]
-                curr_y = blocks[i]["y"]
+        if last_y is not None and abs(line["y"] - last_y) > paragraph_threshold:
+
+            paragraphs.append(current_para.strip())
+            current_para = line["text"] + " "
+
+        else:
+            current_para += line["text"] + " "
+
+        last_y = line["y"]
+
+    if current_para:
+        paragraphs.append(current_para.strip())
+
+    return "\n\n".join(paragraphs)
+
+
+# -------------------- OCR Processing Function --------------------
+def process_image(
+    image_path,
+    line_threshold=15,
+    paragraph_threshold=30,
+    preserve_sentences=True
+):
+
+    if not os.path.exists(image_path):
+        return ""
+
+    result = ocr.ocr(image_path, cls=True)
+
+    if not result or not result[0]:
+        return ""
+
+    # ---- Extract OCR blocks ----
+    page_blocks = []
+
+    for line in result[0]:
+
+        box = line[0]
+        text = line[1][0].strip()
+
+        x = box[0][0]
+        y = box[0][1]
+
+        page_blocks.append({
+            "text": text,
+            "x": x,
+            "y": y
+        })
+
+    # ---- Detect columns ----
+    columns = split_columns(page_blocks)
+
+    # ---- Process columns ----
+    column_texts = []
+
+    for col in columns:
+        column_texts.append(
+            blocks_to_text(col, line_threshold, paragraph_threshold)
+        )
+
+    combined_text = "\n\n".join(column_texts)
+
+    # ---- Sentence cleanup ----
+    final_text = ""
+
+    if preserve_sentences:
+
+        sentences = combined_text.split(". ")
+
+        for s in sentences:
+
+            s = s.strip()
+
+            if not s:
+                continue
+
+            final_text += s
+
+            if s[-1] in ".!?":
+                final_text += "\n\n"
             else:
-                curr_words.append(blocks[i]["text"])
-        res.append(" ".join(curr_words))
-        return "\n".join(res)
+                final_text += " "
 
-    left_text = merge(left_col)
-    right_text = merge(right_col)
+    else:
+        final_text = combined_text
 
-    return f"{left_text}\n{right_text}".strip()
+    # ---- Cleanup spacing ----
+    final_text = final_text.replace("\n \n", "\n\n")
 
+    lines = final_text.split("\n")
+    lines = [" ".join(l.split()) for l in lines]
+
+    final_text = "\n".join(lines)
+
+    return final_text.strip()
+
+
+# -------------------- CLI Interface --------------------
 if __name__ == "__main__":
+
     if len(sys.argv) > 1:
-        sys.stdout.write(process_image(sys.argv[1]))
+
+        final_text = process_image(sys.argv[1])
+
+        sys.stdout.write(final_text)
         sys.stdout.flush()
