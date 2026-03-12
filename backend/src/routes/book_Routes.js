@@ -11,13 +11,13 @@ const Book = require("../models/Book");
 const { protect } = require("../middleware/authMiddleware");
 const router = express.Router();
 
-/* -------------------- MODELS -------------------- */
+/* -------------------- MODELS (Internal fallback) -------------------- */
 const Folder = mongoose.models.Folder || mongoose.model("Folder", new mongoose.Schema({
     name: { type: String, required: true },
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }));
 
-/* -------------------- CONFIG -------------------- */
+/* -------------------- CONFIG & DIRECTORIES -------------------- */
 const pdfDir = path.join(__dirname, "../../temp/pdfs");
 const coversDir = path.join(__dirname, "../../temp/covers");
 fs.ensureDirSync(pdfDir);
@@ -46,21 +46,25 @@ const formatBook = (book) => ({
 });
 
 /**
- * REFINED TOC EXTRACTION
+ * STRICT TOC EXTRACTION
+ * Only extracts if "Contents" or "Table of Contents" is found on the page.
  */
 function extractTOC(text) {
+    const isTOCPage = /contents|table of contents/i.test(text);
+    if (!isTOCPage) return [];
+
     const tocEntries = [];
-    const tocRegex = /^\s*([A-Z\d\s\-\.]{3,})\s*[.\-·_ ]{0,}\s*(\d+)\s*$/gim;
+    // Regex matches: Title ... PageNumber OR Title [Spaces] PageNumber
+    const tocRegex = /^([a-z\s\(\)]{3,}.*?)\s?[\.\-·_ ]{2,}\s?(\d+)$/gim;
 
     let match;
     while ((match = tocRegex.exec(text)) !== null) {
-        let title = match[1].trim().replace(/\.+$/, "").trim();
-        const pageNum = parseInt(match[2]);
-
-        if (title.length > 2 && !/^(page|contents|table of|index)/i.test(title)) {
+        const title = match[1].trim();
+        // Filter out common false positives like "Page 1" or "Chapter"
+        if (title.length > 2 && !/^(page|contents)/i.test(title)) {
             tocEntries.push({
                 text: title,
-                page: pageNum,
+                page: parseInt(match[2]),
                 type: 'visual'
             });
         }
@@ -69,65 +73,26 @@ function extractTOC(text) {
 }
 
 /**
- * SPEECHIFY-STYLE SMART CLEAN
- * Merges broken sentences, removes hyphens, and protects headers.
+ * REFINED LAYOUT CLEAN:
+ * Fixes "Skinny Columns" while preserving "Short Headers"
  */
 function smartClean(text) {
     if (!text) return "";
 
-    // Normalize spacing and split into lines
-    let rawLines = text.split('\n').map(line => line.trim()).filter(l => l.length > 0);
-    let processed = [];
-
-    for (let i = 0; i < rawLines.length; i++) {
-        let currentLine = rawLines[i];
-
-        // 1. Header Detection
-        const isChapterHeader = /^(chapter|part|section|book|epilogue|prologue|one|two|three|four|five|[\d\.]{1,3})\b/i.test(currentLine);
-        const isShortHeader = currentLine.length < 40 && currentLine === currentLine.toUpperCase() && !/[.!?]$/.test(currentLine);
-
-        if (isChapterHeader || isShortHeader) {
-            // Check for multi-line headers (e.g. "CHAPTER 1" followed by "THE BOY")
-            if (i + 1 < rawLines.length && rawLines[i+1].length < 45 && !/[.!?]$/.test(rawLines[i+1])) {
-                processed.push(currentLine.toUpperCase() + " " + rawLines[i+1].toUpperCase());
-                i++; 
-            } else {
-                processed.push(currentLine.toUpperCase());
+    return text
+        // 1. Trim margin whitespace from every line
+        .split('\n')
+        .map(line => line.trim())
+        .join('\n')
+        // 2. Join lines that don't end in punctuation
+        // EXCEPTION: If the line is very short (<20 chars), assume it's a Header and don't join.
+        .replace(/([^\.\!\?\:\n])\n([a-z0-9])/gi, (match, p1, p2) => {
+            if (p1.trim().length < 20) {
+                return p1 + '\n' + p2; // Keep as a header
             }
-            continue;
-        }
-
-        // 2. Sentence Stitching & Hyphen Removal
-        if (i + 1 < rawLines.length) {
-            let nextLine = rawLines[i + 1];
-
-            // Fix hyphens cut by border (e.g., "run-", "ning")
-            if (currentLine.endsWith('-')) {
-                rawLines[i + 1] = currentLine.slice(0, -1) + nextLine;
-                continue; 
-            }
-
-            // Detect if current line is a broken sentence at the border
-            const endsInSentence = /[.!?:"]\s*$/.test(currentLine);
-            const nextStartsLowercase = /^[a-z]/.test(nextLine);
-
-            // If not punctuated OR next line starts lower case, merge them
-            if (!endsInSentence || nextStartsLowercase) {
-                // Peek ahead: don't merge if next line is clearly a new header
-                const nextIsHeader = (nextLine === nextLine.toUpperCase() && nextLine.length < 40);
-                
-                if (!nextIsHeader) {
-                    rawLines[i + 1] = currentLine + " " + nextLine;
-                    continue; 
-                }
-            }
-        }
-
-        processed.push(currentLine);
-    }
-
-    return processed
-        .join('\n\n') 
+            return p1 + ' ' + p2; // Join into a paragraph
+        })
+        // 3. Final spacing normalization
         .replace(/[ \t]+/g, ' ')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
@@ -153,7 +118,12 @@ async function extractPageText(pdfPath, pageNum) {
             encoding: 'utf8'
         }).trim();
 
-        if (digitalText && digitalText.length > 50) return smartClean(digitalText);
+        if (digitalText && digitalText.length > 50) {
+            console.log(`✅ Page ${pageNum}: Digital text layer found.`);
+            return smartClean(digitalText);
+        }
+
+        console.log(`📸 Page ${pageNum}: Running Local AI OCR...`);
 
         await new Promise((resolve, reject) => {
             exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -r 300 -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
@@ -169,7 +139,9 @@ async function extractPageText(pdfPath, pageNum) {
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
         return smartClean(ocrResult);
+
     } catch (e) {
+        console.error(`❌ Extraction Error on Page ${pageNum}:`, e.message);
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
         return "";
     }
@@ -189,13 +161,20 @@ router.get("/:id/load-pages", protect, async (req, res) => {
     try {
         const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
         if (!book) return res.status(404).json({ error: "Book not found" });
-        if (book.status === 'processing_pages') return res.status(429).json({ error: "Processing..." });
+
+        // FAILSAFE: RAM PROTECTION
+        if (book.status === 'processing_pages') {
+            return res.status(429).json({ error: "Still processing. Please wait." });
+        }
 
         const startPage = (book.processedPages || 0) + 1;
         const endPage = Math.min(startPage + 4, book.totalPages);
+
         if (startPage > book.totalPages) return res.json({ addedText: "", status: "completed" });
 
+        // Lock record
         await Book.findByIdAndUpdate(req.params.id, { status: 'processing_pages' });
+
         tempPath = path.join(pdfDir, `temp_load_${book._id}.pdf`);
 
         if (!(await fs.pathExists(tempPath))) {
@@ -205,19 +184,25 @@ router.get("/:id/load-pages", protect, async (req, res) => {
 
         let newTextParts = [];
         let newTOCEntries = [];
+
         for (let i = startPage; i <= endPage; i++) {
             const text = await extractPageText(tempPath, i);
             if (text) {
+                // ADDING PAGE MARKER for Flutter navigation
                 newTextParts.push(`[PAGE_${i}]\n${text}`);
-                if (i < 15) {
-                    const found = extractTOC(text);
-                    if (found.length > 0) newTOCEntries.push(...found);
+
+                // ONLY extract TOC if we haven't found a solid one yet
+                if ((!book.toc || book.toc.length === 0) && i < 15) {
+                    newTOCEntries.push(...extractTOC(text));
                 }
             }
         }
 
         const newText = newTextParts.join("\n\n");
-        const updatedContent = (book.content || "").trim() ? (book.content.trim() + "\n\n" + newText) : newText;
+        const currentContent = (book.content || "").trim();
+        const updatedContent = currentContent ? (currentContent + "\n\n" + newText) : newText;
+        const actualWordCount = updatedContent.split(/\s+/).filter(w => w.length > 0).length;
+
         const mergedTOC = [...(book.toc || []), ...newTOCEntries].filter((v, i, a) =>
             a.findIndex(t => (t.text === v.text && t.page === v.page)) === i
         );
@@ -226,11 +211,19 @@ router.get("/:id/load-pages", protect, async (req, res) => {
             content: updatedContent,
             processedPages: endPage,
             status: endPage >= book.totalPages ? 'completed' : 'processing',
-            words: updatedContent.split(/\s+/).filter(w => w.length > 0).length,
+            words: actualWordCount,
             toc: mergedTOC
         }, { new: true });
 
-        res.json({ addedText: newText, processedPages: endPage, status: updatedBook.status, toc: mergedTOC });
+        if (updatedBook.status === 'completed' && await fs.pathExists(tempPath)) await fs.remove(tempPath);
+
+        res.json({
+            addedText: newText,
+            processedPages: endPage,
+            status: updatedBook.status,
+            totalWords: actualWordCount,
+            toc: mergedTOC
+        });
     } catch (err) {
         await Book.findByIdAndUpdate(req.params.id, { status: 'processing' });
         res.status(500).json({ error: "Lazy load failed" });
@@ -239,7 +232,7 @@ router.get("/:id/load-pages", protect, async (req, res) => {
 
 router.post("/", protect, upload.single("file"), async (req, res) => {
     try {
-        if (!req.file) return res.status(400).json({ error: "No file" });
+        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
         const pdfDiskPath = req.file.path;
         const totalPages = await getPageCount(pdfDiskPath);
 
@@ -263,6 +256,7 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
             try {
                 const baseName = path.parse(req.file.filename).name;
                 const outputPrefix = path.join(coversDir, baseName);
+
                 const [cloudUrl, coverUrl] = await Promise.all([
                     cloudinary.uploader.upload(pdfDiskPath, { folder: "storyteller_pdfs", resource_type: "raw" }).then(r => r.secure_url),
                     new Promise((resolve) => {
@@ -284,7 +278,8 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
                 for (let i = 1; i <= limit; i++) {
                     const text = await extractPageText(pdfDiskPath, i);
                     if (text) {
-                        runningText += (runningText ? "\n\n" : "") + `[PAGE_${i}]\n` + text;
+                        const separator = (runningText.length > 0 && !runningText.endsWith('\n\n')) ? "\n\n" : "";
+                        runningText += separator + `[PAGE_${i}]\n` + text;
                         if (i < 15) runningTOC.push(...extractTOC(text));
                     }
                     await Book.findByIdAndUpdate(book._id, {
@@ -328,21 +323,23 @@ router.delete("/:id", protect, async (req, res) => {
         const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
         if (!book) return res.status(404).json({ error: "Book not found" });
 
-        if (book.pdfPath?.includes("cloudinary")) {
-            const pdfId = `storyteller_pdfs/${path.parse(book.pdfPath).name}`;
-            await cloudinary.uploader.destroy(pdfId, { resource_type: 'raw' });
-        }
-        if (book.cover?.includes("cloudinary")) {
-            const coverId = `storyteller_covers/${path.parse(book.cover).name}`;
-            await cloudinary.uploader.destroy(coverId);
-        }
+        try {
+            if (book.pdfPath && book.pdfPath.includes("cloudinary")) {
+                const pdfId = `storyteller_pdfs/${path.parse(book.pdfPath).name}`;
+                await cloudinary.uploader.destroy(pdfId, { resource_type: 'raw' });
+            }
+            if (book.cover && book.cover.includes("cloudinary")) {
+                const coverId = `storyteller_covers/${path.parse(book.cover).name}`;
+                await cloudinary.uploader.destroy(coverId);
+            }
+        } catch (cErr) { console.warn("Cloudinary cleanup failed", cErr.message); }
 
         const tempPdf = path.join(pdfDir, `temp_load_${book._id}.pdf`);
         if (await fs.pathExists(tempPdf)) await fs.remove(tempPdf);
 
         await Book.findByIdAndDelete(req.params.id);
-        res.json({ message: "Book deleted" });
-    } catch (err) { res.status(500).json({ error: "Delete failed" }); }
+        res.json({ message: "Book deleted successfully" });
+    } catch (err) { res.status(500).json({ error: "Failed to delete book" }); }
 });
 
 module.exports = router;
