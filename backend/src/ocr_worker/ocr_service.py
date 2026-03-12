@@ -2,111 +2,114 @@ import sys
 import os
 import logging
 import warnings
+import numpy as np
 
-# -------------------- 1. Suppress logs --------------------
+# Suppress logs
 os.environ['GLOG_minloglevel'] = '3'
 logging.disable(logging.CRITICAL)
 warnings.filterwarnings("ignore")
 
-# -------------------- 2. Import PaddleOCR --------------------
 try:
     from paddleocr import PaddleOCR
 except ImportError:
     sys.exit(0)
 
-# -------------------- 3. Initialize OCR --------------------
-ocr = PaddleOCR(
-    use_angle_cls=True, 
-    lang='en', 
-    show_log=False, 
-    use_gpu=False
-)
+ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False, use_gpu=False)
+
+def find_gutter(blocks, max_x):
+    """Finds the widest vertical empty space to split columns."""
+    if not blocks: return max_x / 2
+    
+    # Create a histogram of occupied X-coordinates
+    x_hist = np.zeros(int(max_x) + 1)
+    for b in blocks:
+        x_hist[int(b['x_start']):int(b['x_end'])] = 1
+    
+    # Find the longest run of zeros (empty space) near the middle
+    zero_runs = []
+    current_run = 0
+    start_idx = 0
+    
+    for i, val in enumerate(x_hist):
+        if val == 0:
+            if current_run == 0: start_idx = i
+            current_run += 1
+        else:
+            if current_run > 20: # Only care about gaps wider than 20px
+                zero_runs.append((start_idx, current_run))
+            current_run = 0
+            
+    if not zero_runs: return max_x / 2
+    
+    # Pick the gap closest to the center of the page
+    center = max_x / 2
+    best_gap_mid = center
+    min_dist = max_x
+    
+    for start, length in zero_runs:
+        gap_mid = start + (length / 2)
+        dist = abs(gap_mid - center)
+        if dist < min_dist:
+            min_dist = dist
+            best_gap_mid = gap_mid
+            
+    return best_gap_mid
 
 def process_image(image_path, line_threshold=15):
-    if not os.path.exists(image_path):
-        return ""
+    if not os.path.exists(image_path): return ""
 
     result = ocr.ocr(image_path, cls=True)
+    if not result or not result[0]: return ""
 
-    if not result or not result[0]:
-        return ""
-
-    # -------------------- Extract Blocks & Find Width --------------------
     page_blocks = []
     max_x = 0
-    
     for line in result[0]:
-        box = line[0]
-        text = line[1][0].strip()
+        box, (text, score) = line
+        xs = [p[0] for p in box]
+        ys = [p[1] for p in box]
         
-        # Get coordinates for the center of the block
-        x_start = box[0][0]
-        x_end = box[1][0]
-        y_top = box[0][1]
-        x_center = (x_start + x_end) / 2
-        
+        x_start, x_end = min(xs), max(xs)
         if x_end > max_x: max_x = x_end
-
+        
         page_blocks.append({
-            "text": text,
-            "x": x_start,
-            "x_center": x_center,
-            "y": y_top
+            "text": text.strip(),
+            "x_start": x_start,
+            "x_end": x_end,
+            "x_center": (x_start + x_end) / 2,
+            "y": min(ys)
         })
 
-    # -------------------- Multi-Column Logic --------------------
-    # We find the midpoint to split left/right columns
-    mid_point = max_x / 2
-    left_col_blocks = []
-    right_col_blocks = []
+    # DYNAMIC GUTTER DETECTION
+    gutter_x = find_gutter(page_blocks, max_x)
+    
+    left_col = [b for b in page_blocks if b["x_center"] < gutter_x]
+    right_col = [b for b in page_blocks if b["x_center"] >= gutter_x]
 
-    for block in page_blocks:
-        if block["x_center"] < mid_point:
-            left_col_blocks.append(block)
-        else:
-            right_col_blocks.append(block)
+    # Sort
+    left_col.sort(key=lambda b: (round(b["y"] / line_threshold), b["x_start"]))
+    right_col.sort(key=lambda b: (round(b["y"] / line_threshold), b["x_start"]))
 
-    # Sort each column individually: Top to Bottom
-    left_col_blocks.sort(key=lambda b: (round(b["y"] / line_threshold), b["x"]))
-    right_col_blocks.sort(key=lambda b: (round(b["y"] / line_threshold), b["x"]))
-
-    # -------------------- Helper to build lines within a column --------------------
-    def build_column_text(blocks):
-        if not blocks:
-            return ""
-        
-        lines = []
-        current_words = [blocks[0]["text"]]
-        current_y = blocks[0]["y"]
-
+    def merge(blocks):
+        if not blocks: return ""
+        res = []
+        curr_words = [blocks[0]["text"]]
+        curr_y = blocks[0]["y"]
         for i in range(1, len(blocks)):
-            block = blocks[i]
-            # If the vertical gap is small, it's the same line
-            if abs(block["y"] - current_y) > line_threshold:
-                lines.append(" ".join(current_words))
-                current_words = [block["text"]]
-                current_y = block["y"]
+            if abs(blocks[i]["y"] - curr_y) > line_threshold:
+                res.append(" ".join(curr_words))
+                curr_words = [blocks[i]["text"]]
+                curr_y = blocks[i]["y"]
             else:
-                current_words.append(block["text"])
-        
-        lines.append(" ".join(current_words))
-        return "\n".join(lines)
+                curr_words.append(blocks[i]["text"])
+        res.append(" ".join(curr_words))
+        return "\n".join(res)
 
-    # -------------------- Final Assembly --------------------
-    # We process the entire left column before starting the right column
-    left_text = build_column_text(left_col_blocks)
-    right_text = build_column_text(right_col_blocks)
+    left_text = merge(left_col)
+    right_text = merge(right_col)
 
-    # Combine them. If there is a right column, append it after the left.
-    if right_text:
-        return f"{left_text}\n{right_text}"
-    return left_text
+    return f"{left_text}\n{right_text}".strip()
 
-# -------------------- CLI Interface --------------------
 if __name__ == "__main__":
     if len(sys.argv) > 1:
-        # We output raw text with single newlines.
-        # Your Node.js smartClean will handle the paragraph stitching.
-        final_output = process_image(sys.argv[1])
-        sys.stdout.write(final_output)
+        sys.stdout.write(process_image(sys.argv[1]))
         sys.stdout.flush()
