@@ -42,25 +42,23 @@ const formatBook = (book) => ({
     processedPages: book.processedPages || 0,
     summary: book.summary || "",
     toc: book.toc || [],
+    lastAccessed: book.lastAccessed,
     createdAt: book.createdAt
 });
 
 /**
- * STRICT TOC EXTRACTION
- * Only extracts if "Contents" or "Table of Contents" is found on the page.
+ * TOC & TEXT CLEANING HELPERS
  */
 function extractTOC(text) {
     const isTOCPage = /contents|table of contents/i.test(text);
     if (!isTOCPage) return [];
 
     const tocEntries = [];
-    // Regex matches: Title ... PageNumber OR Title [Spaces] PageNumber
     const tocRegex = /^([a-z\s\(\)]{3,}.*?)\s?[\.\-·_ ]{2,}\s?(\d+)$/gim;
 
     let match;
     while ((match = tocRegex.exec(text)) !== null) {
         const title = match[1].trim();
-        // Filter out common false positives like "Page 1" or "Chapter"
         if (title.length > 2 && !/^(page|contents)/i.test(title)) {
             tocEntries.push({
                 text: title,
@@ -72,27 +70,16 @@ function extractTOC(text) {
     return tocEntries;
 }
 
-/**
- * REFINED LAYOUT CLEAN:
- * Fixes "Skinny Columns" while preserving "Short Headers"
- */
 function smartClean(text) {
     if (!text) return "";
-
     return text
-        // 1. Trim margin whitespace from every line
         .split('\n')
         .map(line => line.trim())
         .join('\n')
-        // 2. Join lines that don't end in punctuation
-        // EXCEPTION: If the line is very short (<20 chars), assume it's a Header and don't join.
         .replace(/([^\.\!\?\:\n])\n([a-z0-9])/gi, (match, p1, p2) => {
-            if (p1.trim().length < 20) {
-                return p1 + '\n' + p2; // Keep as a header
-            }
-            return p1 + ' ' + p2; // Join into a paragraph
+            if (p1.trim().length < 20) return p1 + '\n' + p2;
+            return p1 + ' ' + p2;
         })
-        // 3. Final spacing normalization
         .replace(/[ \t]+/g, ' ')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
@@ -119,11 +106,8 @@ async function extractPageText(pdfPath, pageNum) {
         }).trim();
 
         if (digitalText && digitalText.length > 50) {
-            console.log(`✅ Page ${pageNum}: Digital text layer found.`);
             return smartClean(digitalText);
         }
-
-        console.log(`📸 Page ${pageNum}: Running Local AI OCR...`);
 
         await new Promise((resolve, reject) => {
             exec(`pdftoppm -f ${pageNum} -l ${pageNum} -png -r 300 -singlefile "${pdfPath}" "${pageImgBase}"`, (err) => {
@@ -139,9 +123,7 @@ async function extractPageText(pdfPath, pageNum) {
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
         return smartClean(ocrResult);
-
     } catch (e) {
-        console.error(`❌ Extraction Error on Page ${pageNum}:`, e.message);
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
         return "";
     }
@@ -149,6 +131,21 @@ async function extractPageText(pdfPath, pageNum) {
 
 /* ---------------- ROUTES ---------------- */
 
+// 1. GET RECENTLY ACCESSED BOOK (For Flutter "Continue Listening")
+router.get("/continue", protect, async (req, res) => {
+    try {
+        const book = await Book.findOne({ user: req.user._id })
+            .sort({ lastAccessed: -1 })
+            .limit(1);
+
+        if (!book) return res.json(null);
+        res.json(formatBook(book));
+    } catch (err) {
+        res.status(500).json({ error: "Failed to fetch continue book" });
+    }
+});
+
+// 2. GET ALL BOOKS
 router.get("/", protect, async (req, res) => {
     try {
         const books = await Book.find({ user: req.user._id }).sort({ createdAt: -1 });
@@ -156,15 +153,28 @@ router.get("/", protect, async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Failed to fetch library" }); }
 });
 
+// 3. GET SINGLE BOOK (Updated to refresh lastAccessed)
+router.get("/:id", protect, async (req, res) => {
+    try {
+        const book = await Book.findOneAndUpdate(
+            { _id: req.params.id, user: req.user._id },
+            { lastAccessed: Date.now() }, // Update timestamp on open
+            { new: true }
+        );
+        if (!book) return res.status(404).json({ error: "Book not found" });
+        res.json(formatBook(book));
+    } catch (err) { res.status(500).json({ error: "Error fetching book" }); }
+});
+
+// 4. LAZY LOAD PAGES
 router.get("/:id/load-pages", protect, async (req, res) => {
     let tempPath = "";
     try {
         const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
         if (!book) return res.status(404).json({ error: "Book not found" });
 
-        // FAILSAFE: RAM PROTECTION
         if (book.status === 'processing_pages') {
-            return res.status(429).json({ error: "Still processing. Please wait." });
+            return res.status(429).json({ error: "Processing. Please wait." });
         }
 
         const startPage = (book.processedPages || 0) + 1;
@@ -172,9 +182,7 @@ router.get("/:id/load-pages", protect, async (req, res) => {
 
         if (startPage > book.totalPages) return res.json({ addedText: "", status: "completed" });
 
-        // Lock record
         await Book.findByIdAndUpdate(req.params.id, { status: 'processing_pages' });
-
         tempPath = path.join(pdfDir, `temp_load_${book._id}.pdf`);
 
         if (!(await fs.pathExists(tempPath))) {
@@ -188,10 +196,7 @@ router.get("/:id/load-pages", protect, async (req, res) => {
         for (let i = startPage; i <= endPage; i++) {
             const text = await extractPageText(tempPath, i);
             if (text) {
-                // ADDING PAGE MARKER for Flutter navigation
                 newTextParts.push(`[PAGE_${i}]\n${text}`);
-
-                // ONLY extract TOC if we haven't found a solid one yet
                 if ((!book.toc || book.toc.length === 0) && i < 15) {
                     newTOCEntries.push(...extractTOC(text));
                 }
@@ -230,6 +235,7 @@ router.get("/:id/load-pages", protect, async (req, res) => {
     }
 });
 
+// 5. UPLOAD NEW BOOK
 router.post("/", protect, upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -247,7 +253,8 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
             processedPages: 0,
             status: 'processing',
             words: 0,
-            toc: []
+            toc: [],
+            lastAccessed: Date.now()
         });
 
         res.status(201).json(formatBook(book));
@@ -296,6 +303,7 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
     } catch (err) { res.status(500).json({ error: "Upload failed" }); }
 });
 
+/* FOLDERS & DELETE */
 router.get("/folders", protect, async (req, res) => {
     try {
         const folders = await Folder.find({ user: req.user._id }).sort({ name: 1 });
@@ -308,14 +316,6 @@ router.post("/folders", protect, async (req, res) => {
         const folder = await Folder.create({ name: req.body.name, user: req.user._id });
         res.status(201).json(folder);
     } catch { res.status(400).json({ error: "Folder creation failed" }); }
-});
-
-router.get("/:id", protect, async (req, res) => {
-    try {
-        const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
-        if (!book) return res.status(404).json({ error: "Unauthorized" });
-        res.json(formatBook(book));
-    } catch { res.status(500).json({ error: "Error fetching" }); }
 });
 
 router.delete("/:id", protect, async (req, res) => {
