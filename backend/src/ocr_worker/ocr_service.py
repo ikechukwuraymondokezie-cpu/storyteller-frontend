@@ -13,26 +13,26 @@ warnings.filterwarnings("ignore")
 try:
     from paddleocr import PaddleOCR
 except ImportError:
-    sys.exit(0)
+    sys.exit(1)
 
 # -------------------- 3. Initialize OCR --------------------
 ocr = PaddleOCR(
-    use_angle_cls=True,
+    # disabled to save RAM (enable if docs may be rotated)
+    use_angle_cls=False,
     lang='en',
     show_log=False,
     use_gpu=False
 )
 
 # -------------------- Detect column layout --------------------
+
+
 def split_columns(blocks):
     if not blocks:
         return [blocks]
 
     xs = [b["x"] for b in blocks]
-    min_x = min(xs)
-    max_x = max(xs)
-    page_width = max_x - min_x
-    mid = min_x + page_width / 2
+    mid = sorted(xs)[len(xs) // 2]  # use median x as midpoint (more reliable)
 
     left, right = [], []
 
@@ -42,13 +42,15 @@ def split_columns(blocks):
         else:
             right.append(b)
 
-    # Adjusted threshold for single column detection
-    if len(right) < len(blocks) * 0.3:
+    # Require at least 40% of blocks on each side to call it two columns
+    if len(right) < len(blocks) * 0.4 or len(left) < len(blocks) * 0.4:
         return [blocks]
 
     return [left, right]
 
 # -------------------- Process blocks into paragraphs --------------------
+
+
 def blocks_to_text(blocks, line_threshold, paragraph_threshold):
     if not blocks:
         return ""
@@ -100,63 +102,78 @@ def blocks_to_text(blocks, line_threshold, paragraph_threshold):
     return "\n\n".join(paragraphs)
 
 # -------------------- OCR Processing Function --------------------
+
+
 def process_image(
     image_path,
     line_threshold=15,
     paragraph_threshold=30,
-    preserve_sentences=True
+    preserve_sentences=True,
+    confidence_threshold=0.7
 ):
     if not os.path.exists(image_path):
         return ""
 
-    result = ocr.ocr(image_path, cls=True)
+    result = ocr.ocr(image_path, cls=False)
 
     if not result or not result[0]:
         return ""
 
-    # ---- Extract OCR blocks ----
+    # ---- Extract OCR blocks (with confidence filtering) ----
     page_blocks = []
 
     for line in result[0]:
         box = line[0]
         text = line[1][0].strip()
-        x, y = box[0][0], box[0][1]
+        confidence = line[1][1]
 
+        if confidence < confidence_threshold:
+            continue  # skip low-confidence detections
+
+        x, y = box[0][0], box[0][1]
         page_blocks.append({
             "text": text,
             "x": x,
             "y": y
         })
 
+    # Free raw OCR result immediately to save RAM
+    del result
+
+    if not page_blocks:
+        return ""
+
+    # ---- Fix hyphenated words at block level (before any joining) ----
+    for block in page_blocks:
+        block["text"] = block["text"].replace("-\n", "")
+
     # ---- Detect columns ----
     columns = split_columns(page_blocks)
 
     # ---- Process columns ----
-    column_texts = [blocks_to_text(col, line_threshold, paragraph_threshold) for col in columns]
+    column_texts = [blocks_to_text(
+        col, line_threshold, paragraph_threshold) for col in columns]
     combined_text = "\n\n".join(column_texts)
 
     # ---- Sentence cleanup ----
-    final_text = ""
-
+    # Split only on sentence boundaries that are followed by a space,
+    # preserving existing \n\n paragraph breaks
     if preserve_sentences:
-        # Regex-based splitting (safer)
-        sentences = re.split(r'(?<=[.!?]) +', combined_text)
+        paragraphs = combined_text.split("\n\n")
+        processed_paragraphs = []
 
-        for s in sentences:
-            s = s.strip()
-            if not s:
+        for para in paragraphs:
+            para = para.strip()
+            if not para:
                 continue
+            # Split sentences within each paragraph
+            sentences = re.split(r'(?<=[.!?]) +', para)
+            processed_paragraphs.append(
+                " ".join(s.strip() for s in sentences if s.strip()))
 
-            final_text += s
-            if s[-1] in ".!?":
-                final_text += "\n\n"
-            else:
-                final_text += " "
+        final_text = "\n\n".join(processed_paragraphs)
     else:
         final_text = combined_text
-
-    # ---- Fix hyphenated words across lines ----
-    final_text = final_text.replace("-\n", "")
 
     # ---- Cleanup spacing ----
     final_text = final_text.replace("\n \n", "\n\n")
@@ -165,6 +182,7 @@ def process_image(
     final_text = "\n".join(lines)
 
     return final_text.strip()
+
 
 # -------------------- CLI Interface --------------------
 if __name__ == "__main__":
