@@ -27,7 +27,6 @@ fs.ensureDirSync(pdfDir);
 fs.ensureDirSync(coversDir);
 
 // File type validation — PDFs only
-// Uses filename fallback because mobile file pickers often send application/octet-stream
 const upload = multer({
     dest: "temp/uploads/",
     fileFilter: (req, file, cb) => {
@@ -38,12 +37,8 @@ const upload = multer({
         ];
         const isPdf = allowedMimes.includes(file.mimetype) ||
             file.originalname.toLowerCase().endsWith('.pdf');
-
-        if (isPdf) {
-            cb(null, true);
-        } else {
-            cb(new Error("Only PDF files are allowed"), false);
-        }
+        if (isPdf) cb(null, true);
+        else cb(new Error("Only PDF files are allowed"), false);
     }
 });
 
@@ -70,24 +65,41 @@ const formatBook = (book) => ({
 
 /* ---------------- TOC & TEXT CLEANING HELPERS ---------------- */
 
-function extractTOC(text) {
+/**
+ * Extracts a hierarchical TOC from a page of text.
+ * Each entry includes a 'level' field: 0 = chapter, 1 = section, 2 = subsection
+ */
+function extractTOC(text, pageNum) {
     const isTOCPage = /contents|table of contents/i.test(text);
     if (!isTOCPage) return [];
 
     const tocEntries = [];
-    const tocRegex = /^([a-z\s\(\)]{3,}.*?)\s?[\.\-·_ ]{2,}\s?(\d+)$/gim;
+    const tocRegex = /^(.+?)\s*[.\-·_ ]{2,}\s*(\d+)\s*$/gim;
 
     let match;
     while ((match = tocRegex.exec(text)) !== null) {
-        const title = match[1].trim();
-        if (title.length > 2 && !/^(page|contents)/i.test(title)) {
-            tocEntries.push({
-                text: title,
-                page: parseInt(match[2]),
-                type: 'visual'
-            });
+        const raw = match[1].trim();
+        const page = parseInt(match[2]);
+
+        if (!raw || raw.length < 2 || /^(page|contents)$/i.test(raw)) continue;
+
+        let level = 1; // default to section
+
+        if (/^\d+\.\d+\.\d+/.test(raw)) {
+            level = 2; // e.g. 1.2.3 Sub-subsection
+        } else if (/^\d+\.\d+/.test(raw)) {
+            level = 1; // e.g. 1.2 Section
+        } else if (/^(chapter|part|unit|lesson|act|psalm|book)\s+(\d+|[ivxlc]+)/i.test(raw)) {
+            level = 0; // e.g. Chapter 1, Part II
+        } else if (/^\d+\.?\s+[A-Z]/.test(raw)) {
+            level = 0; // e.g. "1. Introduction"
+        } else if (/^[A-Z\s]{4,}$/.test(raw)) {
+            level = 0; // ALL CAPS heading
         }
+
+        tocEntries.push({ text: raw, page, level, type: 'toc' });
     }
+
     return tocEntries;
 }
 
@@ -97,26 +109,12 @@ function smartClean(text) {
         .split('\n')
         .map(line => line.trim())
         .join('\n')
-
-        // 1. Merge hyphenated word breaks at line borders (e.g. "impor-\ntant" → "important")
         .replace(/(\w)-[ \t]*\n[ \t]*(\w)/g, '$1$2')
-
-        // 2. Merge mid-sentence line breaks where next line starts lowercase
-        //    [ \t]* handles trailing spaces pdftotext pads before the newline
         .replace(/([a-z,])[ \t]*\n[ \t]*([a-z])/g, '$1 $2')
-
-        // 3. Merge mid-sentence breaks before proper nouns (e.g. "went to\nLondon")
         .replace(/([a-z,])[ \t]*\n[ \t]*([A-Z][a-z])/g, '$1 $2')
-
-        // 4. Catch any remaining non-punctuation line breaks before lowercase/digits
         .replace(/([^\.\!\?\:\n])[ \t]*\n[ \t]*([a-z0-9])/g, '$1 $2')
-
-        // 5. Collapse multiple spaces/tabs into one
         .replace(/[ \t]+/g, ' ')
-
-        // 6. Collapse 3+ newlines into a clean paragraph break
         .replace(/\n{3,}/g, '\n\n')
-
         .trim();
 }
 
@@ -139,7 +137,6 @@ async function extractPageText(pdfPath, pageNum) {
     const pageImgFull = `${pageImgBase}.png`;
 
     try {
-        // Try digital text extraction first (non-blocking)
         const { stdout: digitalText } = await execAsync(
             `pdftotext -f ${pageNum} -l ${pageNum} "${pdfPath}" -`,
             { encoding: 'utf8' }
@@ -149,16 +146,26 @@ async function extractPageText(pdfPath, pageNum) {
             return smartClean(digitalText.trim());
         }
 
-        // Fall back to OCR (non-blocking)
         await execAsync(
             `pdftoppm -f ${pageNum} -l ${pageNum} -png -r 300 -singlefile "${pdfPath}" "${pageImgBase}"`
         );
 
+        if (!(await fs.pathExists(pageImgFull))) {
+            console.warn(`pdftoppm produced no output for page ${pageNum}`);
+            return "";
+        }
+
         const scriptPath = path.join(__dirname, "../ocr_worker/ocr_service.py");
-        const { stdout: ocrResult } = await execAsync(
+        const { stdout: ocrResult, stderr: ocrStderr } = await execAsync(
             `python3 "${scriptPath}" "${pageImgFull}"`,
             { encoding: 'utf8', maxBuffer: 1024 * 1024 * 10 }
         );
+
+        if (ocrStderr && ocrStderr.includes("RuntimeError")) {
+            console.error(`OCR Python error on page ${pageNum}:`, ocrStderr.trim());
+            if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
+            return "";
+        }
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
         return smartClean(ocrResult);
@@ -172,13 +179,9 @@ async function extractPageText(pdfPath, pageNum) {
 
 /* ---------------- ROUTES ---------------- */
 
-// 1. GET RECENTLY ACCESSED BOOK (For Flutter "Continue Listening")
 router.get("/continue", protect, async (req, res) => {
     try {
-        const book = await Book.findOne({ user: req.user._id })
-            .sort({ lastAccessed: -1 })
-            .limit(1);
-
+        const book = await Book.findOne({ user: req.user._id }).sort({ lastAccessed: -1 }).limit(1);
         if (!book) return res.json(null);
         res.json(formatBook(book));
     } catch (err) {
@@ -186,7 +189,6 @@ router.get("/continue", protect, async (req, res) => {
     }
 });
 
-// 2. GET ALL BOOKS
 router.get("/", protect, async (req, res) => {
     try {
         const books = await Book.find({ user: req.user._id }).sort({ createdAt: -1 });
@@ -196,7 +198,7 @@ router.get("/", protect, async (req, res) => {
     }
 });
 
-// 3. FOLDER ROUTES — must be before /:id to avoid being matched as an id
+// FOLDER ROUTES — must be before /:id
 router.get("/folders", protect, async (req, res) => {
     try {
         const folders = await Folder.find({ user: req.user._id }).sort({ name: 1 });
@@ -215,7 +217,6 @@ router.post("/folders", protect, async (req, res) => {
     }
 });
 
-// 4. GET SINGLE BOOK
 router.get("/:id", protect, async (req, res) => {
     try {
         const book = await Book.findOneAndUpdate(
@@ -230,14 +231,24 @@ router.get("/:id", protect, async (req, res) => {
     }
 });
 
-// 5. LAZY LOAD PAGES
 router.get("/:id/load-pages", protect, async (req, res) => {
     let tempPath = "";
     try {
-        const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
-        if (!book) return res.status(404).json({ error: "Book not found" });
+        // Atomic guard — prevents duplicate page loading from race conditions
+        const book = await Book.findOneAndUpdate(
+            {
+                _id: req.params.id,
+                user: req.user._id,
+                status: { $nin: ['processing_pages', 'completed'] }
+            },
+            { status: 'processing_pages' },
+            { new: false }
+        );
 
-        if (book.status === 'processing_pages') {
+        if (!book) {
+            const current = await Book.findOne({ _id: req.params.id, user: req.user._id });
+            if (!current) return res.status(404).json({ error: "Book not found" });
+            if (current.status === 'completed') return res.json({ addedText: "", status: "completed" });
             return res.status(429).json({ error: "Processing. Please wait." });
         }
 
@@ -246,16 +257,11 @@ router.get("/:id/load-pages", protect, async (req, res) => {
 
         if (startPage > book.totalPages) return res.json({ addedText: "", status: "completed" });
 
-        await Book.findByIdAndUpdate(req.params.id, { status: 'processing_pages' });
         tempPath = path.join(pdfDir, `temp_load_${book._id}.pdf`);
 
         if (!(await fs.pathExists(tempPath))) {
-            // Timeout to prevent hanging on slow/large downloads
-            const response = await axios.get(book.pdfPath, {
-                responseType: 'arraybuffer',
-                timeout: 30000
-            });
-            fs.writeFileSync(tempPath, Buffer.from(response.data));
+            const response = await axios.get(book.pdfPath, { responseType: 'arraybuffer', timeout: 30000 });
+            await fs.writeFile(tempPath, Buffer.from(response.data));
         }
 
         let newTextParts = [];
@@ -266,7 +272,7 @@ router.get("/:id/load-pages", protect, async (req, res) => {
             if (text) {
                 newTextParts.push(`[PAGE_${i}]\n${text}`);
                 if ((!book.toc || book.toc.length === 0) && i <= 10) {
-                    newTOCEntries.push(...extractTOC(text));
+                    newTOCEntries.push(...extractTOC(text, i));
                 }
             }
         }
@@ -277,7 +283,7 @@ router.get("/:id/load-pages", protect, async (req, res) => {
         const actualWordCount = updatedContent.split(/\s+/).filter(w => w.length > 0).length;
 
         const mergedTOC = [...(book.toc || []), ...newTOCEntries].filter((v, i, a) =>
-            a.findIndex(t => (t.text === v.text && t.page === v.page)) === i
+            a.findIndex(t => t.text === v.text && t.page === v.page) === i
         );
 
         const updatedBook = await Book.findByIdAndUpdate(req.params.id, {
@@ -308,7 +314,6 @@ router.get("/:id/load-pages", protect, async (req, res) => {
     }
 });
 
-// 6. UPLOAD NEW BOOK
 router.post("/", protect, upload.single("file"), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -332,7 +337,6 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
 
         res.status(201).json(formatBook(book));
 
-        // Background processing
         (async () => {
             try {
                 const baseName = path.parse(req.file.filename).name;
@@ -344,11 +348,19 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
                         resource_type: "raw"
                     }).then(r => r.secure_url),
                     new Promise((resolve) => {
-                        exec(`pdftoppm -f 1 -l 1 -png -singlefile "${pdfDiskPath}" "${outputPrefix}"`, async (err) => {
-                            if (err) return resolve(null);
-                            const r = await cloudinary.uploader.upload(`${outputPrefix}.png`, { folder: "storyteller_covers" });
-                            await fs.remove(`${outputPrefix}.png`);
-                            resolve(r.secure_url);
+                        exec(`pdftoppm -f 1 -l 1 -png -r 150 -singlefile "${pdfDiskPath}" "${outputPrefix}"`, async (err, stdout, stderr) => {
+                            if (err) { console.warn("Cover generation failed:", stderr); return resolve(null); }
+                            const coverFile = `${outputPrefix}.png`;
+                            if (!(await fs.pathExists(coverFile))) { console.warn("Cover PNG not found"); return resolve(null); }
+                            try {
+                                const r = await cloudinary.uploader.upload(coverFile, { folder: "storyteller_covers" });
+                                await fs.remove(coverFile);
+                                resolve(r.secure_url);
+                            } catch (uploadErr) {
+                                console.warn("Cover upload failed:", uploadErr.message);
+                                if (await fs.pathExists(coverFile)) await fs.remove(coverFile);
+                                resolve(null);
+                            }
                         });
                     })
                 ]);
@@ -364,7 +376,7 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
                     if (text) {
                         const separator = (runningText.length > 0 && !runningText.endsWith('\n\n')) ? "\n\n" : "";
                         runningText += separator + `[PAGE_${i}]\n` + text;
-                        if (i <= 10) runningTOC.push(...extractTOC(text));
+                        if (i <= 10) runningTOC.push(...extractTOC(text, i));
                     }
                     await Book.findByIdAndUpdate(book._id, {
                         content: runningText.trim(),
@@ -379,7 +391,6 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
 
             } catch (e) {
                 console.error("Worker Error:", e.message);
-                // Mark book as failed so Flutter can surface the error
                 await Book.findByIdAndUpdate(book._id, { status: 'failed' });
                 if (await fs.pathExists(pdfDiskPath)) await fs.remove(pdfDiskPath);
             }
@@ -390,7 +401,6 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
     }
 });
 
-// 7. DELETE BOOK
 router.delete("/:id", protect, async (req, res) => {
     try {
         const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
@@ -398,12 +408,10 @@ router.delete("/:id", protect, async (req, res) => {
 
         try {
             if (book.pdfPath && book.pdfPath.includes("cloudinary")) {
-                const pdfId = `storyteller_pdfs/${path.parse(book.pdfPath).name}`;
-                await cloudinary.uploader.destroy(pdfId, { resource_type: 'raw' });
+                await cloudinary.uploader.destroy(`storyteller_pdfs/${path.parse(book.pdfPath).name}`, { resource_type: 'raw' });
             }
             if (book.cover && book.cover.includes("cloudinary")) {
-                const coverId = `storyteller_covers/${path.parse(book.cover).name}`;
-                await cloudinary.uploader.destroy(coverId);
+                await cloudinary.uploader.destroy(`storyteller_covers/${path.parse(book.cover).name}`);
             }
         } catch (cErr) {
             console.warn("Cloudinary cleanup failed:", cErr.message);
