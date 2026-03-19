@@ -27,10 +27,19 @@ fs.ensureDirSync(pdfDir);
 fs.ensureDirSync(coversDir);
 
 // File type validation — PDFs only
+// Uses filename fallback because mobile file pickers often send application/octet-stream
 const upload = multer({
     dest: "temp/uploads/",
     fileFilter: (req, file, cb) => {
-        if (file.mimetype === "application/pdf") {
+        const allowedMimes = [
+            "application/pdf",
+            "application/octet-stream",
+            "binary/octet-stream"
+        ];
+        const isPdf = allowedMimes.includes(file.mimetype) ||
+            file.originalname.toLowerCase().endsWith('.pdf');
+
+        if (isPdf) {
             cb(null, true);
         } else {
             cb(new Error("Only PDF files are allowed"), false);
