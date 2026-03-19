@@ -66,26 +66,41 @@ const formatBook = (book) => ({
 /* ---------------- TOC & TEXT CLEANING HELPERS ---------------- */
 
 /**
- * Returns true if a line looks like a header —
- * used to protect headers from being merged into body text
+ * Returns true if a line looks like a header.
+ * Uses only high-confidence signals to avoid false positives:
+ * 1. [CENTERED] tag from OCR positioning data
+ * 2. ALL CAPS (letters only, no digits mixed in)
+ * 3. Explicit keyword match (Chapter, Part, Section etc.)
+ * 4. Numbered heading (Roman or Arabic + capital letter)
+ * 5. No ending punctuation (no period, comma, ! ? ; :)
+ *    — this catches lines that end mid-thought, which body text never does
  */
 function isHeaderLine(line) {
     const trimmed = line.trim();
     if (!trimmed) return false;
 
-    // ALL CAPS line (scanned books, classic literature)
-    if (trimmed === trimmed.toUpperCase() && /[A-Z]/.test(trimmed) && trimmed.length < 120) return true;
+    // 1. Tagged as centered by OCR positioning
+    if (trimmed.startsWith('[CENTERED]')) return true;
 
-    // Keyword headers
+    // 2. ALL CAPS — only pure letter/space lines (no digit-heavy lines)
+    const isAllCaps = trimmed === trimmed.toUpperCase()
+        && /[A-Z]/.test(trimmed)
+        && !/\d/.test(trimmed)  // exclude lines with digits (page numbers, dates)
+        && trimmed.length < 120;
+    if (isAllCaps) return true;
+
+    // 3. Explicit keyword headers
     if (/^(Chapter|Section|Part|Lesson|Psalm|Act|Scene|Preface|Foreword|Introduction|Epilogue|Appendix|Prologue|Conclusion|Afterword|Unit|Module|Volume|Book|Verse)\s*(\d+|[IVXLCDM]+)?/i.test(trimmed)) return true;
 
-    // Numbered headers: "1.", "1:", "II."
-    if (/^([IVXLCDM]+\.?|\d+[\.\:\-])\s+\S/.test(trimmed)) return true;
+    // 4. Numbered heading — must have a capital word after the number
+    if (/^([IVXLCDM]+\.|\d+[\.\:])\s+[A-Z]/.test(trimmed)) return true;
 
-    // Short line under 60 chars with no ending punctuation — likely a title
-    if (trimmed.length < 60 && !/[.!?]$/.test(trimmed)) {
+    // 5. No ending punctuation — line does not end with . , ! ? ; :
+    //    Body text always ends with punctuation or continues onto the next line.
+    //    A line with no ending punctuation is a standalone title/label.
+    if (!/[.,!?;:]$/.test(trimmed) && trimmed.length < 80) {
         const wordCount = trimmed.split(/\s+/).length;
-        if (wordCount <= 6) return true;
+        if (wordCount <= 8) return true;
     }
 
     return false;
@@ -93,7 +108,6 @@ function isHeaderLine(line) {
 
 /**
  * Quality check for pdftotext output.
- * Rejects text that is too short, mostly numbers/symbols, or lacks real words.
  */
 function isUsableText(text) {
     if (!text || text.trim().length < 50) return false;
@@ -135,11 +149,9 @@ function extractTOC(text, pageNum) {
 
 /**
  * Cleans extracted text while preserving header structure.
- *
- * Key rules:
- * - Headers get blank lines before AND after them
- * - Only lowercase→lowercase line joins happen (safe merging)
- * - ALL CAPS lines are never touched by line-joining regexes
+ * - Headers (detected via isHeaderLine) get blank lines before and after
+ * - [CENTERED] tags are stripped after structure is preserved
+ * - Body lines only join when lowercase→letter (safe merge)
  */
 function smartClean(text) {
     if (!text) return "";
@@ -157,27 +169,30 @@ function smartClean(text) {
         }
 
         if (isHeaderLine(line)) {
-            // Ensure blank line before header
+            // Blank line before header
             if (result.length > 0 && result[result.length - 1] !== '') {
                 result.push('');
             }
-            result.push(line);
-            // Ensure blank line after header
+            // Strip [CENTERED] tag — structure is now preserved via \n\n
+            result.push(line.replace(/^\[CENTERED\]/, ''));
+            // Blank line after header
             if (next && next.trim() !== '') {
                 result.push('');
             }
             continue;
         }
 
-        // Fix hyphenated word break
-        if (/\w-$/.test(line) && next && /^\w/.test(next)) {
+        // Fix hyphenated word break at end of line
+        if (/\w-$/.test(line) && next && /^\w/.test(next) && !isHeaderLine(next)) {
             result.push(line.replace(/-$/, '') + next);
-            i++; // skip next line since we consumed it
+            i++;
             continue;
         }
 
-        // Join body line with next if next is also a body line
-        // ONLY join lowercase continuation — never touch headers
+        // Join body line with next ONLY if:
+        // - current ends with lowercase or comma
+        // - next starts with a letter
+        // - neither is a header
         if (
             next &&
             next.trim() &&
@@ -194,6 +209,7 @@ function smartClean(text) {
 
     return result
         .join('\n')
+        .replace(/\[CENTERED\]/g, '')  // strip any remaining tags
         .replace(/[ \t]+/g, ' ')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
