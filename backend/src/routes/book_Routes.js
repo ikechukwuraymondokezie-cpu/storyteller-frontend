@@ -66,6 +66,20 @@ const formatBook = (book) => ({
 /* ---------------- TOC & TEXT CLEANING HELPERS ---------------- */
 
 /**
+ * Quality check for pdftotext output.
+ * Rejects text that is too short, mostly numbers/symbols, or lacks real words.
+ * This prevents scanned pages (which return junk/page numbers) from bypassing OCR.
+ */
+function isUsableText(text) {
+    if (!text || text.trim().length < 50) return false;
+    const words = text.trim().split(/\s+/);
+    const realWords = words.filter(w => /[a-zA-Z]{3,}/.test(w));
+    // Needs at least 15 real words AND 40% of tokens must be real words
+    if (realWords.length < 15) return false;
+    return (realWords.length / words.length) > 0.4;
+}
+
+/**
  * Extracts a hierarchical TOC from a page of text.
  * Each entry includes a 'level' field: 0 = chapter, 1 = section, 2 = subsection
  */
@@ -142,10 +156,13 @@ async function extractPageText(pdfPath, pageNum) {
             { encoding: 'utf8' }
         );
 
-        if (digitalText && digitalText.trim().length > 50) {
+        // Quality check — rejects junk, page numbers, and near-empty scanned pages
+        // so they fall through to OCR instead of returning garbage
+        if (isUsableText(digitalText)) {
             return smartClean(digitalText.trim());
         }
 
+        // Fall back to OCR
         await execAsync(
             `pdftoppm -f ${pageNum} -l ${pageNum} -png -r 300 -singlefile "${pdfPath}" "${pageImgBase}"`
         );
@@ -259,9 +276,30 @@ router.get("/:id/load-pages", protect, async (req, res) => {
 
         tempPath = path.join(pdfDir, `temp_load_${book._id}.pdf`);
 
+        // Check if cached temp file is corrupt (under 1KB = invalid PDF)
+        if (await fs.pathExists(tempPath)) {
+            const stat = await fs.stat(tempPath);
+            if (stat.size < 1024) {
+                console.warn(`Cached temp PDF is corrupt (${stat.size} bytes), deleting and re-downloading`);
+                await fs.remove(tempPath);
+            }
+        }
+
+        // Download if not cached or was just deleted due to corruption
         if (!(await fs.pathExists(tempPath))) {
-            const response = await axios.get(book.pdfPath, { responseType: 'arraybuffer', timeout: 30000 });
-            await fs.writeFile(tempPath, Buffer.from(response.data));
+            const response = await axios.get(book.pdfPath, {
+                responseType: 'arraybuffer',
+                timeout: 30000
+            });
+
+            const buffer = Buffer.from(response.data);
+
+            // Validate downloaded file before saving
+            if (buffer.length < 1024) {
+                throw new Error(`Downloaded PDF is too small (${buffer.length} bytes) — likely corrupt or failed download`);
+            }
+
+            await fs.writeFile(tempPath, buffer);
         }
 
         let newTextParts = [];
