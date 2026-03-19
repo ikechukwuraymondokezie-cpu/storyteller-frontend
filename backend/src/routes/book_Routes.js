@@ -66,59 +66,22 @@ const formatBook = (book) => ({
 /* ---------------- TOC & TEXT CLEANING HELPERS ---------------- */
 
 /**
- * Returns true if a line looks like a header.
- * Uses only high-confidence signals to avoid false positives:
- * 1. [CENTERED] tag from OCR positioning data
- * 2. ALL CAPS (letters only, no digits mixed in)
- * 3. Explicit keyword match (Chapter, Part, Section etc.)
- * 4. Numbered heading (Roman or Arabic + capital letter)
- * 5. No ending punctuation (no period, comma, ! ? ; :)
- *    — this catches lines that end mid-thought, which body text never does
- */
-function isHeaderLine(line) {
-    const trimmed = line.trim();
-    if (!trimmed) return false;
-
-    // 1. Tagged as centered by OCR positioning
-    if (trimmed.startsWith('[CENTERED]')) return true;
-
-    // 2. ALL CAPS — only pure letter/space lines (no digit-heavy lines)
-    const isAllCaps = trimmed === trimmed.toUpperCase()
-        && /[A-Z]/.test(trimmed)
-        && !/\d/.test(trimmed)  // exclude lines with digits (page numbers, dates)
-        && trimmed.length < 120;
-    if (isAllCaps) return true;
-
-    // 3. Explicit keyword headers
-    if (/^(Chapter|Section|Part|Lesson|Psalm|Act|Scene|Preface|Foreword|Introduction|Epilogue|Appendix|Prologue|Conclusion|Afterword|Unit|Module|Volume|Book|Verse)\s*(\d+|[IVXLCDM]+)?/i.test(trimmed)) return true;
-
-    // 4. Numbered heading — must have a capital word after the number
-    if (/^([IVXLCDM]+\.|\d+[\.\:])\s+[A-Z]/.test(trimmed)) return true;
-
-    // 5. No ending punctuation — line does not end with . , ! ? ; :
-    //    Body text always ends with punctuation or continues onto the next line.
-    //    A line with no ending punctuation is a standalone title/label.
-    if (!/[.,!?;:]$/.test(trimmed) && trimmed.length < 80) {
-        const wordCount = trimmed.split(/\s+/).length;
-        if (wordCount <= 8) return true;
-    }
-
-    return false;
-}
-
-/**
  * Quality check for pdftotext output.
+ * Rejects text that is too short, mostly numbers/symbols, or lacks real words.
+ * This prevents scanned pages (which return junk/page numbers) from bypassing OCR.
  */
 function isUsableText(text) {
     if (!text || text.trim().length < 50) return false;
     const words = text.trim().split(/\s+/);
     const realWords = words.filter(w => /[a-zA-Z]{3,}/.test(w));
+    // Needs at least 15 real words AND 40% of tokens must be real words
     if (realWords.length < 15) return false;
     return (realWords.length / words.length) > 0.4;
 }
 
 /**
  * Extracts a hierarchical TOC from a page of text.
+ * Each entry includes a 'level' field: 0 = chapter, 1 = section, 2 = subsection
  */
 function extractTOC(text, pageNum) {
     const isTOCPage = /contents|table of contents/i.test(text);
@@ -134,12 +97,19 @@ function extractTOC(text, pageNum) {
 
         if (!raw || raw.length < 2 || /^(page|contents)$/i.test(raw)) continue;
 
-        let level = 1;
-        if (/^\d+\.\d+\.\d+/.test(raw)) level = 2;
-        else if (/^\d+\.\d+/.test(raw)) level = 1;
-        else if (/^(chapter|part|unit|lesson|act|psalm|book)\s+(\d+|[ivxlc]+)/i.test(raw)) level = 0;
-        else if (/^\d+\.?\s+[A-Z]/.test(raw)) level = 0;
-        else if (/^[A-Z\s]{4,}$/.test(raw)) level = 0;
+        let level = 1; // default to section
+
+        if (/^\d+\.\d+\.\d+/.test(raw)) {
+            level = 2; // e.g. 1.2.3 Sub-subsection
+        } else if (/^\d+\.\d+/.test(raw)) {
+            level = 1; // e.g. 1.2 Section
+        } else if (/^(chapter|part|unit|lesson|act|psalm|book)\s+(\d+|[ivxlc]+)/i.test(raw)) {
+            level = 0; // e.g. Chapter 1, Part II
+        } else if (/^\d+\.?\s+[A-Z]/.test(raw)) {
+            level = 0; // e.g. "1. Introduction"
+        } else if (/^[A-Z\s]{4,}$/.test(raw)) {
+            level = 0; // ALL CAPS heading
+        }
 
         tocEntries.push({ text: raw, page, level, type: 'toc' });
     }
@@ -147,69 +117,16 @@ function extractTOC(text, pageNum) {
     return tocEntries;
 }
 
-/**
- * Cleans extracted text while preserving header structure.
- * - Headers (detected via isHeaderLine) get blank lines before and after
- * - [CENTERED] tags are stripped after structure is preserved
- * - Body lines only join when lowercase→letter (safe merge)
- */
 function smartClean(text) {
     if (!text) return "";
-
-    const lines = text.split('\n').map(line => line.trim());
-    const result = [];
-
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const next = lines[i + 1];
-
-        if (!line) {
-            result.push('');
-            continue;
-        }
-
-        if (isHeaderLine(line)) {
-            // Blank line before header
-            if (result.length > 0 && result[result.length - 1] !== '') {
-                result.push('');
-            }
-            // Strip [CENTERED] tag — structure is now preserved via \n\n
-            result.push(line.replace(/^\[CENTERED\]/, ''));
-            // Blank line after header
-            if (next && next.trim() !== '') {
-                result.push('');
-            }
-            continue;
-        }
-
-        // Fix hyphenated word break at end of line
-        if (/\w-$/.test(line) && next && /^\w/.test(next) && !isHeaderLine(next)) {
-            result.push(line.replace(/-$/, '') + next);
-            i++;
-            continue;
-        }
-
-        // Join body line with next ONLY if:
-        // - current ends with lowercase or comma
-        // - next starts with a letter
-        // - neither is a header
-        if (
-            next &&
-            next.trim() &&
-            !isHeaderLine(next) &&
-            !isHeaderLine(line) &&
-            /[a-z,]$/.test(line) &&
-            /^[a-zA-Z]/.test(next)
-        ) {
-            result.push(line + ' ');
-        } else {
-            result.push(line);
-        }
-    }
-
-    return result
+    return text
+        .split('\n')
+        .map(line => line.trim())
         .join('\n')
-        .replace(/\[CENTERED\]/g, '')  // strip any remaining tags
+        .replace(/(\w)-[ \t]*\n[ \t]*(\w)/g, '$1$2')
+        .replace(/([a-z,])[ \t]*\n[ \t]*([a-z])/g, '$1 $2')
+        .replace(/([a-z,])[ \t]*\n[ \t]*([A-Z][a-z])/g, '$1 $2')
+        .replace(/([^\.\!\?\:\n])[ \t]*\n[ \t]*([a-z0-9])/g, '$1 $2')
         .replace(/[ \t]+/g, ' ')
         .replace(/\n{3,}/g, '\n\n')
         .trim();
@@ -239,10 +156,13 @@ async function extractPageText(pdfPath, pageNum) {
             { encoding: 'utf8' }
         );
 
+        // Quality check — rejects junk, page numbers, and near-empty scanned pages
+        // so they fall through to OCR instead of returning garbage
         if (isUsableText(digitalText)) {
             return smartClean(digitalText.trim());
         }
 
+        // Fall back to OCR
         await execAsync(
             `pdftoppm -f ${pageNum} -l ${pageNum} -png -r 300 -singlefile "${pdfPath}" "${pageImgBase}"`
         );
@@ -331,6 +251,7 @@ router.get("/:id", protect, async (req, res) => {
 router.get("/:id/load-pages", protect, async (req, res) => {
     let tempPath = "";
     try {
+        // Atomic guard — prevents duplicate page loading from race conditions
         const book = await Book.findOneAndUpdate(
             {
                 _id: req.params.id,
@@ -355,23 +276,29 @@ router.get("/:id/load-pages", protect, async (req, res) => {
 
         tempPath = path.join(pdfDir, `temp_load_${book._id}.pdf`);
 
+        // Check if cached temp file is corrupt (under 1KB = invalid PDF)
         if (await fs.pathExists(tempPath)) {
             const stat = await fs.stat(tempPath);
             if (stat.size < 1024) {
-                console.warn(`Cached temp PDF is corrupt (${stat.size} bytes), re-downloading`);
+                console.warn(`Cached temp PDF is corrupt (${stat.size} bytes), deleting and re-downloading`);
                 await fs.remove(tempPath);
             }
         }
 
+        // Download if not cached or was just deleted due to corruption
         if (!(await fs.pathExists(tempPath))) {
             const response = await axios.get(book.pdfPath, {
                 responseType: 'arraybuffer',
                 timeout: 30000
             });
+
             const buffer = Buffer.from(response.data);
+
+            // Validate downloaded file before saving
             if (buffer.length < 1024) {
-                throw new Error(`Downloaded PDF too small (${buffer.length} bytes)`);
+                throw new Error(`Downloaded PDF is too small (${buffer.length} bytes) — likely corrupt or failed download`);
             }
+
             await fs.writeFile(tempPath, buffer);
         }
 
