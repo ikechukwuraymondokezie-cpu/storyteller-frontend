@@ -63,6 +63,26 @@ const formatBook = (book) => ({
     createdAt: book.createdAt
 });
 
+/**
+ * Extracts the Cloudinary public_id from a full Cloudinary URL.
+ * Handles URLs like:
+ * https://res.cloudinary.com/xxx/image/upload/v1234/storyteller_covers/filename.png
+ * https://res.cloudinary.com/xxx/raw/upload/v1234/storyteller_pdfs/filename.pdf
+ */
+function getCloudinaryPublicId(url) {
+    try {
+        const uploadIndex = url.indexOf('/upload/');
+        if (uploadIndex === -1) return null;
+        // Get everything after /upload/
+        let afterUpload = url.substring(uploadIndex + 8);
+        // Strip version prefix if present (e.g. "v1234567890/")
+        afterUpload = afterUpload.replace(/^v\d+\//, '');
+        return afterUpload;
+    } catch {
+        return null;
+    }
+}
+
 /* ---------------- TOC & TEXT CLEANING HELPERS ---------------- */
 
 function isUsableText(text) {
@@ -73,30 +93,15 @@ function isUsableText(text) {
     return (realWords.length / words.length) > 0.4;
 }
 
-/**
- * Returns true if a line is a standalone header.
- * Only high-confidence signals — avoids false positives on body text.
- */
 function isHeaderLine(line) {
     const t = line.trim();
     if (!t) return false;
-
-    // ALL CAPS letters only — no digits (excludes page numbers, dates, prices)
     if (t === t.toUpperCase() && /[A-Z]/.test(t) && !/\d/.test(t) && t.length < 120) return true;
-
-    // Explicit keyword headers
     if (/^(Chapter|Section|Part|Lesson|Psalm|Act|Scene|Preface|Foreword|Introduction|Epilogue|Appendix|Prologue|Conclusion|Afterword|Unit|Module|Volume|Book|Verse)\s*(\d+|[IVXLCDM]+)?/i.test(t)) return true;
-
-    // Numbered heading — must have a capital word after the number
     if (/^([IVXLCDM]+\.|\d+[\.\:])\s+[A-Z]/.test(t)) return true;
-
     return false;
 }
 
-/**
- * Returns true if a line ends with sentence-breaking punctuation.
- * These lines should NEVER be joined to the next line.
- */
 function endsWithPunctuation(line) {
     return /[.!?:;]$/.test(line.trim());
 }
@@ -127,16 +132,6 @@ function extractTOC(text, pageNum) {
     return tocEntries;
 }
 
-/**
- * Cleans page text while preserving paragraph and header structure.
- *
- * Join rules:
- * - NEVER join if current line ends with punctuation (.!?:;)
- * - NEVER join if current OR next line is a header
- * - NEVER join if next line starts with a digit (list items, verse numbers)
- * - JOIN if current line ends with any letter/comma and next starts with a letter
- *   (this covers both lowercase and uppercase word-wrap at page borders)
- */
 function smartClean(text) {
     if (!text) return "";
 
@@ -152,14 +147,12 @@ function smartClean(text) {
             continue;
         }
 
-        // Fix hyphenated word break across lines
         if (/\w-$/.test(line) && next && /^\w/.test(next) && !isHeaderLine(next)) {
             result.push(line.replace(/-$/, '') + next);
             i++;
             continue;
         }
 
-        // Headers get isolated with blank lines before and after
         if (isHeaderLine(line)) {
             if (result.length > 0 && result[result.length - 1] !== '') result.push('');
             result.push(line);
@@ -167,15 +160,14 @@ function smartClean(text) {
             continue;
         }
 
-        // Decide whether to join this line with the next
         const shouldJoin =
             next !== null &&
             next.trim().length > 0 &&
-            !isHeaderLine(next) &&           // next is not a header
-            !endsWithPunctuation(line) &&     // current doesn't end a sentence
-            /[a-zA-Z,]$/.test(line) &&        // current ends with a letter or comma
-            /^[a-zA-Z]/.test(next) &&         // next starts with a letter
-            !/^\d/.test(next);                // next doesn't start with a digit
+            !isHeaderLine(next) &&
+            !endsWithPunctuation(line) &&
+            /[a-zA-Z,]$/.test(line) &&
+            /^[a-zA-Z]/.test(next) &&
+            !/^\d/.test(next);
 
         if (shouldJoin) {
             result.push(line + ' ');
@@ -271,6 +263,7 @@ router.get("/", protect, async (req, res) => {
     }
 });
 
+// FOLDER ROUTES — must be before /:id
 router.get("/folders", protect, async (req, res) => {
     try {
         const folders = await Folder.find({ user: req.user._id }).sort({ name: 1 });
@@ -300,6 +293,24 @@ router.get("/:id", protect, async (req, res) => {
         res.json(formatBook(book));
     } catch (err) {
         res.status(500).json({ error: "Error fetching book" });
+    }
+});
+
+// MOVE BOOK TO FOLDER
+router.patch("/:id/folder", protect, async (req, res) => {
+    try {
+        const { folder } = req.body;
+        if (!folder) return res.status(400).json({ error: "Folder name required" });
+
+        const book = await Book.findOneAndUpdate(
+            { _id: req.params.id, user: req.user._id },
+            { folder },
+            { new: true }
+        );
+        if (!book) return res.status(404).json({ error: "Book not found" });
+        res.json(formatBook(book));
+    } catch (err) {
+        res.status(500).json({ error: "Failed to move book" });
     }
 });
 
@@ -487,22 +498,31 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
     }
 });
 
+// DELETE BOOK — fixed Cloudinary public_id extraction
 router.delete("/:id", protect, async (req, res) => {
     try {
         const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
         if (!book) return res.status(404).json({ error: "Book not found" });
 
+        // Clean up Cloudinary assets
         try {
             if (book.pdfPath && book.pdfPath.includes("cloudinary")) {
-                await cloudinary.uploader.destroy(`storyteller_pdfs/${path.parse(book.pdfPath).name}`, { resource_type: 'raw' });
+                const pdfPublicId = getCloudinaryPublicId(book.pdfPath);
+                if (pdfPublicId) {
+                    await cloudinary.uploader.destroy(pdfPublicId, { resource_type: 'raw' });
+                }
             }
             if (book.cover && book.cover.includes("cloudinary")) {
-                await cloudinary.uploader.destroy(`storyteller_covers/${path.parse(book.cover).name}`);
+                const coverPublicId = getCloudinaryPublicId(book.cover);
+                if (coverPublicId) {
+                    await cloudinary.uploader.destroy(coverPublicId);
+                }
             }
         } catch (cErr) {
             console.warn("Cloudinary cleanup failed:", cErr.message);
         }
 
+        // Clean up local temp file if it exists
         const tempPdf = path.join(pdfDir, `temp_load_${book._id}.pdf`);
         if (await fs.pathExists(tempPdf)) await fs.remove(tempPdf);
 
