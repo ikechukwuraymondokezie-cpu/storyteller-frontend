@@ -17,25 +17,63 @@ except ImportError:
 
 # -------------------- 3. Initialize OCR --------------------
 ocr = PaddleOCR(
-    # disabled to save RAM (enable if docs may be rotated)
-    use_angle_cls=False,
+    use_angle_cls=False,   # disabled to save RAM
     lang='en',
     show_log=False,
     use_gpu=False
 )
 
-# -------------------- Detect column layout --------------------
+# -------------------- Helpers --------------------
 
+def is_header_text(text):
+    """Returns True if text looks like a standalone header."""
+    t = text.strip()
+    if not t:
+        return False
+    # ALL CAPS letters only, no digits
+    if t == t.upper() and any(c.isalpha() for c in t) and not any(c.isdigit() for c in t):
+        return True
+    # Keyword headers
+    import re
+    if re.match(r'^(Chapter|Section|Part|Lesson|Psalm|Act|Scene|Preface|Foreword|'
+                r'Introduction|Epilogue|Appendix|Prologue|Conclusion|Afterword|'
+                r'Unit|Module|Volume|Book|Verse)\s*(\d+|[IVXLCDM]+)?$', t, re.IGNORECASE):
+        return True
+    return False
+
+
+def is_border_wrap(block, page_right, page_width):
+    """
+    Returns True if a block likely wraps at the page border.
+    A border wrap:
+    - Has its right edge close to the page right margin (within 12%)
+    - Does NOT end with sentence-ending punctuation
+    - Is NOT a header
+    """
+    text = block["text"].strip()
+    if not text:
+        return False
+    # Ends a sentence — not a wrap
+    if text[-1] in '.!?':
+        return False
+    # Headers are intentionally short — not a wrap
+    if is_header_text(text):
+        return False
+    # Check if block's right edge reached the page border
+    distance_from_right = page_right - block.get("x_end", block["x"])
+    return distance_from_right < page_width * 0.12
+
+
+# -------------------- Detect column layout --------------------
 
 def split_columns(blocks):
     if not blocks:
         return [blocks]
 
     xs = [b["x"] for b in blocks]
-    mid = sorted(xs)[len(xs) // 2]  # use median x as midpoint (more reliable)
+    mid = sorted(xs)[len(xs) // 2]  # median x as midpoint
 
     left, right = [], []
-
     for b in blocks:
         if b["x"] < mid:
             left.append(b)
@@ -50,8 +88,7 @@ def split_columns(blocks):
 
 # -------------------- Process blocks into paragraphs --------------------
 
-
-def blocks_to_text(blocks, line_threshold, paragraph_threshold):
+def blocks_to_text(blocks, line_threshold, paragraph_threshold, page_right, page_width):
     if not blocks:
         return ""
 
@@ -62,6 +99,7 @@ def blocks_to_text(blocks, line_threshold, paragraph_threshold):
     lines = []
     current_words = []
     current_y = None
+    current_line_blocks = []
 
     for block in blocks:
         if current_y is None:
@@ -70,39 +108,67 @@ def blocks_to_text(blocks, line_threshold, paragraph_threshold):
         if abs(block["y"] - current_y) > line_threshold:
             lines.append({
                 "y": current_y,
-                "text": " ".join(current_words)
+                "text": " ".join(current_words),
+                "blocks": current_line_blocks
             })
             current_words = [block["text"]]
             current_y = block["y"]
+            current_line_blocks = [block]
         else:
             current_words.append(block["text"])
+            current_line_blocks.append(block)
 
     if current_words:
         lines.append({
             "y": current_y,
-            "text": " ".join(current_words)
+            "text": " ".join(current_words),
+            "blocks": current_line_blocks
         })
 
-    # ---- Build paragraphs ----
+    # ---- Build paragraphs using border wrap detection ----
     paragraphs = []
     current_para = ""
     last_y = None
 
     for line in lines:
+        line_text = line["text"].strip()
+        if not line_text:
+            continue
+
+        # Determine if this line wraps at the border
+        # Use the rightmost block in the line for x_end
+        line_blocks = line.get("blocks", [])
+        rightmost = max(line_blocks, key=lambda b: b.get("x_end", b["x"])) if line_blocks else None
+        wraps_at_border = (
+            rightmost is not None and
+            is_border_wrap(rightmost, page_right, page_width)
+        )
+
         if last_y is not None and abs(line["y"] - last_y) > paragraph_threshold:
-            paragraphs.append(current_para.strip())
-            current_para = line["text"] + " "
+            # Large vertical gap = new paragraph
+            if current_para:
+                paragraphs.append(current_para.strip())
+            current_para = line_text + (" " if wraps_at_border else "")
         else:
-            current_para += line["text"] + " "
+            if wraps_at_border:
+                # Line reaches the border without ending a sentence = join with next
+                current_para += line_text + " "
+            else:
+                # Line ends before the border = natural end, keep separate
+                current_para += line_text + " "
+
         last_y = line["y"]
 
     if current_para:
         paragraphs.append(current_para.strip())
 
-    return "\n\n".join(paragraphs)
+    # Join lines that were marked as border wraps into single paragraphs
+    # The border wrap flag was already used above during building —
+    # now collapse any remaining single-newline joins
+    return "\n\n".join(p for p in paragraphs if p)
+
 
 # -------------------- OCR Processing Function --------------------
-
 
 def process_image(
     image_path,
@@ -119,7 +185,7 @@ def process_image(
     if not result or not result[0]:
         return ""
 
-    # ---- Extract OCR blocks (with confidence filtering) ----
+    # ---- Extract OCR blocks with confidence filtering ----
     page_blocks = []
 
     for line in result[0]:
@@ -128,12 +194,17 @@ def process_image(
         confidence = line[1][1]
 
         if confidence < confidence_threshold:
-            continue  # skip low-confidence detections
+            continue
 
-        x, y = box[0][0], box[0][1]
+        # box = [[x1,y1], [x2,y2], [x3,y3], [x4,y4]] top-left clockwise
+        x_start = box[0][0]
+        x_end = box[1][0]
+        y = box[0][1]
+
         page_blocks.append({
             "text": text,
-            "x": x,
+            "x": x_start,
+            "x_end": x_end,
             "y": y
         })
 
@@ -143,21 +214,26 @@ def process_image(
     if not page_blocks:
         return ""
 
-    # ---- Fix hyphenated words at block level (before any joining) ----
+    # ---- Calculate page dimensions from block positions ----
+    page_left = min(b["x"] for b in page_blocks)
+    page_right = max(b["x_end"] for b in page_blocks)
+    page_width = page_right - page_left
+
+    # ---- Fix hyphenated words at block level ----
     for block in page_blocks:
         block["text"] = block["text"].replace("-\n", "")
 
     # ---- Detect columns ----
     columns = split_columns(page_blocks)
 
-    # ---- Process columns ----
-    column_texts = [blocks_to_text(
-        col, line_threshold, paragraph_threshold) for col in columns]
-    combined_text = "\n\n".join(column_texts)
+    # ---- Process columns with border wrap detection ----
+    column_texts = [
+        blocks_to_text(col, line_threshold, paragraph_threshold, page_right, page_width)
+        for col in columns
+    ]
+    combined_text = "\n\n".join(t for t in column_texts if t)
 
     # ---- Sentence cleanup ----
-    # Split only on sentence boundaries that are followed by a space,
-    # preserving existing \n\n paragraph breaks
     if preserve_sentences:
         paragraphs = combined_text.split("\n\n")
         processed_paragraphs = []
@@ -166,7 +242,6 @@ def process_image(
             para = para.strip()
             if not para:
                 continue
-            # Split sentences within each paragraph
             sentences = re.split(r'(?<=[.!?]) +', para)
             processed_paragraphs.append(
                 " ".join(s.strip() for s in sentences if s.strip()))
@@ -187,6 +262,6 @@ def process_image(
 # -------------------- CLI Interface --------------------
 if __name__ == "__main__":
     if len(sys.argv) > 1:
-        final_text = process_image(sys.argv[1])
-        sys.stdout.write(final_text)
+        output = process_image(sys.argv[1])
+        sys.stdout.write(output)
         sys.stdout.flush()

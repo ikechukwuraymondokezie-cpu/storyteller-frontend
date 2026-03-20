@@ -124,20 +124,40 @@ function extractTOC(text, pageNum) {
 }
 
 /**
- * Cleans page text while preserving paragraph and header structure.
+ * Cleans pdftotext output using median line length to detect border wraps.
  *
- * Core logic — ONLY break a paragraph when:
- *   1. The line ends with sentence-ending punctuation (.!?)
- *   2. The next line is a header
- *   3. There is no next line
- * Everything else gets joined — this handles ALL border wrapping cases
- * regardless of whether the line ends with uppercase, lowercase, brackets,
- * quotes, numbers, or any other character.
+ * Border detection logic for pdftotext path:
+ * - Calculate median line length for the page (represents full-width body lines)
+ * - A line shorter than 85% of median AND not ending with .!? = border wrap → join
+ * - A line at/near median length not ending with .!? = intentional break → keep
+ * - Headers always stay isolated regardless of length
+ *
+ * This is the pdftotext equivalent of the OCR x_end coordinate detection.
  */
 function smartClean(text) {
     if (!text) return "";
 
     const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+    if (lines.length === 0) return "";
+
+    // ---- Calculate median line length for border detection ----
+    const lengths = lines.map(l => l.length).sort((a, b) => a - b);
+    const medianLength = lengths[Math.floor(lengths.length / 2)];
+
+    /**
+     * Returns true if a line appears to be a border wrap.
+     * A border wrap is a line that:
+     * - Is shorter than 85% of the median line length (didn't reach the right margin)
+     * - Does NOT end with sentence-ending punctuation
+     * - Is NOT a header (headers are intentionally short)
+     */
+    const isBorderWrap = (line) => {
+        if (/[.!?]['""\)\]»]?$/.test(line)) return false; // ends a sentence
+        if (isHeaderLine(line)) return false;               // header
+        return line.length < medianLength * 0.85;           // shorter than typical line
+    };
+
     const result = [];
 
     for (let i = 0; i < lines.length; i++) {
@@ -159,17 +179,19 @@ function smartClean(text) {
             continue;
         }
 
-        // Determine if this line ends a paragraph:
-        // Only .  !  ?  (optionally followed by closing quote/bracket) = real end
         const isRealEnd = /[.!?]['""\)\]»]?$/.test(line);
         const nextIsHeader = next && isHeaderLine(next);
 
         if (!next || isRealEnd || nextIsHeader) {
-            // Real paragraph end — keep as-is
+            // Definite paragraph end — keep as-is
             result.push(line);
-        } else {
-            // Not a real end — join with next line (handles all border wrapping)
+        } else if (isBorderWrap(line)) {
+            // Short line that didn't reach the margin = border wrap → join
             result.push(line + ' ');
+        } else {
+            // Full-width line without sentence ending
+            // Could be intentional (poetry, dialogue, lists) — keep separate
+            result.push(line);
         }
     }
 
@@ -230,7 +252,7 @@ async function extractPageText(pdfPath, pageNum) {
         }
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
-        return smartClean(ocrResult);
+        return ocrResult; // OCR already handled border detection internally
 
     } catch (e) {
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
