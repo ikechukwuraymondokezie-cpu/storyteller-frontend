@@ -65,17 +65,12 @@ const formatBook = (book) => ({
 
 /**
  * Extracts the Cloudinary public_id from a full Cloudinary URL.
- * Handles URLs like:
- * https://res.cloudinary.com/xxx/image/upload/v1234/storyteller_covers/filename.png
- * https://res.cloudinary.com/xxx/raw/upload/v1234/storyteller_pdfs/filename.pdf
  */
 function getCloudinaryPublicId(url) {
     try {
         const uploadIndex = url.indexOf('/upload/');
         if (uploadIndex === -1) return null;
-        // Get everything after /upload/
         let afterUpload = url.substring(uploadIndex + 8);
-        // Strip version prefix if present (e.g. "v1234567890/")
         afterUpload = afterUpload.replace(/^v\d+\//, '');
         return afterUpload;
     } catch {
@@ -100,10 +95,6 @@ function isHeaderLine(line) {
     if (/^(Chapter|Section|Part|Lesson|Psalm|Act|Scene|Preface|Foreword|Introduction|Epilogue|Appendix|Prologue|Conclusion|Afterword|Unit|Module|Volume|Book|Verse)\s*(\d+|[IVXLCDM]+)?/i.test(t)) return true;
     if (/^([IVXLCDM]+\.|\d+[\.\:])\s+[A-Z]/.test(t)) return true;
     return false;
-}
-
-function endsWithPunctuation(line) {
-    return /[.!?:;]$/.test(line.trim());
 }
 
 function extractTOC(text, pageNum) {
@@ -132,47 +123,53 @@ function extractTOC(text, pageNum) {
     return tocEntries;
 }
 
+/**
+ * Cleans page text while preserving paragraph and header structure.
+ *
+ * Core logic — ONLY break a paragraph when:
+ *   1. The line ends with sentence-ending punctuation (.!?)
+ *   2. The next line is a header
+ *   3. There is no next line
+ * Everything else gets joined — this handles ALL border wrapping cases
+ * regardless of whether the line ends with uppercase, lowercase, brackets,
+ * quotes, numbers, or any other character.
+ */
 function smartClean(text) {
     if (!text) return "";
 
-    const lines = text.split('\n').map(l => l.trim());
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
     const result = [];
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         const next = i + 1 < lines.length ? lines[i + 1] : null;
 
-        if (!line) {
-            result.push('');
-            continue;
-        }
-
+        // Fix hyphenated word break across lines
         if (/\w-$/.test(line) && next && /^\w/.test(next) && !isHeaderLine(next)) {
             result.push(line.replace(/-$/, '') + next);
             i++;
             continue;
         }
 
+        // Headers always stay isolated with blank lines around them
         if (isHeaderLine(line)) {
             if (result.length > 0 && result[result.length - 1] !== '') result.push('');
             result.push(line);
-            if (next && next.trim() !== '') result.push('');
+            if (next) result.push('');
             continue;
         }
 
-        const shouldJoin =
-            next !== null &&
-            next.trim().length > 0 &&
-            !isHeaderLine(next) &&
-            !endsWithPunctuation(line) &&
-            /[a-zA-Z,]$/.test(line) &&
-            /^[a-zA-Z]/.test(next) &&
-            !/^\d/.test(next);
+        // Determine if this line ends a paragraph:
+        // Only .  !  ?  (optionally followed by closing quote/bracket) = real end
+        const isRealEnd = /[.!?]['""\)\]»]?$/.test(line);
+        const nextIsHeader = next && isHeaderLine(next);
 
-        if (shouldJoin) {
-            result.push(line + ' ');
-        } else {
+        if (!next || isRealEnd || nextIsHeader) {
+            // Real paragraph end — keep as-is
             result.push(line);
+        } else {
+            // Not a real end — join with next line (handles all border wrapping)
+            result.push(line + ' ');
         }
     }
 
@@ -301,7 +298,6 @@ router.patch("/:id/folder", protect, async (req, res) => {
     try {
         const { folder } = req.body;
         if (!folder) return res.status(400).json({ error: "Folder name required" });
-
         const book = await Book.findOneAndUpdate(
             { _id: req.params.id, user: req.user._id },
             { folder },
@@ -498,13 +494,12 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
     }
 });
 
-// DELETE BOOK — fixed Cloudinary public_id extraction
+// DELETE BOOK
 router.delete("/:id", protect, async (req, res) => {
     try {
         const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
         if (!book) return res.status(404).json({ error: "Book not found" });
 
-        // Clean up Cloudinary assets
         try {
             if (book.pdfPath && book.pdfPath.includes("cloudinary")) {
                 const pdfPublicId = getCloudinaryPublicId(book.pdfPath);
@@ -522,7 +517,6 @@ router.delete("/:id", protect, async (req, res) => {
             console.warn("Cloudinary cleanup failed:", cErr.message);
         }
 
-        // Clean up local temp file if it exists
         const tempPdf = path.join(pdfDir, `temp_load_${book._id}.pdf`);
         if (await fs.pathExists(tempPdf)) await fs.remove(tempPdf);
 
