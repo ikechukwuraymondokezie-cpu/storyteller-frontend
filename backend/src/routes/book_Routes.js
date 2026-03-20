@@ -65,9 +65,6 @@ const formatBook = (book) => ({
 
 /* ---------------- TOC & TEXT CLEANING HELPERS ---------------- */
 
-/**
- * Quality check for pdftotext output.
- */
 function isUsableText(text) {
     if (!text || text.trim().length < 50) return false;
     const words = text.trim().split(/\s+/);
@@ -77,24 +74,33 @@ function isUsableText(text) {
 }
 
 /**
- * Returns true if a line is a header — used to protect it from being
- * merged into adjacent body text during smartClean.
+ * Returns true if a line is a standalone header.
+ * Only high-confidence signals — avoids false positives on body text.
  */
 function isHeaderLine(line) {
     const t = line.trim();
     if (!t) return false;
-    // ALL CAPS letters only (no digits — avoids page numbers, dates)
+
+    // ALL CAPS letters only — no digits (excludes page numbers, dates, prices)
     if (t === t.toUpperCase() && /[A-Z]/.test(t) && !/\d/.test(t) && t.length < 120) return true;
-    // Keyword headers
+
+    // Explicit keyword headers
     if (/^(Chapter|Section|Part|Lesson|Psalm|Act|Scene|Preface|Foreword|Introduction|Epilogue|Appendix|Prologue|Conclusion|Afterword|Unit|Module|Volume|Book|Verse)\s*(\d+|[IVXLCDM]+)?/i.test(t)) return true;
-    // Numbered heading followed by a capital letter
+
+    // Numbered heading — must have a capital word after the number
     if (/^([IVXLCDM]+\.|\d+[\.\:])\s+[A-Z]/.test(t)) return true;
+
     return false;
 }
 
 /**
- * Extracts a hierarchical TOC from a page of text.
+ * Returns true if a line ends with sentence-breaking punctuation.
+ * These lines should NEVER be joined to the next line.
  */
+function endsWithPunctuation(line) {
+    return /[.!?:;]$/.test(line.trim());
+}
+
 function extractTOC(text, pageNum) {
     const isTOCPage = /contents|table of contents/i.test(text);
     if (!isTOCPage) return [];
@@ -122,13 +128,14 @@ function extractTOC(text, pageNum) {
 }
 
 /**
- * Cleans page text while preserving header structure.
+ * Cleans page text while preserving paragraph and header structure.
  *
- * The only change from the original: replaced the dangerous catch-all
- * regex `.replace(/([^\.\!\?\:\n])\n([a-z0-9])/g, ...)` with a
- * line-by-line loop that checks isHeaderLine() before joining.
- * This stops ALL CAPS headers and keyword headers from being merged
- * into the body text that follows them.
+ * Join rules:
+ * - NEVER join if current line ends with punctuation (.!?:;)
+ * - NEVER join if current OR next line is a header
+ * - NEVER join if next line starts with a digit (list items, verse numbers)
+ * - JOIN if current line ends with any letter/comma and next starts with a letter
+ *   (this covers both lowercase and uppercase word-wrap at page borders)
  */
 function smartClean(text) {
     if (!text) return "";
@@ -152,24 +159,25 @@ function smartClean(text) {
             continue;
         }
 
+        // Headers get isolated with blank lines before and after
         if (isHeaderLine(line)) {
-            // Ensure blank line before header
             if (result.length > 0 && result[result.length - 1] !== '') result.push('');
             result.push(line);
-            // Ensure blank line after header
             if (next && next.trim() !== '') result.push('');
             continue;
         }
 
-        // Join body lines — only when current ends lowercase/comma
-        // and next is not a header. Never merges across header boundaries.
-        if (
-            next &&
-            next.trim() &&
-            !isHeaderLine(next) &&
-            /[a-z,]$/.test(line) &&
-            /^[a-zA-Z]/.test(next)
-        ) {
+        // Decide whether to join this line with the next
+        const shouldJoin =
+            next !== null &&
+            next.trim().length > 0 &&
+            !isHeaderLine(next) &&           // next is not a header
+            !endsWithPunctuation(line) &&     // current doesn't end a sentence
+            /[a-zA-Z,]$/.test(line) &&        // current ends with a letter or comma
+            /^[a-zA-Z]/.test(next) &&         // next starts with a letter
+            !/^\d/.test(next);                // next doesn't start with a digit
+
+        if (shouldJoin) {
             result.push(line + ' ');
         } else {
             result.push(line);
@@ -263,7 +271,6 @@ router.get("/", protect, async (req, res) => {
     }
 });
 
-// FOLDER ROUTES — must be before /:id
 router.get("/folders", protect, async (req, res) => {
     try {
         const folders = await Folder.find({ user: req.user._id }).sort({ name: 1 });
