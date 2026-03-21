@@ -426,6 +426,10 @@ const stripeWebhook = async (req, res) => {
     }
 };
 
+// Attach named webhook handlers to the router object before exporting.
+// This works because in Node.js, functions are objects — you can attach
+// properties to the router function and they survive the module.exports assignment.
+router.paystackWebhook = paystackWebhook;
+router.stripeWebhook = stripeWebhook;
+
 module.exports = router;
-module.exports.paystackWebhook = paystackWebhook;
-module.exports.stripeWebhook = stripeWebhook;

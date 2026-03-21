@@ -25,12 +25,12 @@ const app = express();
 app.post(
     "/api/f3/coins/stripe/webhook",
     express.raw({ type: "application/json" }),
-    require("./routes/coinRoutes").stripeWebhook
+    coinRoutes.stripeWebhook
 );
 app.post(
     "/api/f3/coins/paystack/webhook",
     express.raw({ type: "application/json" }),
-    require("./routes/coinRoutes").paystackWebhook
+    coinRoutes.paystackWebhook
 );
 
 /* -------------------- MIDDLEWARE -------------------- */
