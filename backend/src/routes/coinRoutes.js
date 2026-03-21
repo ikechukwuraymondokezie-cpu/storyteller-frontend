@@ -1,7 +1,18 @@
 const express = require('express');
 const router = express.Router();
 const axios = require('axios');
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+// Lazy initialise Stripe — only instantiated when a route actually uses it.
+// This prevents a crash on startup if STRIPE_SECRET_KEY is not yet set.
+let _stripe = null;
+const getStripe = () => {
+    if (!_stripe) {
+        if (!process.env.STRIPE_SECRET_KEY) {
+            throw new Error('STRIPE_SECRET_KEY environment variable is not set');
+        }
+        _stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+    }
+    return _stripe;
+};
 const User = require('../models/User');
 const CoinTransaction = require('../models/CoinTransaction');
 const { protect } = require('../middleware/authMiddleware');
@@ -231,7 +242,7 @@ router.post('/stripe/initiate', protect, async (req, res) => {
         const user = await User.findById(req.user._id);
 
         // Stripe expects amount in cents (USD * 100)
-        const paymentIntent = await stripe.paymentIntents.create({
+        const paymentIntent = await getStripe().paymentIntents.create({
             amount: Math.round(pkg.usdPrice * 100),
             currency: 'usd',
             metadata: {
@@ -264,7 +275,7 @@ router.post('/stripe/webhook', express.raw({ type: 'application/json' }), async 
         let event;
 
         try {
-            event = stripe.webhooks.constructEvent(
+            event = getStripe().webhooks.constructEvent(
                 req.body,
                 sig,
                 process.env.STRIPE_WEBHOOK_SECRET
@@ -371,7 +382,7 @@ const stripeWebhook = async (req, res) => {
         let event;
 
         try {
-            event = stripe.webhooks.constructEvent(
+            event = getStripe().webhooks.constructEvent(
                 req.body,
                 sig,
                 process.env.STRIPE_WEBHOOK_SECRET
