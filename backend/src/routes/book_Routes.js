@@ -26,7 +26,6 @@ const coversDir = path.join(__dirname, "../../temp/covers");
 fs.ensureDirSync(pdfDir);
 fs.ensureDirSync(coversDir);
 
-// File type validation — PDFs only
 const upload = multer({
     dest: "temp/uploads/",
     fileFilter: (req, file, cb) => {
@@ -63,9 +62,6 @@ const formatBook = (book) => ({
     createdAt: book.createdAt
 });
 
-/**
- * Extracts the Cloudinary public_id from a full Cloudinary URL.
- */
 function getCloudinaryPublicId(url) {
     try {
         const uploadIndex = url.indexOf('/upload/');
@@ -124,81 +120,108 @@ function extractTOC(text, pageNum) {
 }
 
 /**
- * Cleans pdftotext output using median line length to detect border wraps.
+ * Cleans page text while preserving paragraph and header structure.
  *
- * Border detection logic for pdftotext path:
- * - Calculate median line length for the page (represents full-width body lines)
- * - A line shorter than 85% of median AND not ending with .!? = border wrap → join
- * - A line at/near median length not ending with .!? = intentional break → keep
- * - Headers always stay isolated regardless of length
+ * Core insight:
+ * - pdftotext uses \n\n for REAL paragraph breaks
+ * - pdftotext uses single \n for visual line wraps at the page border
  *
- * This is the pdftotext equivalent of the OCR x_end coordinate detection.
+ * So: split on \n\n first to get real paragraphs, then within each
+ * paragraph merge all single-\n lines together (they are border wraps).
+ *
+ * Only exceptions inside a paragraph:
+ * - Line ends with .!? → real sentence end, flush as its own block
+ * - Next line is a header → flush and keep header separate
+ * - Hyphenated word break → merge without space
  */
+/**
+ * A short phrase sandwiched between longer lines with single \n on both
+ * sides is almost certainly a header — e.g. "Minibooks(2019)" sitting
+ * between body text. Won't pass isHeaderLine (mixed case, has digits)
+ * but the sandwich pattern identifies it reliably.
+ */
+function isSandwichedHeader(line, prevLine, nextLine) {
+    const t = line.trim();
+    if (!t || t.length > 60) return false;
+    if (/[.!?:;]$/.test(t)) return false;
+    if (!prevLine || !nextLine) return false;
+    const prevLen = prevLine.trim().length;
+    const nextLen = nextLine.trim().length;
+    return (prevLen > t.length * 1.5 || nextLen > t.length * 1.5);
+}
+
 function smartClean(text) {
     if (!text) return "";
 
-    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    // Split on double newlines — real paragraph breaks from pdftotext
+    const paragraphs = text.split(/\n\n+/);
+    const cleanedParagraphs = [];
 
-    if (lines.length === 0) return "";
+    for (const para of paragraphs) {
+        const trimmed = para.trim();
+        if (!trimmed) continue;
 
-    // ---- Calculate median line length for border detection ----
-    const lengths = lines.map(l => l.length).sort((a, b) => a - b);
-    const medianLength = lengths[Math.floor(lengths.length / 2)];
+        // Split into visual lines (single \n = border wrap)
+        const lines = trimmed.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        if (lines.length === 0) continue;
 
-    /**
-     * Returns true if a line appears to be a border wrap.
-     * A border wrap is a line that:
-     * - Is shorter than 85% of the median line length (didn't reach the right margin)
-     * - Does NOT end with sentence-ending punctuation
-     * - Is NOT a header (headers are intentionally short)
-     */
-    const isBorderWrap = (line) => {
-        if (/[.!?]['""\)\]»]?$/.test(line)) return false; // ends a sentence
-        if (isHeaderLine(line)) return false;               // header
-        return line.length < medianLength * 0.85;           // shorter than typical line
-    };
-
-    const result = [];
-
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const next = i + 1 < lines.length ? lines[i + 1] : null;
-
-        // Fix hyphenated word break across lines
-        if (/\w-$/.test(line) && next && /^\w/.test(next) && !isHeaderLine(next)) {
-            result.push(line.replace(/-$/, '') + next);
-            i++;
+        // Single-line paragraph that is a header — keep isolated
+        if (lines.length === 1 && isHeaderLine(lines[0])) {
+            cleanedParagraphs.push(lines[0]);
             continue;
         }
 
-        // Headers always stay isolated with blank lines around them
-        if (isHeaderLine(line)) {
-            if (result.length > 0 && result[result.length - 1] !== '') result.push('');
-            result.push(line);
-            if (next) result.push('');
-            continue;
+        let buffer = '';
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const prev = i > 0 ? lines[i - 1] : null;
+            const next = i + 1 < lines.length ? lines[i + 1] : null;
+            const nextNext = i + 2 < lines.length ? lines[i + 2] : null;
+
+            const lineIsHeader = isHeaderLine(line) || isSandwichedHeader(line, prev, next);
+            const nextIsHeader = next && (isHeaderLine(next) || isSandwichedHeader(next, line, nextNext));
+
+            // Hyphenated word break — merge without space
+            if (/\w-$/.test(line) && next && /^\w/.test(next) && !lineIsHeader && !nextIsHeader) {
+                buffer += line.replace(/-$/, '');
+                continue;
+            }
+
+            // This line is a header — flush buffer first, then push header alone
+            if (lineIsHeader) {
+                if (buffer.trim()) cleanedParagraphs.push(buffer.trim());
+                buffer = '';
+                cleanedParagraphs.push(line.trim());
+                continue;
+            }
+
+            // Next line is a header — flush buffer before it
+            if (nextIsHeader) {
+                buffer += line;
+                if (buffer.trim()) cleanedParagraphs.push(buffer.trim());
+                buffer = '';
+                continue;
+            }
+
+            const isRealEnd = /[.!?]['""\)\]»]?$/.test(line);
+
+            if (isRealEnd || !next) {
+                buffer += line;
+                if (buffer.trim()) cleanedParagraphs.push(buffer.trim());
+                buffer = '';
+            } else {
+                // Border wrap — join with space
+                buffer += line + ' ';
+            }
         }
 
-        const isRealEnd = /[.!?]['""\)\]»]?$/.test(line);
-        const nextIsHeader = next && isHeaderLine(next);
-
-        if (!next || isRealEnd || nextIsHeader) {
-            // Definite paragraph end — keep as-is
-            result.push(line);
-        } else if (isBorderWrap(line)) {
-            // Short line that didn't reach the margin = border wrap → join
-            result.push(line + ' ');
-        } else {
-            // Full-width line without sentence ending
-            // Could be intentional (poetry, dialogue, lists) — keep separate
-            result.push(line);
-        }
+        if (buffer.trim()) cleanedParagraphs.push(buffer.trim());
     }
 
-    return result
-        .join('\n')
+    return cleanedParagraphs
+        .join('\n\n')
         .replace(/[ \t]+/g, ' ')
-        .replace(/\n{3,}/g, '\n\n')
         .trim();
 }
 
@@ -252,7 +275,7 @@ async function extractPageText(pdfPath, pageNum) {
         }
 
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
-        return ocrResult; // OCR already handled border detection internally
+        return smartClean(ocrResult);
 
     } catch (e) {
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
@@ -282,7 +305,6 @@ router.get("/", protect, async (req, res) => {
     }
 });
 
-// FOLDER ROUTES — must be before /:id
 router.get("/folders", protect, async (req, res) => {
     try {
         const folders = await Folder.find({ user: req.user._id }).sort({ name: 1 });
@@ -315,7 +337,6 @@ router.get("/:id", protect, async (req, res) => {
     }
 });
 
-// MOVE BOOK TO FOLDER
 router.patch("/:id/folder", protect, async (req, res) => {
     try {
         const { folder } = req.body;
@@ -516,7 +537,6 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
     }
 });
 
-// DELETE BOOK
 router.delete("/:id", protect, async (req, res) => {
     try {
         const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
