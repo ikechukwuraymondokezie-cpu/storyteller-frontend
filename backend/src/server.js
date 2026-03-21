@@ -5,18 +5,6 @@ const cors = require("cors");
 const path = require("path");
 const fs = require("fs-extra");
 
-// ── ROUTE IMPORTS ─────────────────────────────────────────────────────
-const userRoutes = require("./routes/userRoutes");
-const authRoutes = require("./routes/authRoutes");
-const bookRoutes = require("./routes/book_Routes");
-
-// F3 — Fun Fiction & Fallacies
-const novelRoutes = require("./routes/novelRoutes");
-const auvieRoutes = require("./routes/auvieRoutes");
-const snippetRoutes = require("./routes/snippetRoutes");
-const coinRoutes = require("./routes/coinRoutes");
-const f3Routes = require("./routes/f3Routes");
-
 const app = express();
 
 /* -------------------- MIDDLEWARE -------------------- */
@@ -30,13 +18,10 @@ app.use(cors({
     credentials: true
 }));
 
-// express.json with rawBody capture for webhook signature verification.
-// Paystack and Stripe need req.rawBody to verify their signatures.
+// Capture raw body for webhook signature verification
 app.use(express.json({
     limit: '50mb',
-    verify: (req, res, buf) => {
-        req.rawBody = buf;
-    }
+    verify: (req, res, buf) => { req.rawBody = buf; }
 }));
 
 /* -------------------- UPLOADS & STATIC FILES -------------------- */
@@ -49,21 +34,40 @@ fs.ensureDirSync(coversDir);
 
 app.use("/uploads", express.static(uploadsBase));
 
-/* -------------------- API ROUTES -------------------- */
+/* -------------------- ROUTES -------------------- */
 
-// Auth & Users
-app.use("/api/auth", authRoutes);
-app.use("/api/users", userRoutes);
+// Helper — logs clearly if a route file fails to load instead of crashing
+function safeRequire(routePath) {
+    try {
+        const mod = require(routePath);
+        if (typeof mod !== 'function' && typeof mod !== 'object') {
+            console.error(`Route module did not export a router: ${routePath}`);
+            return null;
+        }
+        return mod;
+    } catch (err) {
+        console.error(`Failed to load route: ${routePath} — ${err.message}`);
+        return null;
+    }
+}
 
-// Private library (book import + reader)
-app.use("/api/books", bookRoutes);
+const userRoutes = safeRequire("./routes/userRoutes");
+const authRoutes = safeRequire("./routes/authRoutes");
+const bookRoutes = safeRequire("./routes/book_Routes");
+const novelRoutes = safeRequire("./routes/novelRoutes");
+const auvieRoutes = safeRequire("./routes/auvieRoutes");
+const snippetRoutes = safeRequire("./routes/snippetRoutes");
+const coinRoutes = safeRequire("./routes/coinRoutes");
+const f3Routes = safeRequire("./routes/f3Routes");
 
-// F3 — public creative platform
-app.use("/api/f3/novels", novelRoutes);
-app.use("/api/f3/auvies", auvieRoutes);
-app.use("/api/f3/snippets", snippetRoutes);
-app.use("/api/f3/coins", coinRoutes);
-app.use("/api/f3", f3Routes);    // feed, search, profiles — must be last
+if (authRoutes) app.use("/api/auth", authRoutes);
+if (userRoutes) app.use("/api/users", userRoutes);
+if (bookRoutes) app.use("/api/books", bookRoutes);
+if (novelRoutes) app.use("/api/f3/novels", novelRoutes);
+if (auvieRoutes) app.use("/api/f3/auvies", auvieRoutes);
+if (snippetRoutes) app.use("/api/f3/snippets", snippetRoutes);
+if (coinRoutes) app.use("/api/f3/coins", coinRoutes);
+if (f3Routes) app.use("/api/f3", f3Routes);
 
 /* -------------------- MONGODB -------------------- */
 mongoose.connect(process.env.MONGO_URI)
@@ -74,11 +78,10 @@ mongoose.connect(process.env.MONGO_URI)
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", async () => {
     console.log(`🚀 Server running on port ${PORT}`);
-
     try {
         await fs.emptyDir(uploadDir);
         await fs.emptyDir(coversDir);
-        console.log("🧹 Initial cleanup of uploads directory complete");
+        console.log("🧹 Initial cleanup complete");
     } catch (e) {
         console.warn("⚠️ Initial cleanup failed:", e.message);
     }
