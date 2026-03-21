@@ -173,12 +173,12 @@ router.get('/paystack/verify', async (req, res) => {
  * Paystack webhook for server-to-server payment confirmation.
  * More reliable than the redirect callback.
  */
-router.post('/paystack/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+router.post('/paystack/webhook', async (req, res) => {
     try {
         const crypto = require('crypto');
         const hash = crypto
             .createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
-            .update(JSON.stringify(req.body))
+            .update(req.rawBody || JSON.stringify(req.body))
             .digest('hex');
 
         if (hash !== req.headers['x-paystack-signature']) {
@@ -269,14 +269,14 @@ router.post('/stripe/initiate', protect, async (req, res) => {
  * POST /api/f3/coins/stripe/webhook
  * Stripe webhook — credits coins after successful payment.
  */
-router.post('/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+router.post('/stripe/webhook', async (req, res) => {
     try {
         const sig = req.headers['stripe-signature'];
         let event;
 
         try {
             event = getStripe().webhooks.constructEvent(
-                req.body,
+                req.rawBody || req.body,
                 sig,
                 process.env.STRIPE_WEBHOOK_SECRET
             );
@@ -333,7 +333,7 @@ const paystackWebhook = async (req, res) => {
         const crypto = require('crypto');
         const hash = crypto
             .createHmac('sha512', process.env.PAYSTACK_SECRET_KEY)
-            .update(JSON.stringify(req.body))
+            .update(req.rawBody || JSON.stringify(req.body))
             .digest('hex');
 
         if (hash !== req.headers['x-paystack-signature']) {
@@ -383,7 +383,7 @@ const stripeWebhook = async (req, res) => {
 
         try {
             event = getStripe().webhooks.constructEvent(
-                req.body,
+                req.rawBody || req.body,
                 sig,
                 process.env.STRIPE_WEBHOOK_SECRET
             );

@@ -19,20 +19,6 @@ const f3Routes = require("./routes/f3Routes");
 
 const app = express();
 
-/* -------------------- WEBHOOK ROUTES (raw body — MUST be before express.json) -------------------- */
-// Stripe and Paystack webhooks need the raw request body to verify signatures.
-// These must be registered BEFORE express.json() parses the body.
-app.post(
-    "/api/f3/coins/stripe/webhook",
-    express.raw({ type: "application/json" }),
-    coinRoutes.stripeWebhook
-);
-app.post(
-    "/api/f3/coins/paystack/webhook",
-    express.raw({ type: "application/json" }),
-    coinRoutes.paystackWebhook
-);
-
 /* -------------------- MIDDLEWARE -------------------- */
 app.use(cors({
     origin: [
@@ -43,7 +29,15 @@ app.use(cors({
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     credentials: true
 }));
-app.use(express.json({ limit: '50mb' }));
+
+// express.json with rawBody capture for webhook signature verification.
+// Paystack and Stripe need req.rawBody to verify their signatures.
+app.use(express.json({
+    limit: '50mb',
+    verify: (req, res, buf) => {
+        req.rawBody = buf;
+    }
+}));
 
 /* -------------------- UPLOADS & STATIC FILES -------------------- */
 const uploadsBase = path.join(__dirname, "uploads");
