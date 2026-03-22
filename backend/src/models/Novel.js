@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const chapterSchema = new mongoose.Schema({
-    title: { type: String, required: true },
+    title: { type: String, required: true, trim: true },
     content: { type: String, default: "" },
     order: { type: Number, required: true },
     isFree: { type: Boolean, default: false },
@@ -15,10 +15,9 @@ const novelSchema = new mongoose.Schema({
         ref: 'User',
         required: true
     },
-    title: { type: String, required: true },
+    title: { type: String, required: true, trim: true },
     description: { type: String, default: "" },
-    cover: { type: String, default: "" },
-
+    cover: { type: String, default: "" }, // URL to Cloudinary
     genre: {
         type: String,
         enum: [
@@ -28,38 +27,36 @@ const novelSchema = new mongoose.Schema({
         ],
         default: 'Other'
     },
-    tags: [{ type: String }],
-
+    tags: [{ type: String, lowercase: true, trim: true }],
     chapters: [chapterSchema],
-
-    // How many chapters are free before paywall
     freeChapterCount: { type: Number, default: 3 },
-
     status: {
         type: String,
         enum: ['draft', 'published', 'suspended'],
         default: 'draft'
     },
-
-    // Stats
     views: { type: Number, default: 0 },
     likes: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     totalChapters: { type: Number, default: 0 },
-
-    // Auvie link
     hasAuvie: { type: Boolean, default: false },
     auvie: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Auvie',
         default: null
     },
-
-    // Coin price to unlock full novel (chapters beyond free count)
     unlockPrice: { type: Number, default: 50 },
-
 }, { timestamps: true });
 
-// Full-text search index
+// Auto-update totalChapters before saving
+novelSchema.pre('save', function (next) {
+    if (this.chapters) {
+        this.totalChapters = this.chapters.length;
+    }
+    next();
+});
+
+// Indexes
+// Note: If Render still gives issues, we can remove the 'text' index and use regex search
 novelSchema.index({ title: 'text', description: 'text', tags: 'text' });
 novelSchema.index({ author: 1, status: 1 });
 novelSchema.index({ genre: 1, status: 1 });
