@@ -5,87 +5,62 @@ const cors = require("cors");
 const path = require("path");
 const fs = require("fs-extra");
 
-// ── ROUTE IMPORTS ─────────────────────────────────────────────────────
-const userRoutes = require("./routes/userRoutes");
-const authRoutes = require("./routes/authRoutes");
-const bookRoutes = require("./routes/book_Routes");
-
-// F3 — Fun Fiction & Fallacies
-const novelRoutes = require("./routes/novelRoutes");
-const auvieRoutes = require("./routes/auvieRoutes");
-const snippetRoutes = require("./routes/snippetRoutes");
-const coinRoutes = require("./routes/coinRoutes");
-const f3Routes = require("./routes/f3Routes");
-
 const app = express();
 
-/* -------------------- WEBHOOK ROUTES (raw body — MUST be before express.json) -------------------- */
-// Stripe and Paystack webhooks need the raw request body to verify signatures.
-// These must be registered BEFORE express.json() parses the body.
-app.post(
-    "/api/f3/coins/stripe/webhook",
-    express.raw({ type: "application/json" }),
-    coinRoutes.stripeWebhook
-);
-app.post(
-    "/api/f3/coins/paystack/webhook",
-    express.raw({ type: "application/json" }),
-    coinRoutes.paystackWebhook
-);
-
-/* -------------------- MIDDLEWARE -------------------- */
 app.use(cors({
-    origin: [
-        "https://storyteller-b1i3.onrender.com",
-        "http://localhost:5173",
-        "https://storyteller-frontend-x65b.onrender.com"
-    ],
+    origin: ["https://storyteller-b1i3.onrender.com", "http://localhost:5173", "https://storyteller-frontend-x65b.onrender.com"],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     credentials: true
 }));
-app.use(express.json({ limit: '50mb' }));
 
-/* -------------------- UPLOADS & STATIC FILES -------------------- */
+app.use(express.json({
+    limit: '50mb',
+    verify: (req, res, buf) => { req.rawBody = buf; }
+}));
+
 const uploadsBase = path.join(__dirname, "uploads");
 const uploadDir = path.join(uploadsBase, "pdfs");
 const coversDir = path.join(uploadsBase, "covers");
-
 fs.ensureDirSync(uploadDir);
 fs.ensureDirSync(coversDir);
-
 app.use("/uploads", express.static(uploadsBase));
 
-/* -------------------- API ROUTES -------------------- */
+// Core routes — always loaded
+app.use("/api/auth", require("./routes/authRoutes"));
+app.use("/api/users", require("./routes/userRoutes"));
+app.use("/api/books", require("./routes/book_Routes"));
 
-// Auth & Users
-app.use("/api/auth", authRoutes);
-app.use("/api/users", userRoutes);
+// F3 routes — loaded only if the file exists
+const routesToLoad = [
+    { path: "/api/f3/novels", file: "./routes/novelRoutes" },
+    { path: "/api/f3/auvies", file: "./routes/auvieRoutes" },
+    { path: "/api/f3/snippets", file: "./routes/snippetRoutes" },
+    { path: "/api/f3/coins", file: "./routes/coinRoutes" },
+    { path: "/api/f3", file: "./routes/f3Routes" },
+];
 
-// Private library (book import + reader)
-app.use("/api/books", bookRoutes);
+for (const route of routesToLoad) {
+    try {
+        const handler = require(route.file);
+        app.use(route.path, handler);
+        console.log(`✅ Loaded route: ${route.path}`);
+    } catch (err) {
+        console.error(`❌ Skipped route ${route.path}: ${err.message}`);
+    }
+}
 
-// F3 — public creative platform
-app.use("/api/f3/novels", novelRoutes);
-app.use("/api/f3/auvies", auvieRoutes);
-app.use("/api/f3/snippets", snippetRoutes);
-app.use("/api/f3/coins", coinRoutes);
-app.use("/api/f3", f3Routes);    // feed, search, profiles — must be last
-
-/* -------------------- MONGODB -------------------- */
 mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log("✅ MongoDB connected & Routes delegated"))
-    .catch((err) => console.error("❌ MongoDB connection error:", err));
+    .then(() => console.log("✅ MongoDB connected"))
+    .catch((err) => console.error("❌ MongoDB error:", err));
 
-/* -------------------- SERVER START -------------------- */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", async () => {
     console.log(`🚀 Server running on port ${PORT}`);
-
     try {
         await fs.emptyDir(uploadDir);
         await fs.emptyDir(coversDir);
-        console.log("🧹 Initial cleanup of uploads directory complete");
+        console.log("🧹 Cleanup complete");
     } catch (e) {
-        console.warn("⚠️ Initial cleanup failed:", e.message);
+        console.warn("⚠️ Cleanup failed:", e.message);
     }
 });
