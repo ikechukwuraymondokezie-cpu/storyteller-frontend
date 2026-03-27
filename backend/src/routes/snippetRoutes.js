@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Snippet = require('../models/Snippet');
+const User = require('../models/User'); // Import User model for role upgrade
 const { protect } = require('../middleware/authMiddleware');
 
 /* ── FEED ────────────────────────────────────────────────────────────── */
@@ -10,6 +11,7 @@ router.get('/', async (req, res) => {
     try {
         const { page = 1, limit = 20 } = req.query;
 
+        // Note: Filtering by 'published' status
         const snippets = await Snippet.find({ status: 'published' })
             .populate('author', 'name username avatar')
             .sort({ createdAt: -1 })
@@ -36,9 +38,9 @@ router.get('/', async (req, res) => {
     }
 });
 
-/* ── CREATE ──────────────────────────────────────────────────────────── */
+/* ── CREATE (WITH ROLE UPGRADE) ──────────────────────────────────────── */
 
-// POST /api/f3/snippets
+// POST /api/f3/snippets — Create a new snippet and upgrade reader to writer
 router.post('/', protect, async (req, res) => {
     try {
         const { title, content } = req.body;
@@ -46,15 +48,26 @@ router.post('/', protect, async (req, res) => {
             return res.status(400).json({ error: 'Title and content required' });
         }
 
+        // 1. Create the snippet
         const snippet = await Snippet.create({
             author: req.user._id,
             title,
             content,
+            status: 'published' // Ensure it shows up in the feed immediately
         });
 
+        // 2. Upgrade user role to 'writer' if they are currently just a 'reader'
+        const user = await User.findById(req.user._id);
+        if (user && user.role === 'reader') {
+            user.role = 'writer';
+            await user.save();
+        }
+
+        // 3. Return the populated snippet
         await snippet.populate('author', 'name username avatar');
         res.status(201).json(snippet);
     } catch (err) {
+        console.error('Snippet creation error:', err.message);
         res.status(500).json({ error: 'Failed to create snippet' });
     }
 });

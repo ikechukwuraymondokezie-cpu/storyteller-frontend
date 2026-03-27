@@ -1,10 +1,26 @@
 const express = require('express');
 const router = express.Router();
 const mongoose = require('mongoose');
+const multer = require('multer');
+const cloudinary = require('cloudinary').v2;
+const fs = require('fs-extra');
 const Novel = require('../models/Novel');
 const User = require('../models/User');
 const CoinTransaction = require('../models/CoinTransaction');
 const { protect } = require('../middleware/authMiddleware');
+
+/* ── CONFIGURATION & MULTER ─────────────────────────────────────────── */
+
+// Multer setup for temporary local storage before Cloudinary upload
+const coverUpload = multer({
+    dest: 'temp/covers/',
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
+    fileFilter: (req, file, cb) => {
+        const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+        if (allowed.includes(file.mimetype)) cb(null, true);
+        else cb(new Error('Only JPEG, PNG or WebP images allowed'), false);
+    }
+});
 
 /* ── HELPERS ─────────────────────────────────────────────────────────── */
 
@@ -46,6 +62,32 @@ const formatChapter = (chapter, index, freeCount, hasUnlocked) => ({
     // Only include content if free or unlocked
     content: (index < freeCount || hasUnlocked) ? chapter.content : null,
     createdAt: chapter.createdAt,
+});
+
+/* ── UPLOAD ROUTE ───────────────────────────────────────────────────── */
+
+// POST /api/f3/novels/upload-cover — Must be BEFORE /:id
+router.post('/upload-cover', protect, coverUpload.single('cover'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No image provided' });
+
+        const result = await cloudinary.uploader.upload(req.file.path, {
+            folder: 'novel_covers',
+            resource_type: 'image',
+            transformation: [
+                { width: 600, height: 900, crop: 'fill', gravity: 'auto' },
+                { quality: 'auto', fetch_format: 'auto' }
+            ]
+        });
+
+        // Clean up temp file from local server storage
+        await fs.remove(req.file.path);
+
+        res.json({ url: result.secure_url });
+    } catch (err) {
+        console.error('Cover upload error:', err.message);
+        res.status(500).json({ error: 'Cover upload failed' });
+    }
 });
 
 /* ── FEED & DISCOVERY ────────────────────────────────────────────────── */
@@ -99,7 +141,7 @@ router.get('/my', protect, async (req, res) => {
 
 /* ── SINGLE NOVEL ────────────────────────────────────────────────────── */
 
-// GET /api/f3/novels/:id — get novel + chapter list (no content yet)
+// GET /api/f3/novels/:id — get novel + chapter list
 router.get('/:id', async (req, res) => {
     try {
         const novel = await Novel.findById(req.params.id)
@@ -151,10 +193,8 @@ router.get('/:id/chapters/:chapterId', async (req, res) => {
         const isFree = chapterIndex < novel.freeChapterCount;
 
         if (!isFree) {
-            // Must be authenticated and have unlocked the novel
-            if (!req.user) {
-                return res.status(401).json({ error: 'Login required' });
-            }
+            if (!req.user) return res.status(401).json({ error: 'Login required' });
+
             const user = await User.findById(req.user._id).select('unlockedNovels');
             const hasUnlocked = user.unlockedNovels
                 .map(id => id.toString())
@@ -179,7 +219,6 @@ router.get('/:id/chapters/:chapterId', async (req, res) => {
 
 /* ── UNLOCK NOVEL ────────────────────────────────────────────────────── */
 
-// POST /api/f3/novels/:id/unlock — spend coins to unlock all chapters
 router.post('/:id/unlock', protect, async (req, res) => {
     try {
         const novel = await Novel.findById(req.params.id);
@@ -187,12 +226,10 @@ router.post('/:id/unlock', protect, async (req, res) => {
 
         const user = await User.findById(req.user._id);
 
-        // Check if already unlocked
         if (user.unlockedNovels.map(id => id.toString()).includes(novel._id.toString())) {
             return res.status(400).json({ error: 'Already unlocked' });
         }
 
-        // Check coins
         if (user.coins < novel.unlockPrice) {
             return res.status(400).json({
                 error: 'Insufficient coins',
@@ -201,21 +238,17 @@ router.post('/:id/unlock', protect, async (req, res) => {
             });
         }
 
-        // Platform commission: 20%
         const commission = Math.floor(novel.unlockPrice * 0.2);
         const authorEarning = novel.unlockPrice - commission;
 
-        // Deduct coins from reader
         user.coins -= novel.unlockPrice;
         user.unlockedNovels.push(novel._id);
         await user.save();
 
-        // Credit coins to author
         await User.findByIdAndUpdate(novel.author, {
             $inc: { coins: authorEarning }
         });
 
-        // Log reader transaction
         await CoinTransaction.create({
             user: req.user._id,
             type: 'spend_novel',
@@ -226,12 +259,11 @@ router.post('/:id/unlock', protect, async (req, res) => {
             relatedNovel: novel._id,
         });
 
-        // Log author earning
         await CoinTransaction.create({
             user: novel.author,
             type: 'earn_novel',
             amount: authorEarning,
-            balanceAfter: 0, // will be updated properly in production
+            balanceAfter: 0,
             description: `Novel unlocked by reader: ${novel.title}`,
             processor: 'internal',
             relatedNovel: novel._id,
@@ -270,13 +302,11 @@ router.post('/:id/like', protect, async (req, res) => {
 
 /* ── WRITER: CREATE & MANAGE ─────────────────────────────────────────── */
 
-// POST /api/f3/novels — create a new novel
 router.post('/', protect, async (req, res) => {
     try {
         const { title, description, cover, genre, tags, freeChapterCount, unlockPrice } = req.body;
         if (!title) return res.status(400).json({ error: 'Title is required' });
 
-        // Upgrade user role if needed
         const user = await User.findById(req.user._id);
         if (user.role === 'reader') {
             user.role = 'writer';
@@ -300,7 +330,6 @@ router.post('/', protect, async (req, res) => {
     }
 });
 
-// PUT /api/f3/novels/:id — update novel metadata
 router.put('/:id', protect, async (req, res) => {
     try {
         const novel = await Novel.findOne({ _id: req.params.id, author: req.user._id });
@@ -322,7 +351,6 @@ router.put('/:id', protect, async (req, res) => {
     }
 });
 
-// POST /api/f3/novels/:id/publish — publish a draft novel
 router.post('/:id/publish', protect, async (req, res) => {
     try {
         const novel = await Novel.findOne({ _id: req.params.id, author: req.user._id });
@@ -339,7 +367,6 @@ router.post('/:id/publish', protect, async (req, res) => {
     }
 });
 
-// DELETE /api/f3/novels/:id — delete novel
 router.delete('/:id', protect, async (req, res) => {
     try {
         const novel = await Novel.findOneAndDelete({ _id: req.params.id, author: req.user._id });
@@ -352,7 +379,6 @@ router.delete('/:id', protect, async (req, res) => {
 
 /* ── CHAPTERS ────────────────────────────────────────────────────────── */
 
-// POST /api/f3/novels/:id/chapters — add a chapter
 router.post('/:id/chapters', protect, async (req, res) => {
     try {
         const novel = await Novel.findOne({ _id: req.params.id, author: req.user._id });
@@ -378,7 +404,6 @@ router.post('/:id/chapters', protect, async (req, res) => {
     }
 });
 
-// PUT /api/f3/novels/:id/chapters/:chapterId — edit a chapter
 router.put('/:id/chapters/:chapterId', protect, async (req, res) => {
     try {
         const novel = await Novel.findOne({ _id: req.params.id, author: req.user._id });
@@ -401,7 +426,6 @@ router.put('/:id/chapters/:chapterId', protect, async (req, res) => {
     }
 });
 
-// DELETE /api/f3/novels/:id/chapters/:chapterId — delete a chapter
 router.delete('/:id/chapters/:chapterId', protect, async (req, res) => {
     try {
         const novel = await Novel.findOne({ _id: req.params.id, author: req.user._id });
