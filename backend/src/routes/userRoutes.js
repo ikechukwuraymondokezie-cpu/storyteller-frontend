@@ -3,7 +3,7 @@ const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
 
 // Import your models
-const User = require('../models/userModel');        // User schema
+const User = require('../models/User');        // User schema
 const Novel = require('../models/novelModel');      // Novel schema
 const Snippet = require('../models/snippetModel');  // Snippet schema
 
