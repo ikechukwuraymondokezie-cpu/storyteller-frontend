@@ -4,8 +4,8 @@ const { protect } = require('../middleware/authMiddleware');
 
 // Import your models
 const User = require('../models/User');        // User schema
-const Novel = require('../models/novelModel');      // Novel schema
-const Snippet = require('../models/snippetModel');  // Snippet schema
+const Novel = require('../models/Novel');      // Novel schema
+const Snippet = require('../models/Snippet');  // Snippet schema
 
 // Protected route to get user profile with isWriter
 router.get('/profile', protect, async (req, res) => {
