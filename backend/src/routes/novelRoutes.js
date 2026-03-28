@@ -11,24 +11,20 @@ const { protect } = require('../middleware/authMiddleware');
 
 /* ── CONFIGURATION & MULTER ─────────────────────────────────────────── */
 
-// Multer setup for temporary local storage before Cloudinary upload
 const coverUpload = multer({
     dest: 'temp/covers/',
-    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
+    limits: { fileSize: 5 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
-        // Expanded list to handle common variations of image mimetypes
         const allowed = [
-            'image/jpeg', 
-            'image/jpg', 
-            'image/png', 
-            'image/x-png', 
+            'image/jpeg',
+            'image/jpg',
+            'image/png',
+            'image/x-png',
             'image/webp'
         ];
-
         if (allowed.includes(file.mimetype)) {
             cb(null, true);
         } else {
-            // Passing an error here triggers the error handler in the route
             cb(new Error('Only JPEG, PNG or WebP images allowed'), false);
         }
     }
@@ -52,7 +48,10 @@ const formatNovelFeed = (novel, userId) => ({
     auvie: novel.auvie,
     views: novel.views,
     likeCount: novel.likes.length,
-    isLiked: userId ? novel.likes.map(id => id.toString()).includes(userId.toString()) : false,
+    // FIX: safer toString comparison — avoids crash if likes contains non-ObjectId values
+    isLiked: userId
+        ? novel.likes.some(id => id.toString() === userId.toString())
+        : false,
     createdAt: novel.createdAt,
     updatedAt: novel.updatedAt,
 });
@@ -71,16 +70,12 @@ const formatChapter = (chapter, index, freeCount, hasUnlocked) => ({
 /* ── UPLOAD ROUTE ───────────────────────────────────────────────────── */
 
 router.post('/upload-cover', protect, (req, res, next) => {
-    // Manually calling the multer middleware to catch errors before they crash the app
     coverUpload.single('cover')(req, res, (err) => {
         if (err instanceof multer.MulterError) {
-            // Handles Multer-specific errors (like file size limit)
             return res.status(400).json({ error: `Upload error: ${err.message}` });
         } else if (err) {
-            // Handles our custom "Only JPEG..." error from fileFilter
             return res.status(400).json({ error: err.message });
         }
-        // If no error, proceed to the async logic
         next();
     });
 }, async (req, res) => {
@@ -96,12 +91,10 @@ router.post('/upload-cover', protect, (req, res, next) => {
             ]
         });
 
-        await fs.remove(req.file.path); // cleanup temp file
+        await fs.remove(req.file.path);
         res.json({ url: result.secure_url });
     } catch (err) {
-        // Cleanup file if it exists and Cloudinary fails
         if (req.file && req.file.path) await fs.remove(req.file.path);
-        
         console.error('Cover upload error:', err.message);
         res.status(500).json({ error: 'Cover upload failed' });
     }
@@ -156,17 +149,24 @@ router.get('/my', protect, async (req, res) => {
 
 router.get('/:id', async (req, res) => {
     try {
+        // FIX: validate ObjectId before querying to avoid CastError 500s
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(404).json({ error: 'Novel not found' });
+        }
+
         const novel = await Novel.findById(req.params.id)
             .populate('author', 'name username avatar bio')
             .populate('auvie', 'status coinPrice duration plays');
 
-        if (!novel || novel.status === 'suspended') return res.status(404).json({ error: 'Novel not found' });
+        if (!novel || novel.status === 'suspended') {
+            return res.status(404).json({ error: 'Novel not found' });
+        }
 
         await Novel.findByIdAndUpdate(req.params.id, { $inc: { views: 1 } });
 
         const userId = req.user?._id;
         const user = userId ? await User.findById(userId).select('unlockedNovels') : null;
-        const hasUnlocked = user?.unlockedNovels?.map(id => id.toString()).includes(novel._id.toString()) || false;
+        const hasUnlocked = user?.unlockedNovels?.some(id => id.toString() === novel._id.toString()) || false;
 
         const formattedNovel = formatNovelFeed(novel, userId);
         formattedNovel.chapters = novel.chapters.map((ch, i) =>
@@ -175,16 +175,24 @@ router.get('/:id', async (req, res) => {
 
         res.json(formattedNovel);
     } catch (err) {
+        console.error('Fetch novel error:', err.message);
         res.status(500).json({ error: 'Failed to fetch novel' });
     }
 });
 
 router.get('/:id/chapters/:chapterId', async (req, res) => {
     try {
+        // FIX: validate ObjectId
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(404).json({ error: 'Novel not found' });
+        }
+
         const novel = await Novel.findById(req.params.id);
         if (!novel) return res.status(404).json({ error: 'Novel not found' });
 
-        const chapterIndex = novel.chapters.findIndex(ch => ch._id.toString() === req.params.chapterId);
+        const chapterIndex = novel.chapters.findIndex(
+            ch => ch._id.toString() === req.params.chapterId
+        );
         if (chapterIndex === -1) return res.status(404).json({ error: 'Chapter not found' });
 
         const isFree = chapterIndex < novel.freeChapterCount;
@@ -193,7 +201,9 @@ router.get('/:id/chapters/:chapterId', async (req, res) => {
             if (!req.user) return res.status(401).json({ error: 'Login required' });
 
             const user = await User.findById(req.user._id).select('unlockedNovels');
-            const hasUnlocked = user.unlockedNovels.map(id => id.toString()).includes(novel._id.toString());
+            const hasUnlocked = user.unlockedNovels.some(
+                id => id.toString() === novel._id.toString()
+            );
             if (!hasUnlocked) {
                 return res.status(403).json({
                     error: 'Chapter locked',
@@ -206,6 +216,7 @@ router.get('/:id/chapters/:chapterId', async (req, res) => {
         const chapter = novel.chapters[chapterIndex];
         res.json(formatChapter(chapter, chapterIndex, novel.freeChapterCount, true));
     } catch (err) {
+        console.error('Fetch chapter error:', err.message);
         res.status(500).json({ error: 'Failed to fetch chapter' });
     }
 });
@@ -214,16 +225,26 @@ router.get('/:id/chapters/:chapterId', async (req, res) => {
 
 router.post('/:id/unlock', protect, async (req, res) => {
     try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(404).json({ error: 'Novel not found' });
+        }
+
         const novel = await Novel.findById(req.params.id);
         if (!novel) return res.status(404).json({ error: 'Novel not found' });
 
         const user = await User.findById(req.user._id);
 
-        if (user.unlockedNovels.map(id => id.toString()).includes(novel._id.toString()))
+        if (user.unlockedNovels.some(id => id.toString() === novel._id.toString())) {
             return res.status(400).json({ error: 'Already unlocked' });
+        }
 
-        if (user.coins < novel.unlockPrice)
-            return res.status(400).json({ error: 'Insufficient coins', required: novel.unlockPrice, current: user.coins });
+        if (user.coins < novel.unlockPrice) {
+            return res.status(400).json({
+                error: 'Insufficient coins',
+                required: novel.unlockPrice,
+                current: user.coins
+            });
+        }
 
         const commission = Math.floor(novel.unlockPrice * 0.2);
         const authorEarning = novel.unlockPrice - commission;
@@ -257,6 +278,7 @@ router.post('/:id/unlock', protect, async (req, res) => {
 
         res.json({ message: 'Novel unlocked successfully', coinsRemaining: user.coins });
     } catch (err) {
+        console.error('Unlock error:', err.message);
         res.status(500).json({ error: 'Failed to unlock novel' });
     }
 });
@@ -265,14 +287,21 @@ router.post('/:id/unlock', protect, async (req, res) => {
 
 router.post('/:id/like', protect, async (req, res) => {
     try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(404).json({ error: 'Novel not found' });
+        }
+
         const novel = await Novel.findById(req.params.id);
         if (!novel) return res.status(404).json({ error: 'Novel not found' });
 
         const userId = req.user._id;
-        const alreadyLiked = novel.likes.map(id => id.toString()).includes(userId.toString());
+        const alreadyLiked = novel.likes.some(id => id.toString() === userId.toString());
 
-        if (alreadyLiked) novel.likes = novel.likes.filter(id => id.toString() !== userId.toString());
-        else novel.likes.push(userId);
+        if (alreadyLiked) {
+            novel.likes = novel.likes.filter(id => id.toString() !== userId.toString());
+        } else {
+            novel.likes.push(userId);
+        }
 
         await novel.save();
         res.json({ liked: !alreadyLiked, likeCount: novel.likes.length });
@@ -286,9 +315,15 @@ router.post('/:id/like', protect, async (req, res) => {
 router.post('/', protect, async (req, res) => {
     try {
         const { title, description, cover, genre, tags, freeChapterCount, unlockPrice } = req.body;
-        if (!title) return res.status(400).json({ error: 'Title is required' });
 
+        if (!title || !title.trim()) {
+            return res.status(400).json({ error: 'Title is required' });
+        }
+
+        // FIX: update role to 'both' if user is already a writer, not just override to 'writer'
         const user = await User.findById(req.user._id);
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
         if (user.role === 'reader') {
             user.role = 'writer';
             await user.save();
@@ -296,28 +331,36 @@ router.post('/', protect, async (req, res) => {
 
         const novel = await Novel.create({
             author: req.user._id,
-            title,
-            description: description || "",
+            title: title.trim(),
+            description: description?.trim() || "",
             cover: cover || "",
             genre: genre || 'Other',
             tags: tags || [],
             freeChapterCount: freeChapterCount ?? 3,
             unlockPrice: unlockPrice ?? 50,
+            // FIX: status defaults to 'draft' in schema — explicitly set for clarity
+            status: 'draft',
         });
 
         res.status(201).json(novel);
     } catch (err) {
-        res.status(500).json({ error: 'Failed to create novel' });
+        // FIX: log the actual error so you can see it in server logs
+        console.error('Create novel error:', err.message);
+        res.status(500).json({ error: 'Failed to create novel', detail: err.message });
     }
 });
 
 router.put('/:id', protect, async (req, res) => {
     try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(404).json({ error: 'Novel not found' });
+        }
+
         const novel = await Novel.findOne({ _id: req.params.id, author: req.user._id });
         if (!novel) return res.status(404).json({ error: 'Novel not found' });
 
         const { title, description, cover, genre, tags, freeChapterCount, unlockPrice } = req.body;
-        if (title) novel.title = title;
+        if (title) novel.title = title.trim();
         if (description !== undefined) novel.description = description;
         if (cover) novel.cover = cover;
         if (genre) novel.genre = genre;
@@ -328,26 +371,39 @@ router.put('/:id', protect, async (req, res) => {
         await novel.save();
         res.json(novel);
     } catch (err) {
+        console.error('Update novel error:', err.message);
         res.status(500).json({ error: 'Failed to update novel' });
     }
 });
 
 router.post('/:id/publish', protect, async (req, res) => {
     try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(404).json({ error: 'Novel not found' });
+        }
+
         const novel = await Novel.findOne({ _id: req.params.id, author: req.user._id });
         if (!novel) return res.status(404).json({ error: 'Novel not found' });
-        if (novel.chapters.length === 0) return res.status(400).json({ error: 'Add at least one chapter before publishing' });
+
+        if (novel.chapters.length === 0) {
+            return res.status(400).json({ error: 'Add at least one chapter before publishing' });
+        }
 
         novel.status = 'published';
         await novel.save();
         res.json({ message: 'Novel published', novel });
     } catch (err) {
+        console.error('Publish error:', err.message);
         res.status(500).json({ error: 'Failed to publish novel' });
     }
 });
 
 router.delete('/:id', protect, async (req, res) => {
     try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(404).json({ error: 'Novel not found' });
+        }
+
         const novel = await Novel.findOneAndDelete({ _id: req.params.id, author: req.user._id });
         if (!novel) return res.status(404).json({ error: 'Novel not found' });
         res.json({ message: 'Novel deleted' });
@@ -360,16 +416,23 @@ router.delete('/:id', protect, async (req, res) => {
 
 router.post('/:id/chapters', protect, async (req, res) => {
     try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(404).json({ error: 'Novel not found' });
+        }
+
         const novel = await Novel.findOne({ _id: req.params.id, author: req.user._id });
         if (!novel) return res.status(404).json({ error: 'Novel not found' });
 
         const { title, content } = req.body;
-        if (!title || !content) return res.status(400).json({ error: 'Title and content required' });
+        if (!title || !content) {
+            return res.status(400).json({ error: 'Title and content required' });
+        }
 
-        const wordCount = content.trim().split(/\s+/).length;
+        // FIX: guard against empty/whitespace-only content crashing wordCount
+        const wordCount = content.trim() ? content.trim().split(/\s+/).length : 0;
         const order = novel.chapters.length + 1;
 
-        novel.chapters.push({ title, content, order, wordCount });
+        novel.chapters.push({ title: title.trim(), content, order, wordCount });
         novel.totalChapters = novel.chapters.length;
         await novel.save();
 
@@ -379,12 +442,17 @@ router.post('/:id/chapters', protect, async (req, res) => {
             totalChapters: novel.totalChapters,
         });
     } catch (err) {
-        res.status(500).json({ error: 'Failed to add chapter' });
+        console.error('Add chapter error:', err.message);
+        res.status(500).json({ error: 'Failed to add chapter', detail: err.message });
     }
 });
 
 router.put('/:id/chapters/:chapterId', protect, async (req, res) => {
     try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(404).json({ error: 'Novel not found' });
+        }
+
         const novel = await Novel.findOne({ _id: req.params.id, author: req.user._id });
         if (!novel) return res.status(404).json({ error: 'Novel not found' });
 
@@ -392,25 +460,32 @@ router.put('/:id/chapters/:chapterId', protect, async (req, res) => {
         if (!chapter) return res.status(404).json({ error: 'Chapter not found' });
 
         const { title, content } = req.body;
-        if (title) chapter.title = title;
+        if (title) chapter.title = title.trim();
         if (content) {
             chapter.content = content;
-            chapter.wordCount = content.trim().split(/\s+/).length;
+            chapter.wordCount = content.trim() ? content.trim().split(/\s+/).length : 0;
         }
 
         await novel.save();
         res.json({ message: 'Chapter updated', chapter });
     } catch (err) {
+        console.error('Update chapter error:', err.message);
         res.status(500).json({ error: 'Failed to update chapter' });
     }
 });
 
 router.delete('/:id/chapters/:chapterId', protect, async (req, res) => {
     try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+            return res.status(404).json({ error: 'Novel not found' });
+        }
+
         const novel = await Novel.findOne({ _id: req.params.id, author: req.user._id });
         if (!novel) return res.status(404).json({ error: 'Novel not found' });
 
-        novel.chapters = novel.chapters.filter(ch => ch._id.toString() !== req.params.chapterId);
+        novel.chapters = novel.chapters.filter(
+            ch => ch._id.toString() !== req.params.chapterId
+        );
         novel.totalChapters = novel.chapters.length;
         await novel.save();
 
