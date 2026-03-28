@@ -16,13 +16,25 @@ const coverUpload = multer({
     dest: 'temp/covers/',
     limits: { fileSize: 5 * 1024 * 1024 }, // 5MB max
     fileFilter: (req, file, cb) => {
-        const allowed = ['image/jpeg', 'image/png', 'image/webp'];
-        if (allowed.includes(file.mimetype)) cb(null, true);
-        else cb(new Error('Only JPEG, PNG or WebP images allowed'), false);
+        // Expanded list to handle common variations of image mimetypes
+        const allowed = [
+            'image/jpeg', 
+            'image/jpg', 
+            'image/png', 
+            'image/x-png', 
+            'image/webp'
+        ];
+
+        if (allowed.includes(file.mimetype)) {
+            cb(null, true);
+        } else {
+            // Passing an error here triggers the error handler in the route
+            cb(new Error('Only JPEG, PNG or WebP images allowed'), false);
+        }
     }
 });
 
-/* ── HELPERS ─────────────────────────────────────────────────────────── */
+/* ── HELPERS ────────────────────────────────────────────────────────── */
 
 const formatNovelFeed = (novel, userId) => ({
     _id: novel._id,
@@ -58,7 +70,20 @@ const formatChapter = (chapter, index, freeCount, hasUnlocked) => ({
 
 /* ── UPLOAD ROUTE ───────────────────────────────────────────────────── */
 
-router.post('/upload-cover', protect, coverUpload.single('cover'), async (req, res) => {
+router.post('/upload-cover', protect, (req, res, next) => {
+    // Manually calling the multer middleware to catch errors before they crash the app
+    coverUpload.single('cover')(req, res, (err) => {
+        if (err instanceof multer.MulterError) {
+            // Handles Multer-specific errors (like file size limit)
+            return res.status(400).json({ error: `Upload error: ${err.message}` });
+        } else if (err) {
+            // Handles our custom "Only JPEG..." error from fileFilter
+            return res.status(400).json({ error: err.message });
+        }
+        // If no error, proceed to the async logic
+        next();
+    });
+}, async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: 'No image provided' });
 
@@ -74,6 +99,9 @@ router.post('/upload-cover', protect, coverUpload.single('cover'), async (req, r
         await fs.remove(req.file.path); // cleanup temp file
         res.json({ url: result.secure_url });
     } catch (err) {
+        // Cleanup file if it exists and Cloudinary fails
+        if (req.file && req.file.path) await fs.remove(req.file.path);
+        
         console.error('Cover upload error:', err.message);
         res.status(500).json({ error: 'Cover upload failed' });
     }
@@ -137,11 +165,8 @@ router.get('/:id', async (req, res) => {
         await Novel.findByIdAndUpdate(req.params.id, { $inc: { views: 1 } });
 
         const userId = req.user?._id;
-        const hasUnlocked = userId
-            ? (await User.findById(userId).select('unlockedNovels'))
-                ?.unlockedNovels?.map(id => id.toString())
-                .includes(novel._id.toString())
-            : false;
+        const user = userId ? await User.findById(userId).select('unlockedNovels') : null;
+        const hasUnlocked = user?.unlockedNovels?.map(id => id.toString()).includes(novel._id.toString()) || false;
 
         const formattedNovel = formatNovelFeed(novel, userId);
         formattedNovel.chapters = novel.chapters.map((ch, i) =>
