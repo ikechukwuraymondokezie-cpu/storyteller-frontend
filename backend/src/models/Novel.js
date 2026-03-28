@@ -48,11 +48,10 @@ const novelSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 // Auto-update totalChapters before saving
-novelSchema.pre('save', function (next) {
+novelSchema.pre('save', async function () {
     if (this.chapters) {
         this.totalChapters = this.chapters.length;
     }
-    next();
 });
 
 // Indexes
