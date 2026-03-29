@@ -20,8 +20,8 @@ router.get('/profile', protect, async (req, res) => {
     }
 
     // Count published novels & snippets
-    const publishedNovels = await Novel.countDocuments({ author: userId, published: true });
-    const publishedSnippets = await Snippet.countDocuments({ author: userId, published: true });
+    const publishedNovels = await Novel.countDocuments({ author: userId, status: 'published' });
+    const publishedSnippets = await Snippet.countDocuments({ author: userId, status: 'published' });
 
     // Send user info + isWriter flag
     res.json({
