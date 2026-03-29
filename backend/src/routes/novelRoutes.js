@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 const fs = require('fs-extra');
+const path = require('path'); // FIX: needed for extension-based mimetype fallback
 const Novel = require('../models/Novel');
 const User = require('../models/User');
 const CoinTransaction = require('../models/CoinTransaction');
@@ -15,14 +16,19 @@ const coverUpload = multer({
     dest: 'temp/covers/',
     limits: { fileSize: 5 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
-        const allowed = [
+        const allowedMimes = [
             'image/jpeg',
             'image/jpg',
             'image/png',
             'image/x-png',
-            'image/webp'
+            'image/webp',
+            'application/octet-stream', // FIX: Android (especially Samsung) often sends this
         ];
-        if (allowed.includes(file.mimetype)) {
+        // FIX: also accept by file extension as fallback for devices with wrong mimetypes
+        const allowedExts = ['.jpg', '.jpeg', '.png', '.webp'];
+        const ext = path.extname(file.originalname).toLowerCase();
+
+        if (allowedMimes.includes(file.mimetype) || allowedExts.includes(ext)) {
             cb(null, true);
         } else {
             cb(new Error('Only JPEG, PNG or WebP images allowed'), false);
@@ -48,7 +54,6 @@ const formatNovelFeed = (novel, userId) => ({
     auvie: novel.auvie,
     views: novel.views,
     likeCount: novel.likes.length,
-    // FIX: safer toString comparison — avoids crash if likes contains non-ObjectId values
     isLiked: userId
         ? novel.likes.some(id => id.toString() === userId.toString())
         : false,
@@ -118,6 +123,7 @@ router.get('/', async (req, res) => {
         const userId = req.user?._id;
         res.json(novels.map(n => formatNovelFeed(n, userId)));
     } catch (err) {
+        console.error('Fetch novels error:', err.message);
         res.status(500).json({ error: 'Failed to fetch novels' });
     }
 });
@@ -149,7 +155,6 @@ router.get('/my', protect, async (req, res) => {
 
 router.get('/:id', async (req, res) => {
     try {
-        // FIX: validate ObjectId before querying to avoid CastError 500s
         if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
             return res.status(404).json({ error: 'Novel not found' });
         }
@@ -182,7 +187,6 @@ router.get('/:id', async (req, res) => {
 
 router.get('/:id/chapters/:chapterId', async (req, res) => {
     try {
-        // FIX: validate ObjectId
         if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
             return res.status(404).json({ error: 'Novel not found' });
         }
@@ -320,7 +324,6 @@ router.post('/', protect, async (req, res) => {
             return res.status(400).json({ error: 'Title is required' });
         }
 
-        // FIX: update role to 'both' if user is already a writer, not just override to 'writer'
         const user = await User.findById(req.user._id);
         if (!user) return res.status(404).json({ error: 'User not found' });
 
@@ -338,13 +341,11 @@ router.post('/', protect, async (req, res) => {
             tags: tags || [],
             freeChapterCount: freeChapterCount ?? 3,
             unlockPrice: unlockPrice ?? 50,
-            // FIX: status defaults to 'draft' in schema — explicitly set for clarity
             status: 'draft',
         });
 
         res.status(201).json(novel);
     } catch (err) {
-        // FIX: log the actual error so you can see it in server logs
         console.error('Create novel error:', err.message);
         res.status(500).json({ error: 'Failed to create novel', detail: err.message });
     }
@@ -428,7 +429,6 @@ router.post('/:id/chapters', protect, async (req, res) => {
             return res.status(400).json({ error: 'Title and content required' });
         }
 
-        // FIX: guard against empty/whitespace-only content crashing wordCount
         const wordCount = content.trim() ? content.trim().split(/\s+/).length : 0;
         const order = novel.chapters.length + 1;
 
