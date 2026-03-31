@@ -91,8 +91,10 @@ router.post('/upload-cover', protect, (req, res, next) => {
             folder: 'novel_covers',
             resource_type: 'image',
             transformation: [
-                { width: 600, height: 900, crop: 'fill', gravity: 'auto' },
-                { quality: 'auto', fetch_format: 'auto' }
+                // Increase to at least 1080x1620 for "Retina" quality on full screens
+                { width: 1080, height: 1620, crop: 'fill', gravity: 'auto' },
+                // Force high quality (80-90 is the sweet spot for mobile)
+                { quality: '90', fetch_format: 'auto' }
             ]
         });
 
