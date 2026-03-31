@@ -316,7 +316,14 @@ router.get("/folders", protect, async (req, res) => {
 
 router.post("/folders", protect, async (req, res) => {
     try {
-        const folder = await Folder.create({ name: req.body.name, user: req.user._id });
+        // Check if this specific user already has a folder with this name
+        const exists = await Folder.findOne({ name: req.body.name, user: req.user._id });
+        if (exists) return res.status(400).json({ error: "Folder already exists" });
+
+        const folder = await Folder.create({
+            name: req.body.name,
+            user: req.user._id
+        });
         res.status(201).json(folder);
     } catch {
         res.status(400).json({ error: "Folder creation failed" });
@@ -359,7 +366,7 @@ router.get("/:id/load-pages", protect, async (req, res) => {
         const book = await Book.findOneAndUpdate(
             {
                 _id: req.params.id,
-                user: req.user._id,
+                user: req.user._id, // Ownership check
                 status: { $nin: ['processing_pages', 'completed'] }
             },
             { status: 'processing_pages' },
@@ -422,13 +429,18 @@ router.get("/:id/load-pages", protect, async (req, res) => {
             a.findIndex(t => t.text === v.text && t.page === v.page) === i
         );
 
-        const updatedBook = await Book.findByIdAndUpdate(req.params.id, {
-            content: updatedContent,
-            processedPages: endPage,
-            status: endPage >= book.totalPages ? 'completed' : 'processing',
-            words: actualWordCount,
-            toc: mergedTOC
-        }, { new: true });
+        // SECURE UPDATE: Ensure we only save if the book belongs to the user
+        const updatedBook = await Book.findOneAndUpdate(
+            { _id: req.params.id, user: req.user._id },
+            {
+                content: updatedContent,
+                processedPages: endPage,
+                status: endPage >= book.totalPages ? 'completed' : 'processing',
+                words: actualWordCount,
+                toc: mergedTOC
+            },
+            { new: true }
+        );
 
         if (updatedBook.status === 'completed' && await fs.pathExists(tempPath)) {
             await fs.remove(tempPath);
@@ -444,7 +456,8 @@ router.get("/:id/load-pages", protect, async (req, res) => {
 
     } catch (err) {
         console.error("load-pages error:", err.message);
-        await Book.findByIdAndUpdate(req.params.id, { status: 'processing' });
+        // SECURE RESET: Ensure we only update the status if the book belongs to the user
+        await Book.findOneAndUpdate({ _id: req.params.id, user: req.user._id }, { status: 'processing' });
         if (tempPath && await fs.pathExists(tempPath)) await fs.remove(tempPath);
         res.status(500).json({ error: "Lazy load failed" });
     }
@@ -534,6 +547,25 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
 
     } catch (err) {
         res.status(500).json({ error: "Upload failed" });
+    }
+});
+
+// --- INSERT BULK DELETE HERE ---
+router.post("/bulk-delete", protect, async (req, res) => {
+    try {
+        const { ids } = req.body;
+        const booksToDelete = await Book.find({ _id: { $in: ids }, user: req.user._id });
+
+        for (const book of booksToDelete) {
+            if (book.pdfPath?.includes("cloudinary")) {
+                const pId = getCloudinaryPublicId(book.pdfPath);
+                if (pId) await cloudinary.uploader.destroy(pId, { resource_type: 'raw' });
+            }
+        }
+        await Book.deleteMany({ _id: { $in: booksToDelete.map(b => b._id) } });
+        res.json({ message: "Books deleted successfully" });
+    } catch (err) {
+        res.status(500).json({ error: "Bulk delete failed" });
     }
 });
 
