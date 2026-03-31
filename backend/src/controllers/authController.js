@@ -13,18 +13,39 @@ const generateToken = (id) => {
  * @route   POST /api/auth/register
  */
 const registerUser = async (req, res) => {
-    const { name, email, password } = req.body;
+    const { name, email, password, username } = req.body; // Added username
+    
     try {
-        const userExists = await User.findOne({ email });
-        if (userExists) {
-            return res.status(400).json({ message: 'User already exists' });
+        // 1. Check if email exists
+        const emailExists = await User.findOne({ email });
+        if (emailExists) {
+            return res.status(400).json({ message: 'Email already registered' });
         }
 
-        const user = await User.create({ name, email, password });
+        // 2. Check if username exists (if provided)
+        if (username) {
+            const usernameExists = await User.findOne({ username });
+            if (usernameExists) {
+                return res.status(400).json({ message: 'Username is already taken' });
+            }
+        }
+
+        // 3. Create user
+        const user = await User.create({ 
+            name, 
+            email, 
+            password, 
+            username: username || null // Fallback to null for sparse index
+        });
 
         res.status(201).json({
             token: generateToken(user._id),
-            user: { id: user._id, name: user.name, email: user.email }
+            user: { 
+                id: user._id, 
+                name: user.name, 
+                email: user.email,
+                username: user.username // Send back to Flutter
+            }
         });
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -38,13 +59,19 @@ const registerUser = async (req, res) => {
 const loginUser = async (req, res) => {
     const { email, password } = req.body;
     try {
-        const user = await User.findOne({ email });
+        // We use .select('+password') because the Schema now hides it by default
+        const user = await User.findOne({ email }).select('+password');
 
         // Ensure user exists and password matches
         if (user && (await user.comparePassword(password))) {
             res.json({
                 token: generateToken(user._id),
-                user: { id: user._id, name: user.name, email: user.email }
+                user: { 
+                    id: user._id, 
+                    name: user.name, 
+                    email: user.email,
+                    username: user.username // Send back to Flutter
+                }
             });
         } else {
             res.status(401).json({ message: 'Invalid email or password' });
@@ -54,7 +81,6 @@ const loginUser = async (req, res) => {
     }
 };
 
-// Explicitly export the functions as an object
 module.exports = {
     registerUser,
     loginUser

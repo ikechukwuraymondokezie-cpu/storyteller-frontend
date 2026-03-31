@@ -3,15 +3,14 @@ const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
 
 // Import your models
-const User = require('../models/User');
-const Novel = require('../models/Novel');
-const Snippet = require('../models/Snippet');
+const User = require('../models/User');        // User schema
+const Novel = require('../models/Novel');      // Novel schema
+const Snippet = require('../models/Snippet');  // Snippet schema
 
 // Protected route to get user profile with isWriter
 router.get('/profile', protect, async (req, res) => {
   try {
-    // ✅ FIX IS HERE
-    const userId = req.user._id;
+    const userId = req.user.id;
 
     // Fetch basic user info
     const user = await User.findById(userId).select('name email coins');
@@ -21,15 +20,8 @@ router.get('/profile', protect, async (req, res) => {
     }
 
     // Count published novels & snippets
-    const publishedNovels = await Novel.countDocuments({
-      author: userId,
-      status: 'published'
-    });
-
-    const publishedSnippets = await Snippet.countDocuments({
-      author: userId,
-      status: 'published'
-    });
+    const publishedNovels = await Novel.countDocuments({ author: userId, status: 'published' });
+    const publishedSnippets = await Snippet.countDocuments({ author: userId, status: 'published' });
 
     // Send user info + isWriter flag
     res.json({
