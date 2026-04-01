@@ -24,8 +24,7 @@ const tmpDir = path.join(__dirname, '../../temp/auvie');
 fs.ensureDirSync(tmpDir);
 
 /* ── SOUND LIBRARY ───────────────────────────────────────────────────── */
-// Maps hashtag names to Cloudinary audio URLs.
-// Replace placeholder values with real URLs once sound files are uploaded.
+
 const SOUND_LIBRARY = {
     gunshot: process.env.SFX_GUNSHOT || '__placeholder__',
     explosion: process.env.SFX_EXPLOSION || '__placeholder__',
@@ -33,7 +32,7 @@ const SOUND_LIBRARY = {
     thunder: process.env.SFX_THUNDER || '__placeholder__',
     footsteps: process.env.SFX_FOOTSTEPS || '__placeholder__',
     footsteps_start: process.env.SFX_FOOTSTEPS || '__placeholder__',
-    footsteps_stop: null, // stop tag — no audio, just ends the loop
+    footsteps_stop: null,
     door_creak: process.env.SFX_DOOR_CREAK || '__placeholder__',
     crowd: process.env.SFX_CROWD || '__placeholder__',
     heartbeat: process.env.SFX_HEARTBEAT || '__placeholder__',
@@ -52,75 +51,87 @@ const SOUND_LIBRARY = {
 
 /* ── HASHTAG PARSER ──────────────────────────────────────────────────── */
 
-/**
- * Parses novel content with #hashtag sound cues into ordered segments.
- *
- * Supported patterns:
- *   #gunshot  → one-shot: plays once, TTS pauses then resumes
- *   #footsteps_start ... #footsteps_stop → loop: plays underneath TTS
- *   #rain ... #rain → same tag twice = loop start/stop shorthand
- *
- * Returns array of segments:
- *   { type: 'text',     value: '...', order: N }
- *   { type: 'oneshot',  value: 'gunshot', order: N }
- *   { type: 'loop_start', value: 'footsteps', order: N }
- *   { type: 'loop_stop',  value: 'footsteps', order: N }
- */
 function parseHashtags(content) {
-    // Match #word or #word_word patterns
     const tagPattern = /#([a-z][a-z0-9_]*)/gi;
     const parts = content.split(tagPattern);
     const segments = [];
     let order = 0;
 
-    // Track which tags have been seen once (for same-tag loop shorthand)
     const seenTags = new Set();
-    // Track active _start tags (for _start/_stop pattern)
     const activeLoops = new Set();
 
     for (let i = 0; i < parts.length; i++) {
         const part = parts[i];
         if (!part || !part.trim()) continue;
 
-        // Odd indices are captured tag names from the split
         if (i % 2 === 1) {
             const tag = part.toLowerCase();
 
-            // Handle _stop suffix
             if (tag.endsWith('_stop')) {
                 const baseName = tag.replace('_stop', '');
-                segments.push({ type: 'loop_stop', value: baseName, order: order++, audioUrl: null });
+                segments.push({
+                    type: 'loop_stop',
+                    value: baseName,
+                    order: order++,
+                    audioUrl: null,
+                    volume: 1.0,   // FIX: default volume added to all segments
+                    delay: 0,      // FIX: default delay (ms) added to all segments
+                });
                 activeLoops.delete(baseName);
                 continue;
             }
 
-            // Handle _start suffix
             if (tag.endsWith('_start')) {
                 const baseName = tag.replace('_start', '');
-                segments.push({ type: 'loop_start', value: baseName, order: order++, audioUrl: SOUND_LIBRARY[baseName] || null });
+                segments.push({
+                    type: 'loop_start',
+                    value: baseName,
+                    order: order++,
+                    audioUrl: SOUND_LIBRARY[baseName] || null,
+                    volume: 1.0,
+                    delay: 0,
+                });
                 activeLoops.add(baseName);
                 continue;
             }
 
-            // Known sound — check if it's a loop shorthand (same tag seen twice)
             if (SOUND_LIBRARY.hasOwnProperty(tag)) {
                 if (seenTags.has(tag)) {
-                    // Second occurrence = loop stop
-                    segments.push({ type: 'loop_stop', value: tag, order: order++, audioUrl: null });
+                    segments.push({
+                        type: 'loop_stop',
+                        value: tag,
+                        order: order++,
+                        audioUrl: null,
+                        volume: 1.0,
+                        delay: 0,
+                    });
                     seenTags.delete(tag);
                 } else {
-                    // First occurrence — could be oneshot or loop_start
-                    // We treat it as oneshot until we see it again
-                    segments.push({ type: 'oneshot', value: tag, order: order++, audioUrl: SOUND_LIBRARY[tag] || null });
+                    segments.push({
+                        type: 'oneshot',
+                        value: tag,
+                        order: order++,
+                        audioUrl: SOUND_LIBRARY[tag] || null,
+                        volume: 1.0,
+                        delay: 0,
+                    });
                     seenTags.add(tag);
                 }
             }
-            // Unknown tags are silently ignored
         } else {
-            // Text segment — strip any remaining stray hashtags from TTS text
-            const cleanText = part.replace(/#[a-z][a-z0-9_]*/gi, '').replace(/\s{2,}/g, ' ').trim();
+            const cleanText = part
+                .replace(/#[a-z][a-z0-9_]*/gi, '')
+                .replace(/\s{2,}/g, ' ')
+                .trim();
             if (cleanText.length > 0) {
-                segments.push({ type: 'text', value: cleanText, order: order++, audioUrl: null });
+                segments.push({
+                    type: 'text',
+                    value: cleanText,
+                    order: order++,
+                    audioUrl: null,
+                    volume: 1.0,
+                    delay: 0,
+                });
             }
         }
     }
@@ -128,10 +139,6 @@ function parseHashtags(content) {
     return segments;
 }
 
-/**
- * Strips all #hashtags from text — used to clean chapter content
- * before sending to ElevenLabs so the AI doesn't read them aloud.
- */
 function stripHashtags(text) {
     return text.replace(/#[a-z][a-z0-9_]*/gi, '').replace(/\s{2,}/g, ' ').trim();
 }
@@ -178,13 +185,14 @@ async function uploadToCloudinary(filePath, publicId) {
 
 /* ── ROUTES ──────────────────────────────────────────────────────────── */
 
-// GET /api/f3/auvies/sounds — returns available sound cue names for writer autocomplete
+// GET /api/f3/auvies/sounds
 router.get('/sounds', (req, res) => {
     const sounds = Object.keys(SOUND_LIBRARY).filter(k => !k.endsWith('_stop'));
     res.json(sounds);
 });
 
 // GET /api/f3/auvies/:id — get auvie details
+// FIX: author now receives full segments without needing to purchase
 router.get('/:id', protect, async (req, res) => {
     try {
         const auvie = await Auvie.findById(req.params.id)
@@ -192,9 +200,14 @@ router.get('/:id', protect, async (req, res) => {
             .populate('author', 'name username avatar');
         if (!auvie) return res.status(404).json({ error: 'Auvie not found' });
 
+        const userId = req.user._id.toString();
+        const isAuthor = auvie.author._id.toString() === userId;
         const hasPurchased = auvie.purchasedBy
             .map(id => id.toString())
-            .includes(req.user._id.toString());
+            .includes(userId);
+
+        // Author always gets full segments — they need them to edit volumes/delays
+        const canAccessFull = isAuthor || hasPurchased;
 
         res.json({
             _id: auvie._id,
@@ -204,12 +217,15 @@ router.get('/:id', protect, async (req, res) => {
             duration: auvie.duration,
             coinPrice: auvie.coinPrice,
             plays: auvie.plays,
+            isAuthor,
             hasPurchased,
-            audioUrl: hasPurchased ? auvie.audioUrl : null,
-            segments: hasPurchased ? auvie.segments : null,
+            audioUrl: canAccessFull ? auvie.audioUrl : null,
+            // FIX: segments returned to author for editing, and to purchasers for playback
+            segments: canAccessFull ? auvie.segments : null,
             createdAt: auvie.createdAt,
         });
     } catch (err) {
+        console.error('Fetch auvie error:', err.message);
         res.status(500).json({ error: 'Failed to fetch auvie' });
     }
 });
@@ -222,6 +238,67 @@ router.get('/:id/status', protect, async (req, res) => {
         res.json({ status: auvie.status, errorMessage: auvie.errorMessage });
     } catch (err) {
         res.status(500).json({ error: 'Failed to fetch status' });
+    }
+});
+
+// PUT /api/f3/auvies/:id/segments — author saves volume/delay edits
+// Body: { segments: [{ order: 0, volume: 0.4, delay: 200 }, ...] }
+// Only updates volume and delay — never overwrites type, value, audioUrl
+router.put('/:id/segments', protect, async (req, res) => {
+    try {
+        const auvie = await Auvie.findById(req.params.id);
+        if (!auvie) return res.status(404).json({ error: 'Auvie not found' });
+
+        // Only the author can edit segments
+        if (auvie.author.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ error: 'Not authorised to edit this Auvie' });
+        }
+
+        if (auvie.status !== 'ready') {
+            return res.status(400).json({ error: 'Auvie must be ready before editing segments' });
+        }
+
+        const { segments: edits } = req.body;
+        if (!Array.isArray(edits)) {
+            return res.status(400).json({ error: 'segments must be an array' });
+        }
+
+        // Build a lookup map of edits by order index for O(1) access
+        const editMap = {};
+        for (const edit of edits) {
+            if (typeof edit.order === 'number') {
+                editMap[edit.order] = edit;
+            }
+        }
+
+        // Apply only volume and delay — all other fields are immutable
+        const updatedSegments = auvie.segments.map(seg => {
+            const edit = editMap[seg.order];
+            if (!edit) return seg;
+
+            return {
+                ...seg.toObject(),
+                // Clamp volume between 0.0 and 1.0
+                volume: typeof edit.volume === 'number'
+                    ? Math.min(1.0, Math.max(0.0, edit.volume))
+                    : seg.volume,
+                // Clamp delay between 0ms and 10000ms
+                delay: typeof edit.delay === 'number'
+                    ? Math.min(10000, Math.max(0, Math.round(edit.delay)))
+                    : seg.delay,
+            };
+        });
+
+        auvie.segments = updatedSegments;
+        await auvie.save();
+
+        res.json({
+            message: 'Segments updated',
+            segments: auvie.segments,
+        });
+    } catch (err) {
+        console.error('Update segments error:', err.message);
+        res.status(500).json({ error: 'Failed to update segments' });
     }
 });
 
@@ -242,7 +319,6 @@ router.post('/generate/:novelId', protect, async (req, res) => {
             });
         }
 
-        // Deduct coins immediately
         user.coins -= AUVIE_GENERATION_COST;
         await user.save();
 
@@ -256,14 +332,13 @@ router.post('/generate/:novelId', protect, async (req, res) => {
             relatedNovel: novel._id,
         });
 
-        // Parse all chapters into segments
+        // Parse all chapters — segments now include volume: 1.0 and delay: 0 by default
         let allSegments = [];
         for (const chapter of novel.chapters) {
             const chapterSegments = parseHashtags(chapter.content);
             allSegments.push(...chapterSegments);
         }
 
-        // Create auvie record
         const auvie = await Auvie.create({
             novel: novel._id,
             author: req.user._id,
@@ -277,7 +352,6 @@ router.post('/generate/:novelId', protect, async (req, res) => {
         novel.auvie = auvie._id;
         await novel.save();
 
-        // Respond immediately — generation runs in background
         res.status(202).json({
             message: 'Auvie generation started',
             auvieId: auvie._id,
@@ -298,7 +372,10 @@ router.post('/generate/:novelId', protect, async (req, res) => {
                         try {
                             const audioPath = path.join(workDir, `seg_${seg.order}.mp3`);
                             await generateSpeech(seg.value, audioPath);
-                            const audioUrl = await uploadToCloudinary(audioPath, `auvie_${auvie._id}_seg_${seg.order}`);
+                            const audioUrl = await uploadToCloudinary(
+                                audioPath,
+                                `auvie_${auvie._id}_seg_${seg.order}`
+                            );
                             await fs.remove(audioPath);
                             processedSegments.push({ ...seg, audioUrl });
                         } catch (segErr) {
@@ -306,7 +383,6 @@ router.post('/generate/:novelId', protect, async (req, res) => {
                             processedSegments.push({ ...seg, audioUrl: null });
                         }
                     } else {
-                        // Sound cue — audio URL already set from SOUND_LIBRARY
                         processedSegments.push(seg);
                     }
                 }
@@ -325,8 +401,9 @@ router.post('/generate/:novelId', protect, async (req, res) => {
                     status: 'failed',
                     errorMessage: genErr.message,
                 });
-                // Refund coins on failure
-                await User.findByIdAndUpdate(req.user._id, { $inc: { coins: AUVIE_GENERATION_COST } });
+                await User.findByIdAndUpdate(req.user._id, {
+                    $inc: { coins: AUVIE_GENERATION_COST }
+                });
                 await CoinTransaction.create({
                     user: req.user._id,
                     type: 'generate_auvie',
@@ -406,6 +483,7 @@ router.post('/:id/purchase', protect, async (req, res) => {
             segments: auvie.segments,
         });
     } catch (err) {
+        console.error('Purchase auvie error:', err.message);
         res.status(500).json({ error: 'Failed to purchase auvie' });
     }
 });
