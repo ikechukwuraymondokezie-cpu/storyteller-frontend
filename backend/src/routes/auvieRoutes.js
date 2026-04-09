@@ -241,6 +241,34 @@ router.get('/:id/status', protect, async (req, res) => {
     }
 });
 
+// GET /api/f3/auvies/draft/:novelId — PREVIEW segments before generating
+router.get('/draft/:novelId', protect, async (req, res) => {
+    try {
+        const novel = await Novel.findOne({ _id: req.params.novelId, author: req.user._id });
+
+        if (!novel) {
+            return res.status(404).json({ error: 'Novel not found' });
+        }
+
+        // Parse all chapters to show the writer what will be generated
+        let allSegments = [];
+        for (const chapter of novel.chapters) {
+            const chapterSegments = parseHashtags(chapter.content);
+            allSegments.push(...chapterSegments);
+        }
+
+        // Return the data in the format your Flutter Workshop expects
+        res.json({
+            novelId: novel._id,
+            title: novel.title,
+            segments: allSegments,
+            totalCost: AUVIE_GENERATION_COST
+        });
+    } catch (err) {
+        console.error('Draft preview error:', err.message);
+        res.status(500).json({ error: 'Failed to generate preview' });
+    }
+});
 // PUT /api/f3/auvies/:id/segments — author saves volume/delay edits
 // Body: { segments: [{ order: 0, volume: 0.4, delay: 200 }, ...] }
 // Only updates volume and delay — never overwrites type, value, audioUrl
