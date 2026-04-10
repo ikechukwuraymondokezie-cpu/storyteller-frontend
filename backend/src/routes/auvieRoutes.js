@@ -97,16 +97,17 @@ function pickVariant(variants) {
 
 // Flat SOUND_LIBRARY for hashtag lookup — maps tag name → picked URL
 // Built dynamically so each call to parseHashtags gets fresh random picks
+// Replace lines 115 to 126 with this:
 function buildSoundLibrary() {
     const lib = {};
     for (const [key, variants] of Object.entries(SOUND_VARIANTS)) {
-        lib[key] = pickVariant(variants);
+        const picked = pickVariant(variants);
+        lib[key] = picked;
+
+        // Automatically enables loop hashtags for every sound key
+        lib[`${key}_start`] = picked;
+        lib[`${key}_stop`] = null;
     }
-    // Aliases — loop variants share the same key as their base
-    lib['rain_start'] = pickVariant(SOUND_VARIANTS.rain);
-    lib['rain_stop'] = null;
-    lib['thunder_start'] = pickVariant(SOUND_VARIANTS.thunder);
-    lib['thunder_stop'] = null;
     return lib;
 }
 
