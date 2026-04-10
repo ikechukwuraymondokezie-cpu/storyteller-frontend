@@ -24,34 +24,96 @@ const tmpDir = path.join(__dirname, '../../temp/auvie');
 fs.ensureDirSync(tmpDir);
 
 /* ── SOUND LIBRARY ───────────────────────────────────────────────────── */
+// All URLs are live Cloudinary uploads.
+// Multiple variants (rain001, rain002...) are randomly selected at parse time
+// so the same tag sounds slightly different each time it's used.
 
-const SOUND_LIBRARY = {
-    gunshot: process.env.SFX_GUNSHOT || '__placeholder__',
-    explosion: process.env.SFX_EXPLOSION || '__placeholder__',
-    rain: process.env.SFX_RAIN || '__placeholder__',
-    thunder: process.env.SFX_THUNDER || '__placeholder__',
-    footsteps: process.env.SFX_FOOTSTEPS || '__placeholder__',
-    footsteps_start: process.env.SFX_FOOTSTEPS || '__placeholder__',
-    footsteps_stop: null,
-    door_creak: process.env.SFX_DOOR_CREAK || '__placeholder__',
-    crowd: process.env.SFX_CROWD || '__placeholder__',
-    heartbeat: process.env.SFX_HEARTBEAT || '__placeholder__',
-    wind: process.env.SFX_WIND || '__placeholder__',
-    fire: process.env.SFX_FIRE || '__placeholder__',
-    car_engine: process.env.SFX_CAR_ENGINE || '__placeholder__',
-    phone_ring: process.env.SFX_PHONE_RING || '__placeholder__',
-    applause: process.env.SFX_APPLAUSE || '__placeholder__',
-    music_dramatic: process.env.SFX_MUSIC_DRAMATIC || '__placeholder__',
-    music_suspense: process.env.SFX_MUSIC_SUSPENSE || '__placeholder__',
-    crickets: process.env.SFX_CRICKETS || '__placeholder__',
-    water_splash: process.env.SFX_WATER_SPLASH || '__placeholder__',
-    sword_clash: process.env.SFX_SWORD_CLASH || '__placeholder__',
-    typing: process.env.SFX_TYPING || '__placeholder__',
+const SOUND_VARIANTS = {
+    // ── ACTION ────────────────────────────────────────────────────────
+    gunshot: [
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827783/sfx/action/gunshot001.wav',
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827781/sfx/action/canonshot001.wav',
+    ],
+    explosion: [
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827786/sfx/action/stoneimpact001.wav',
+    ],
+    sword_clash: [
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827784/sfx/action/industriallever001.wav',
+    ],
+    mechanism: [
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827785/sfx/action/mechanism001.wav',
+    ],
+
+    // ── ATMOSPHERE ────────────────────────────────────────────────────
+    rain: [
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827807/sfx/atmosphere/rain001.wav',
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827818/sfx/atmosphere/rain002.wav',
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827823/sfx/atmosphere/rain003.wav',
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827829/sfx/atmosphere/rain004.wav',
+    ],
+    thunder: [
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827835/sfx/atmosphere/thunder001.wav',
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827841/sfx/atmosphere/thunder002.wav',
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827848/sfx/atmosphere/thunder003.wav',
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827855/sfx/atmosphere/thunder004.wav',
+    ],
+    water_splash: [
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827857/sfx/atmosphere/waterimpact001.wav',
+    ],
+    wave: [
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827873/sfx/atmosphere/wave001.wav',
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827881/sfx/atmosphere/wave002.wav',
+    ],
+    stream: [
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827805/sfx/atmosphere/gentlestream001.wav',
+    ],
+    boiling_water: [
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827792/sfx/atmosphere/boilingwater001.wav',
+    ],
+    electricity: [
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827800/sfx/atmosphere/electricity001.wav',
+    ],
+    steampunk: [
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827831/sfx/atmosphere/steampunkmechanism001.wav',
+    ],
+
+    // ── TRANSITION ────────────────────────────────────────────────────
+    impact: [
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827883/sfx/Transition/impact%20001.wav',
+    ],
+    whoosh: [
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827885/sfx/Transition/somethingmoved001.wav',
+    ],
+    clock: [
+        'https://res.cloudinary.com/dnedkkyis/video/upload/v1775827892/sfx/Transition/clocktick001.wav',
+    ],
 };
+
+// Pick a random variant from an array
+function pickVariant(variants) {
+    if (!variants || variants.length === 0) return null;
+    return variants[Math.floor(Math.random() * variants.length)];
+}
+
+// Flat SOUND_LIBRARY for hashtag lookup — maps tag name → picked URL
+// Built dynamically so each call to parseHashtags gets fresh random picks
+function buildSoundLibrary() {
+    const lib = {};
+    for (const [key, variants] of Object.entries(SOUND_VARIANTS)) {
+        lib[key] = pickVariant(variants);
+    }
+    // Aliases — loop variants share the same key as their base
+    lib['rain_start'] = pickVariant(SOUND_VARIANTS.rain);
+    lib['rain_stop'] = null;
+    lib['thunder_start'] = pickVariant(SOUND_VARIANTS.thunder);
+    lib['thunder_stop'] = null;
+    return lib;
+}
 
 /* ── HASHTAG PARSER ──────────────────────────────────────────────────── */
 
 function parseHashtags(content) {
+    const SOUND_LIBRARY = buildSoundLibrary();
     const tagPattern = /#([a-z][a-z0-9_]*)/gi;
     const parts = content.split(tagPattern);
     const segments = [];
@@ -74,8 +136,8 @@ function parseHashtags(content) {
                     value: baseName,
                     order: order++,
                     audioUrl: null,
-                    volume: 1.0,   // FIX: default volume added to all segments
-                    delay: 0,      // FIX: default delay (ms) added to all segments
+                    volume: 1.0,
+                    delay: 0,
                 });
                 activeLoops.delete(baseName);
                 continue;
@@ -83,11 +145,12 @@ function parseHashtags(content) {
 
             if (tag.endsWith('_start')) {
                 const baseName = tag.replace('_start', '');
+                const audioUrl = SOUND_LIBRARY[baseName] || null;
                 segments.push({
                     type: 'loop_start',
                     value: baseName,
                     order: order++,
-                    audioUrl: SOUND_LIBRARY[baseName] || null,
+                    audioUrl,
                     volume: 1.0,
                     delay: 0,
                 });
@@ -118,6 +181,7 @@ function parseHashtags(content) {
                     seenTags.add(tag);
                 }
             }
+            // Unknown tags silently ignored
         } else {
             const cleanText = part
                 .replace(/#[a-z][a-z0-9_]*/gi, '')
@@ -185,14 +249,19 @@ async function uploadToCloudinary(filePath, publicId) {
 
 /* ── ROUTES ──────────────────────────────────────────────────────────── */
 
-// GET /api/f3/auvies/sounds
+// GET /api/f3/auvies/sounds — returns available sound cue tag names
 router.get('/sounds', (req, res) => {
-    const sounds = Object.keys(SOUND_LIBRARY).filter(k => !k.endsWith('_stop'));
-    res.json(sounds);
+    const allKeys = Object.keys(SOUND_VARIANTS);
+    // Also expose _start/_stop variants for loopable sounds
+    const loopable = ['rain', 'thunder'];
+    const extra = [];
+    for (const tag of loopable) {
+        extra.push(`${tag}_start`, `${tag}_stop`);
+    }
+    res.json([...allKeys, ...extra]);
 });
 
 // GET /api/f3/auvies/:id — get auvie details
-// FIX: author now receives full segments without needing to purchase
 router.get('/:id', protect, async (req, res) => {
     try {
         const auvie = await Auvie.findById(req.params.id)
@@ -206,7 +275,6 @@ router.get('/:id', protect, async (req, res) => {
             .map(id => id.toString())
             .includes(userId);
 
-        // Author always gets full segments — they need them to edit volumes/delays
         const canAccessFull = isAuthor || hasPurchased;
 
         res.json({
@@ -220,7 +288,6 @@ router.get('/:id', protect, async (req, res) => {
             isAuthor,
             hasPurchased,
             audioUrl: canAccessFull ? auvie.audioUrl : null,
-            // FIX: segments returned to author for editing, and to purchasers for playback
             segments: canAccessFull ? auvie.segments : null,
             createdAt: auvie.createdAt,
         });
@@ -241,47 +308,38 @@ router.get('/:id/status', protect, async (req, res) => {
     }
 });
 
-// GET /api/f3/auvies/draft/:novelId — PREVIEW segments before generating
+// GET /api/f3/auvies/draft/:novelId — preview segments before generating
 router.get('/draft/:novelId', protect, async (req, res) => {
     try {
         const novel = await Novel.findOne({ _id: req.params.novelId, author: req.user._id });
+        if (!novel) return res.status(404).json({ error: 'Novel not found' });
 
-        if (!novel) {
-            return res.status(404).json({ error: 'Novel not found' });
-        }
-
-        // Parse all chapters to show the writer what will be generated
         let allSegments = [];
         for (const chapter of novel.chapters) {
-            const chapterSegments = parseHashtags(chapter.content);
-            allSegments.push(...chapterSegments);
+            allSegments.push(...parseHashtags(chapter.content));
         }
 
-        // Return the data in the format your Flutter Workshop expects
         res.json({
             novelId: novel._id,
             title: novel.title,
             segments: allSegments,
-            totalCost: AUVIE_GENERATION_COST
+            totalCost: AUVIE_GENERATION_COST,
         });
     } catch (err) {
         console.error('Draft preview error:', err.message);
         res.status(500).json({ error: 'Failed to generate preview' });
     }
 });
+
 // PUT /api/f3/auvies/:id/segments — author saves volume/delay edits
-// Body: { segments: [{ order: 0, volume: 0.4, delay: 200 }, ...] }
-// Only updates volume and delay — never overwrites type, value, audioUrl
 router.put('/:id/segments', protect, async (req, res) => {
     try {
         const auvie = await Auvie.findById(req.params.id);
         if (!auvie) return res.status(404).json({ error: 'Auvie not found' });
 
-        // Only the author can edit segments
         if (auvie.author.toString() !== req.user._id.toString()) {
             return res.status(403).json({ error: 'Not authorised to edit this Auvie' });
         }
-
         if (auvie.status !== 'ready') {
             return res.status(400).json({ error: 'Auvie must be ready before editing segments' });
         }
@@ -291,26 +349,19 @@ router.put('/:id/segments', protect, async (req, res) => {
             return res.status(400).json({ error: 'segments must be an array' });
         }
 
-        // Build a lookup map of edits by order index for O(1) access
         const editMap = {};
         for (const edit of edits) {
-            if (typeof edit.order === 'number') {
-                editMap[edit.order] = edit;
-            }
+            if (typeof edit.order === 'number') editMap[edit.order] = edit;
         }
 
-        // Apply only volume and delay — all other fields are immutable
         const updatedSegments = auvie.segments.map(seg => {
             const edit = editMap[seg.order];
             if (!edit) return seg;
-
             return {
                 ...seg.toObject(),
-                // Clamp volume between 0.0 and 1.0
                 volume: typeof edit.volume === 'number'
                     ? Math.min(1.0, Math.max(0.0, edit.volume))
                     : seg.volume,
-                // Clamp delay between 0ms and 10000ms
                 delay: typeof edit.delay === 'number'
                     ? Math.min(10000, Math.max(0, Math.round(edit.delay)))
                     : seg.delay,
@@ -319,11 +370,7 @@ router.put('/:id/segments', protect, async (req, res) => {
 
         auvie.segments = updatedSegments;
         await auvie.save();
-
-        res.json({
-            message: 'Segments updated',
-            segments: auvie.segments,
-        });
+        res.json({ message: 'Segments updated', segments: auvie.segments });
     } catch (err) {
         console.error('Update segments error:', err.message);
         res.status(500).json({ error: 'Failed to update segments' });
@@ -343,7 +390,7 @@ router.post('/generate/:novelId', protect, async (req, res) => {
             return res.status(400).json({
                 error: 'Insufficient coins',
                 required: AUVIE_GENERATION_COST,
-                current: user.coins
+                current: user.coins,
             });
         }
 
@@ -360,11 +407,9 @@ router.post('/generate/:novelId', protect, async (req, res) => {
             relatedNovel: novel._id,
         });
 
-        // Parse all chapters — segments now include volume: 1.0 and delay: 0 by default
         let allSegments = [];
         for (const chapter of novel.chapters) {
-            const chapterSegments = parseHashtags(chapter.content);
-            allSegments.push(...chapterSegments);
+            allSegments.push(...parseHashtags(chapter.content));
         }
 
         const auvie = await Auvie.create({
@@ -394,7 +439,6 @@ router.post('/generate/:novelId', protect, async (req, res) => {
 
             try {
                 const processedSegments = [];
-
                 for (const seg of allSegments) {
                     if (seg.type === 'text') {
                         try {
@@ -419,7 +463,6 @@ router.post('/generate/:novelId', protect, async (req, res) => {
                     segments: processedSegments,
                     status: 'ready',
                 });
-
                 await fs.remove(workDir);
                 console.log(`✅ Auvie ${auvie._id} ready`);
 
@@ -467,7 +510,7 @@ router.post('/:id/purchase', protect, async (req, res) => {
             return res.status(400).json({
                 error: 'Insufficient coins',
                 required: auvie.coinPrice,
-                current: user.coins
+                current: user.coins,
             });
         }
 
