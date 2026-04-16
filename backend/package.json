@@ -13,6 +13,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@elevenlabs/elevenlabs-js": "^2.43.0",
     "@google-cloud/vision": "^5.3.4",
     "@paystack/paystack-sdk": "^1.0.1",
     "axios": "^1.13.6",

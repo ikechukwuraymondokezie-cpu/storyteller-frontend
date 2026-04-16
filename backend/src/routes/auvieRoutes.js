@@ -210,12 +210,16 @@ function stripHashtags(text) {
 
 /* ── ELEVENLABS TTS ──────────────────────────────────────────────────── */
 
-async function generateSpeech(text, outputPath) {
+/* ── ELEVENLABS TTS (UPDATED FOR MULTI-VOICE) ────────────────────────── */
+
+// Now accepts a specific voiceId per call
+async function generateSpeech(text, outputPath, voiceId) {
+    const vId = voiceId || process.env.ELEVENLABS_VOICE_ID;
     const response = await axios.post(
-        `https://api.elevenlabs.io/v1/text-to-speech/${process.env.ELEVENLABS_VOICE_ID}`,
+        `https://api.elevenlabs.io/v1/text-to-speech/${vId}`,
         {
             text,
-            model_id: 'eleven_monolingual_v1',
+            model_id: 'eleven_multilingual_v2', // Upgraded for better accents
             voice_settings: { stability: 0.5, similarity_boost: 0.75 }
         },
         {
@@ -231,6 +235,130 @@ async function generateSpeech(text, outputPath) {
     await fs.writeFile(outputPath, Buffer.from(response.data));
     return outputPath;
 }
+
+/* ── HASHTAG PARSER (UPDATED FOR VOICE TAGS) ─────────────────────────── */
+
+function parseHashtags(content) {
+    const SOUND_LIBRARY = buildSoundLibrary();
+    const tagPattern = /#([a-z][a-z0-9_]*)/gi;
+    const parts = content.split(tagPattern);
+    const segments = [];
+    let order = 0;
+    let currentVoiceTag = 'narrator'; // Default tracking
+
+    const seenTags = new Set();
+
+    for (let i = 0; i < parts.length; i++) {
+        const part = parts[i];
+        if (!part) continue;
+
+        if (i % 2 === 1) {
+            const tag = part.toLowerCase();
+
+            // 1. Check if it's an SFX tag from your library
+            if (SOUND_LIBRARY.hasOwnProperty(tag) || tag.endsWith('_start') || tag.endsWith('_stop')) {
+                // ... (Existing SFX logic for oneshot/loop remains the same)
+                if (tag.endsWith('_stop')) {
+                    const baseName = tag.replace('_stop', '');
+                    segments.push({ type: 'loop_stop', value: baseName, order: order++, audioUrl: null, volume: 1.0, delay: 0 });
+                } else if (tag.endsWith('_start')) {
+                    const baseName = tag.replace('_start', '');
+                    segments.push({ type: 'loop_start', value: baseName, order: order++, audioUrl: SOUND_LIBRARY[baseName], volume: 1.0, delay: 0 });
+                } else {
+                    segments.push({ type: 'oneshot', value: tag, order: order++, audioUrl: SOUND_LIBRARY[tag], volume: 1.0, delay: 0 });
+                }
+            } else {
+                // 2. If it's not a sound, treat it as a Voice Switch tag
+                currentVoiceTag = tag;
+            }
+        } else {
+            const cleanText = part.trim();
+            if (cleanText.length > 0) {
+                segments.push({
+                    type: 'text',
+                    value: cleanText,
+                    voiceTag: currentVoiceTag, // Attach the active voice tag to the text
+                    order: order++,
+                    audioUrl: null,
+                    volume: 1.0,
+                    delay: 0,
+                });
+            }
+        }
+    }
+    return segments;
+}
+
+/* ── MODIFIED GENERATE ROUTE ────────────────────────────────────────── */
+
+router.post('/generate/:novelId', protect, async (req, res) => {
+    try {
+        const { voiceMap } = req.body; // Map of { "hero": "id1", "narrator": "id2" }
+        const novel = await Novel.findOne({ _id: req.params.novelId, author: req.user._id });
+
+        // ... (Existing validation & coin deduction logic) ...
+
+        const allSegments = [];
+        for (const chapter of novel.chapters) {
+            allSegments.push(...parseHashtags(chapter.content));
+        }
+
+        const auvie = await Auvie.create({
+            novel: novel._id,
+            author: req.user._id,
+            status: 'generating',
+            coinPrice: AUVIE_PURCHASE_PRICE,
+            generationCost: AUVIE_GENERATION_COST,
+            segments: allSegments,
+            voiceMap: voiceMap // Save the mapping for future reference
+        });
+
+        // Response sent to Flutter
+        res.status(202).json({ message: 'Auvie generation started', auvieId: auvie._id });
+
+        // ── BACKGROUND GENERATION (UPDATED LOOP) ──────────────────────
+        (async () => {
+            const workDir = path.join(tmpDir, auvie._id.toString());
+            await fs.ensureDir(workDir);
+
+            try {
+                const processedSegments = [];
+                for (const seg of allSegments) {
+                    if (seg.type === 'text') {
+                        const audioPath = path.join(workDir, `seg_${seg.order}.mp3`);
+
+                        // Use the voice ID from the map, or fall back to default
+                        const specificVoiceId = voiceMap ? voiceMap[seg.voiceTag] : process.env.ELEVENLABS_VOICE_ID;
+
+                        await generateSpeech(seg.value, audioPath, specificVoiceId);
+
+                        const audioUrl = await uploadToCloudinary(
+                            audioPath,
+                            `auvie_${auvie._id}_seg_${seg.order}`
+                        );
+
+                        await fs.remove(audioPath);
+                        processedSegments.push({ ...seg, audioUrl });
+                    } else {
+                        processedSegments.push(seg);
+                    }
+                }
+
+                await Auvie.findByIdAndUpdate(auvie._id, {
+                    segments: processedSegments,
+                    status: 'ready',
+                });
+                await fs.remove(workDir);
+
+            } catch (genErr) {
+                // ... (Existing refund logic) ...
+            }
+        })();
+
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to start generation' });
+    }
+});
 
 /* ── CLOUDINARY UPLOAD ───────────────────────────────────────────────── */
 
