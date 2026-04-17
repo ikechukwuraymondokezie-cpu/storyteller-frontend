@@ -6,20 +6,27 @@ const path = require('path');
 const fs = require('fs-extra');
 const mongoose = require('mongoose');
 
+// Models
 const Auvie = require('../models/Auvie');
 const Novel = require('../models/Novel');
 const User = require('../models/User');
 const CoinTransaction = require('../models/CoinTransaction');
 
+// Utilities
 const { parseHashtags } = require('../utils/hashtagParser');
 const { getAllSoundTags } = require('../utils/soundLibrary');
-const { generateSpeech, uploadAudioToCloudinary, fetchElevenLabsVoices } = require('../utils/elevenlabs');
+const {
+    generateSpeech,
+    uploadAudioToCloudinary,
+    fetchElevenLabsVoices
+} = require('../utils/elevenlabs');
 
+// Constants
 const AUVIE_PURCHASE_PRICE = 200;
 const AUVIE_GENERATION_COST = 100;
 const PLATFORM_COMMISSION = 0.25;
 
-// Local temp directory for processing MP3s before Cloudinary upload
+// Local temp directory setup
 const tmpDir = path.join(__dirname, '../../temp/auvie');
 fs.ensureDirSync(tmpDir);
 
@@ -66,7 +73,7 @@ exports.getAuvie = async (req, res) => {
             isAuthor,
             hasPurchased,
             voiceMap: isAuthor ? auvie.voiceMap : undefined,
-            // Only send the "good stuff" if they have access
+            // Only reveal the actual audio/segments if user has paid or is the creator
             audioUrl: canAccess ? auvie.audioUrl : null,
             segments: canAccess ? auvie.segments : null,
             createdAt: auvie.createdAt,
@@ -119,11 +126,11 @@ exports.updateSegments = async (req, res) => {
         if (!auvie) return res.status(404).json({ error: 'Auvie not found' });
 
         if (auvie.author.toString() !== req.user._id.toString()) {
-            return res.status(403).json({ error: 'Not authorized to edit this Auvie' });
+            return res.status(403).json({ error: 'Not authorized' });
         }
 
         const { segments: edits, voiceMap } = req.body;
-        if (!Array.isArray(edits)) return res.status(400).json({ error: 'Segments must be an array' });
+        if (!Array.isArray(edits)) return res.status(400).json({ error: 'Invalid segments' });
 
         const editMap = {};
         for (const edit of edits) {
@@ -174,7 +181,7 @@ exports.generateAuvie = async (req, res) => {
             voiceMap.narrator = process.env.ELEVENLABS_VOICE_ID || 'pNInz6obpg8ndPey74S';
         }
 
-        // 1. Transaction: Pay for generation
+        // 1. Transaction: Deduct coins
         user.coins -= AUVIE_GENERATION_COST;
         await user.save();
 
@@ -189,7 +196,7 @@ exports.generateAuvie = async (req, res) => {
 
         const segments = parseHashtags(chapter.content);
 
-        // 2. Database Record: Upsert (Update or Create)
+        // 2. Database Record: Upsert (Update existing chapter auvie or create new)
         const auvie = await Auvie.findOneAndUpdate(
             { novel: novelId, chapterId: chapterId },
             {
@@ -203,18 +210,17 @@ exports.generateAuvie = async (req, res) => {
             { upsert: true, new: true }
         );
 
-        // 3. Mark Novel as containing Auvie
         novel.hasAuvie = true;
         await novel.save();
 
-        // 4. Respond to Flutter immediately
+        // 3. Respond to Flutter
         res.status(202).json({
             message: 'Generation started',
             auvieId: auvie._id,
             status: 'generating'
         });
 
-        // 5. Fire off the background worker
+        // 4. Trigger Background Worker
         _runBackgroundWorker(auvie._id, segments, voiceMap, user.coins, novel.title, req.user._id);
 
     } catch (err) {
@@ -223,7 +229,7 @@ exports.generateAuvie = async (req, res) => {
     }
 };
 
-/* ── 5. THE BACKGROUND WORKER (The "Heart") ────────────────────────── */
+/* ── 5. THE BACKGROUND WORKER (TTS & Processing) ───────────────────── */
 
 async function _runBackgroundWorker(auvieId, segments, voiceMap, userCoinsAtDeduction, novelTitle, userId) {
     const workDir = path.join(tmpDir, auvieId.toString());
@@ -233,57 +239,57 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, userCoinsAtDedu
         const processedSegments = [];
 
         for (const seg of segments) {
-            // A. Handle Text-to-Speech
             if (seg.type === 'text') {
                 try {
                     const audioPath = path.join(workDir, `seg_${seg.order}.mp3`);
 
-                    // Priority: Segment voice -> Character Map voice -> Narrator default
+                    // Logic for choosing voice: Segment-specific > Character-mapped > Default Narrator
                     const resolvedVoiceId =
                         seg.voiceId ||
                         voiceMap[seg.characterName] ||
                         voiceMap['narrator'];
 
+                    // Generate file locally
                     await generateSpeech(seg.value, audioPath, resolvedVoiceId);
 
+                    // Upload to Cloudinary
                     const audioUrl = await uploadAudioToCloudinary(
                         audioPath,
                         `auvie_segments/${auvieId}/seg_${seg.order}`
                     );
 
+                    // Clean up local file
                     await fs.remove(audioPath);
                     processedSegments.push({ ...seg, audioUrl });
 
                 } catch (segErr) {
                     console.error(`Segment ${seg.order} failed:`, segErr.message);
-                    processedSegments.push({ ...seg, audioUrl: null }); // Don't kill the whole process
+                    processedSegments.push({ ...seg, audioUrl: null });
                 }
-            }
-            // B. Handle Sound Cues (Parser already gives us URLs from library)
-            else {
+            } else {
+                // Sound Effects (Parser provides library URLs)
                 processedSegments.push(seg);
             }
         }
 
-        // Success Update
+        // Finalize Record
         await Auvie.findByIdAndUpdate(auvieId, {
             segments: processedSegments,
             status: 'ready',
         });
 
         await fs.remove(workDir);
-        console.log(`✅ Auvie Ready: ${auvieId}`);
 
     } catch (genErr) {
         console.error('Background generation failed:', genErr.message);
 
-        // Fail state update
+        // Update status to failed
         await Auvie.findByIdAndUpdate(auvieId, {
             status: 'failed',
             errorMessage: genErr.message
         });
 
-        // Refund logic for errors
+        // Automatic Refund
         await User.findByIdAndUpdate(userId, { $inc: { coins: AUVIE_GENERATION_COST } });
 
         await CoinTransaction.create({
@@ -310,23 +316,22 @@ exports.purchaseAuvie = async (req, res) => {
         const user = await User.findById(userId);
         if (user.coins < auvie.coinPrice) return res.status(400).json({ error: 'Insufficient coins' });
 
-        // Calculate Splits
+        // Split Logic
         const commission = Math.floor(auvie.coinPrice * PLATFORM_COMMISSION);
         const authorEarning = auvie.coinPrice - commission;
 
-        // Deduct from Reader
+        // Transactions
         user.coins -= auvie.coinPrice;
+        user.purchasedAuvies.push(auvie._id); // Add to user library
         await user.save();
 
-        // Pay the Author
         await User.findByIdAndUpdate(auvie.author, { $inc: { coins: authorEarning } });
 
-        // Update Auvie Stats
         auvie.purchasedBy.push(userId);
         auvie.plays += 1;
         await auvie.save();
 
-        // Log Transactions
+        // Logs
         await CoinTransaction.create({
             user: userId,
             type: 'spend_auvie',
@@ -340,12 +345,12 @@ exports.purchaseAuvie = async (req, res) => {
             user: auvie.author,
             type: 'earn_auvie',
             amount: authorEarning,
-            description: `Earnings from Auvie: ${auvie.novel.title}`,
+            description: `Earnings: Auvie for ${auvie.novel.title}`,
             relatedAuvie: auvie._id
         });
 
         res.json({
-            message: 'Auvie purchased',
+            message: 'Auvie purchased successfully',
             coinsRemaining: user.coins,
             segments: auvie.segments
         });
