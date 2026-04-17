@@ -2,12 +2,12 @@ const mongoose = require('mongoose');
 
 /**
  * A segment represents a single unit of the Auvie.
- * It is either a block of TTS text or a specific Sound Cue (oneshot or loop).
+ * It is either a block of TTS text or a specific Sound Cue.
  */
 const segmentSchema = new mongoose.Schema({
     type: {
         type: String,
-        // Matches the parser logic: text, oneshot, loop_start, loop_stop
+        // text: TTS content, oneshot: SFX like #gunshot
         enum: ['text', 'cue', 'oneshot', 'loop_start', 'loop_stop'],
         required: true
     },
@@ -21,16 +21,26 @@ const segmentSchema = new mongoose.Schema({
         type: String,
         default: null
     },
-    // Position in the playback sequence (crucial for ordering in Flutter)
+    // Position in the playback sequence
     order: {
         type: Number,
         required: true
     },
 
     /* ── WRITER CUSTOMIZATION FIELDS ── */
-    // These allow the "Tap to Edit" feature in Flutter to persist changes
+    // These allow the "Workshop" feature in Flutter to persist changes
 
-    // Volume multiplier: 0.0 (silent) to 2.0 (200% volume)
+    // The ElevenLabs Voice ID assigned to this specific text block
+    voiceId: {
+        type: String,
+        default: null
+    },
+    // The tag used in the novel (e.g., 'narrator', 'hero', 'villain')
+    characterName: {
+        type: String,
+        default: 'narrator'
+    },
+    // Volume multiplier: 0.0 to 2.0
     volume: {
         type: Number,
         default: 1.0,
@@ -42,9 +52,9 @@ const segmentSchema = new mongoose.Schema({
         type: Number,
         default: 0,
         min: 0,
-        max: 15 // Capped at 15s to prevent "broken" user experiences
+        max: 15
     }
-}, { _id: false }); // Prevents Mongoose from creating extra IDs for every segment
+}, { _id: false });
 
 const auvieSchema = new mongoose.Schema({
     novel: {
@@ -58,53 +68,54 @@ const auvieSchema = new mongoose.Schema({
         required: true
     },
 
-    // Optional: Used if you decide to pre-stitch the entire file into one MP3
+    // Permanent Cloudinary URL (if you stitch the segments into one file later)
     audioUrl: {
         type: String,
         default: null
     },
 
-    // Total length of the Auvie in seconds (calculated after generation)
+    // A map of character tags to ElevenLabs Voice IDs for this specific book
+    // e.g. { "hero": "pNInz6obpg8ndPey74S", "narrator": "EXAVITQu4vr4xnSDxMaL" }
+    voiceMap: {
+        type: Map,
+        of: String,
+        default: {}
+    },
+
     duration: {
         type: Number,
         default: 0
     },
 
-    // Price for readers to unlock this content
     coinPrice: {
         type: Number,
         default: 200
     },
 
-    // Tracks the background generation state
     status: {
         type: String,
         enum: ['pending', 'generating', 'ready', 'failed'],
         default: 'pending'
     },
 
-    // Captures errors from ElevenLabs or Cloudinary for the writer to see
     errorMessage: {
         type: String,
         default: null
     },
 
-    // The full array of interactive segments (Text + SFX)
+    // The array of segments updated by the Flutter Workshop
     segments: [segmentSchema],
 
-    // List of User IDs who have paid to unlock this Auvie
     purchasedBy: [{
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'
     }],
 
-    // How many coins the writer spent to generate this (e.g., 100)
     generationCost: {
         type: Number,
         default: 100
     },
 
-    // Analytics for the writer's dashboard
     plays: {
         type: Number,
         default: 0
@@ -113,7 +124,6 @@ const auvieSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 /* ── INDEXING ── */
-// These ensure the app stays fast as your database grows
 auvieSchema.index({ novel: 1 });
 auvieSchema.index({ author: 1 });
 auvieSchema.index({ status: 1 });
