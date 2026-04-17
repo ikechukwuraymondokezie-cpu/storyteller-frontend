@@ -1,15 +1,9 @@
 /* ── HASHTAG PARSER ──────────────────────────────────────────────────────
  * Converts novel chapter content into ordered Auvie segments.
  *
- * Segment types:
- *   text       → sent to ElevenLabs TTS
- *   oneshot    → sound plays once, then stops
- *   loop_start → sound loops from this point
- *   loop_stop  → stops the loop
- *
  * Voice tagging:
- *   Unknown hashtags (e.g. #hero, #villain) are treated as voice character
- *   switches and attached as voiceTag to subsequent text segments.
+ * Unknown hashtags (e.g. #hero, #villain) are character switches.
+ * Blank tags (#) or #n reset the voice to 'narrator'.
  * ─────────────────────────────────────────────────────────────────────── */
 
 const { buildSoundLibrary } = require('./soundLibrary');
@@ -22,20 +16,37 @@ const { buildSoundLibrary } = require('./soundLibrary');
 function parseHashtags(content) {
     const SOUND_LIBRARY = buildSoundLibrary();
 
-    const tagPattern = /#([a-z][a-z0-9_]*)/gi;
+    /**
+     * Regex breakdown:
+     * #([a-z][a-z0-9_]*) -> standard tags with names
+     * |#(?=\s|$)         -> looks for '#' followed by space or end of string (Blank Reset)
+     */
+    const tagPattern = /#([a-z][a-z0-9_]*)|#(?=\s|$)/gi;
+
+    // We use a manual split/match loop here to ensure the "Blank Tag" is captured correctly
     const parts = content.split(tagPattern);
     const segments = [];
     let order = 0;
-    let currentVoiceTag = 'narrator'; // default voice character
+    let currentVoiceTag = 'narrator';
 
     for (let i = 0; i < parts.length; i++) {
         const part = parts[i];
-        if (!part) continue;
+
+        // Handle undefined parts from the regex capture groups
+        if (part === undefined) continue;
+        if (!part && i % 2 === 0) continue;
 
         if (i % 2 === 1) {
-            // Captured hashtag name (without the #)
-            const tag = part.toLowerCase();
+            // Captured hashtag name
+            const tag = part.toLowerCase().trim();
 
+            // 1. BLANK RESET (#) or MANUAL NARRATOR (#n)
+            if (tag === "" || tag === "n") {
+                currentVoiceTag = 'narrator';
+                continue;
+            }
+
+            // 2. LOOP STOP
             if (tag.endsWith('_stop')) {
                 const baseName = tag.slice(0, -5);
                 segments.push({
@@ -48,6 +59,7 @@ function parseHashtags(content) {
                     delay: 0,
                 });
 
+                // 3. LOOP START
             } else if (tag.endsWith('_start')) {
                 const baseName = tag.slice(0, -6);
                 segments.push({
@@ -60,8 +72,8 @@ function parseHashtags(content) {
                     delay: 0,
                 });
 
+                // 4. KNOWN SFX (oneshot)
             } else if (Object.prototype.hasOwnProperty.call(SOUND_LIBRARY, tag)) {
-                // Known sound → oneshot
                 segments.push({
                     type: 'oneshot',
                     value: tag,
@@ -72,23 +84,20 @@ function parseHashtags(content) {
                     delay: 0,
                 });
 
+                // 5. UNKNOWN TAG -> Character Switch
             } else {
-                // Unknown tag → voice character switch
                 currentVoiceTag = tag;
             }
 
         } else {
-            // Text between tags — strip any stray # fragments
-            const cleanText = part
-                .replace(/#[a-z][a-z0-9_]*/gi, '')
-                .replace(/\s{2,}/g, ' ')
-                .trim();
+            // Text between tags
+            const cleanText = part.trim();
 
             if (cleanText.length > 0) {
                 segments.push({
                     type: 'text',
                     value: cleanText,
-                    voiceTag: currentVoiceTag,
+                    voiceTag: currentVoiceTag, // Uses whatever character is currently active
                     order: order++,
                     audioUrl: null,
                     volume: 1.0,
@@ -102,11 +111,12 @@ function parseHashtags(content) {
 }
 
 /**
- * Strip all #hashtags from text for reader-facing display or TTS.
+ * Strip all #hashtags from text for reader-facing display.
+ * Includes lone hashtags.
  */
 function stripHashtags(text) {
     return text
-        .replace(/#[a-z][a-z0-9_]*/gi, '')
+        .replace(/#([a-z][a-z0-9_]*)|#(?=\s|$)/gi, '')
         .replace(/\s{2,}/g, ' ')
         .trim();
 }
