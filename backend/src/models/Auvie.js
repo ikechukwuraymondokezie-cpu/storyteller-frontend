@@ -28,8 +28,6 @@ const segmentSchema = new mongoose.Schema({
     },
 
     /* ── WRITER CUSTOMIZATION FIELDS ── */
-    // These allow the "Workshop" feature in Flutter to persist changes
-
     // The ElevenLabs Voice ID assigned to this specific text block
     voiceId: {
         type: String,
@@ -62,20 +60,25 @@ const auvieSchema = new mongoose.Schema({
         ref: 'Novel',
         required: true
     },
+    // ── ATTACHMENT TO CHAPTER ──
+    // Points to the specific chapter ID within the Novel's chapters array
+    chapterId: {
+        type: mongoose.Schema.Types.ObjectId,
+        required: true
+    },
     author: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
         required: true
     },
 
-    // Permanent Cloudinary URL (if you stitch the segments into one file later)
+    // Permanent Cloudinary URL (if segments are stitched later)
     audioUrl: {
         type: String,
         default: null
     },
 
-    // A map of character tags to ElevenLabs Voice IDs for this specific book
-    // e.g. { "hero": "pNInz6obpg8ndPey74S", "narrator": "EXAVITQu4vr4xnSDxMaL" }
+    // Map of character tags to Voice IDs (e.g. { "hero": "pNInz..." })
     voiceMap: {
         type: Map,
         of: String,
@@ -124,7 +127,8 @@ const auvieSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 /* ── INDEXING ── */
-auvieSchema.index({ novel: 1 });
+// Compound index ensures one Auvie per chapter per novel
+auvieSchema.index({ novel: 1, chapterId: 1 }, { unique: true });
 auvieSchema.index({ author: 1 });
 auvieSchema.index({ status: 1 });
 
