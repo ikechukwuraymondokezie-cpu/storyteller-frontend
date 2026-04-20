@@ -26,8 +26,8 @@ const AUVIE_PURCHASE_PRICE = 200;
 const AUVIE_GENERATION_COST = 100;
 const PLATFORM_COMMISSION = 0.25;
 
-// Local temp directory setup
-const tmpDir = path.join(__dirname, '../../temp/auvie');
+// Local temp directory setup - Using /tmp for better compatibility with Render/Serverless
+const tmpDir = path.join('/tmp', 'auvie');
 fs.ensureDirSync(tmpDir);
 
 /* ── 1. ASSET DISCOVERY ──────────────────────────────────────────────── */
@@ -57,8 +57,10 @@ exports.getAuvie = async (req, res) => {
         if (!auvie) return res.status(404).json({ error: 'Auvie not found' });
 
         const userId = req.user._id.toString();
+        // Fix: Author comparison using ._id after population
         const isAuthor = auvie.author._id.toString() === userId;
-        const hasPurchased = auvie.purchasedBy.map(id => id.toString()).includes(userId);
+        // Fix: Explicitly stringify IDs for comparison
+        const hasPurchased = auvie.purchasedBy.some(id => id.toString() === userId);
         const canAccess = isAuthor || hasPurchased;
 
         res.json({
@@ -73,7 +75,6 @@ exports.getAuvie = async (req, res) => {
             isAuthor,
             hasPurchased,
             voiceMap: isAuthor ? auvie.voiceMap : undefined,
-            // Only reveal the actual audio/segments if user has paid or is the creator
             audioUrl: canAccess ? auvie.audioUrl : null,
             segments: canAccess ? auvie.segments : null,
             createdAt: auvie.createdAt,
@@ -137,23 +138,24 @@ exports.updateSegments = async (req, res) => {
             if (typeof edit.order === 'number') editMap[edit.order] = edit;
         }
 
-        const updatedSegments = auvie.segments.map(seg => {
+        // Fix: Use .set() and markModified for complex subdocument updates
+        auvie.segments.forEach((seg) => {
             const edit = editMap[seg.order];
-            if (!edit) return seg;
-            return {
-                ...seg.toObject(),
-                volume: typeof edit.volume === 'number' ? Math.min(2, Math.max(0, edit.volume)) : seg.volume,
-                delay: typeof edit.delay === 'number' ? Math.min(15, Math.max(0, edit.delay)) : seg.delay,
-                voiceId: edit.voiceId !== undefined ? edit.voiceId : seg.voiceId,
-            };
+            if (edit) {
+                if (typeof edit.volume === 'number') seg.volume = Math.min(2, Math.max(0, edit.volume));
+                if (typeof edit.delay === 'number') seg.delay = Math.min(15, Math.max(0, edit.delay));
+                if (edit.voiceId !== undefined) seg.voiceId = edit.voiceId;
+            }
         });
 
-        auvie.segments = updatedSegments;
         if (voiceMap) auvie.voiceMap = voiceMap;
+
+        auvie.markModified('segments');
         await auvie.save();
 
         res.json({ message: 'Segments updated', segments: auvie.segments });
     } catch (err) {
+        console.error('Update segments error:', err.message);
         res.status(500).json({ error: 'Failed to update segments' });
     }
 };
@@ -163,8 +165,9 @@ exports.updateSegments = async (req, res) => {
 exports.generateAuvie = async (req, res) => {
     try {
         const { novelId, chapterId } = req.params;
-        const novel = await Novel.findOne({ _id: novelId, author: req.user._id });
+        const { segments: workshopSegments, voiceMap: workshopVoiceMap } = req.body;
 
+        const novel = await Novel.findOne({ _id: novelId, author: req.user._id });
         if (!novel) return res.status(404).json({ error: 'Novel not found' });
         if (novel.status !== 'published') return res.status(400).json({ error: 'Publish novel first' });
 
@@ -176,10 +179,12 @@ exports.generateAuvie = async (req, res) => {
             return res.status(400).json({ error: 'Insufficient coins', current: user.coins });
         }
 
-        const voiceMap = req.body.voiceMap || {};
-        if (!voiceMap.narrator) {
-            voiceMap.narrator = process.env.ELEVENLABS_VOICE_ID || 'pNInz6obpg8ndPey74S';
-        }
+        // Logic: Use segments from Flutter workshop if provided, else parse fresh
+        const segmentsToProcess = (workshopSegments && workshopSegments.length > 0)
+            ? workshopSegments
+            : parseHashtags(chapter.content);
+
+        const voiceMap = workshopVoiceMap || { narrator: process.env.ELEVENLABS_VOICE_ID || 'pNInz6obpg8ndPey74S' };
 
         // 1. Transaction: Deduct coins
         user.coins -= AUVIE_GENERATION_COST;
@@ -194,18 +199,19 @@ exports.generateAuvie = async (req, res) => {
             relatedNovel: novel._id
         });
 
-        const segments = parseHashtags(chapter.content);
-
-        // 2. Database Record: Upsert (Update existing chapter auvie or create new)
+        // 2. Database Record: Use $set with findOneAndUpdate to avoid versioning conflicts
         const auvie = await Auvie.findOneAndUpdate(
             { novel: novelId, chapterId: chapterId },
             {
-                author: req.user._id,
-                status: 'generating',
-                coinPrice: AUVIE_PURCHASE_PRICE,
-                generationCost: AUVIE_GENERATION_COST,
-                segments: segments,
-                voiceMap,
+                $set: {
+                    author: req.user._id,
+                    status: 'generating',
+                    coinPrice: AUVIE_PURCHASE_PRICE,
+                    generationCost: AUVIE_GENERATION_COST,
+                    segments: segmentsToProcess,
+                    voiceMap: voiceMap,
+                    errorMessage: null
+                }
             },
             { upsert: true, new: true }
         );
@@ -213,7 +219,7 @@ exports.generateAuvie = async (req, res) => {
         novel.hasAuvie = true;
         await novel.save();
 
-        // 3. Respond to Flutter
+        // 3. Respond immediately
         res.status(202).json({
             message: 'Generation started',
             auvieId: auvie._id,
@@ -221,7 +227,7 @@ exports.generateAuvie = async (req, res) => {
         });
 
         // 4. Trigger Background Worker
-        _runBackgroundWorker(auvie._id, segments, voiceMap, user.coins, novel.title, req.user._id);
+        _runBackgroundWorker(auvie._id, segmentsToProcess, voiceMap, novel.title, req.user._id);
 
     } catch (err) {
         console.error('Generate error:', err.message);
@@ -231,7 +237,7 @@ exports.generateAuvie = async (req, res) => {
 
 /* ── 5. THE BACKGROUND WORKER (TTS & Processing) ───────────────────── */
 
-async function _runBackgroundWorker(auvieId, segments, voiceMap, userCoinsAtDeduction, novelTitle, userId) {
+async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, userId) {
     const workDir = path.join(tmpDir, auvieId.toString());
     await fs.ensureDir(workDir);
 
@@ -242,40 +248,31 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, userCoinsAtDedu
             if (seg.type === 'text') {
                 try {
                     const audioPath = path.join(workDir, `seg_${seg.order}.mp3`);
+                    const resolvedVoiceId = seg.voiceId || voiceMap[seg.characterName] || voiceMap['narrator'];
 
-                    // Logic for choosing voice: Segment-specific > Character-mapped > Default Narrator
-                    const resolvedVoiceId =
-                        seg.voiceId ||
-                        voiceMap[seg.characterName] ||
-                        voiceMap['narrator'];
-
-                    // Generate file locally
                     await generateSpeech(seg.value, audioPath, resolvedVoiceId);
-
-                    // Upload to Cloudinary
                     const audioUrl = await uploadAudioToCloudinary(
                         audioPath,
                         `auvie_segments/${auvieId}/seg_${seg.order}`
                     );
 
-                    // Clean up local file
                     await fs.remove(audioPath);
                     processedSegments.push({ ...seg, audioUrl });
-
                 } catch (segErr) {
                     console.error(`Segment ${seg.order} failed:`, segErr.message);
                     processedSegments.push({ ...seg, audioUrl: null });
                 }
             } else {
-                // Sound Effects (Parser provides library URLs)
                 processedSegments.push(seg);
             }
         }
 
-        // Finalize Record
+        // Finalize Record using $set to prevent overwriting other fields (like plays/purchasedBy)
         await Auvie.findByIdAndUpdate(auvieId, {
-            segments: processedSegments,
-            status: 'ready',
+            $set: {
+                segments: processedSegments,
+                status: 'ready'
+            }
         });
 
         await fs.remove(workDir);
@@ -283,15 +280,12 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, userCoinsAtDedu
     } catch (genErr) {
         console.error('Background generation failed:', genErr.message);
 
-        // Update status to failed
         await Auvie.findByIdAndUpdate(auvieId, {
-            status: 'failed',
-            errorMessage: genErr.message
+            $set: { status: 'failed', errorMessage: genErr.message }
         });
 
         // Automatic Refund
         await User.findByIdAndUpdate(userId, { $inc: { coins: AUVIE_GENERATION_COST } });
-
         await CoinTransaction.create({
             user: userId,
             type: 'refund',
@@ -311,18 +305,20 @@ exports.purchaseAuvie = async (req, res) => {
         if (!auvie || auvie.status !== 'ready') return res.status(400).json({ error: 'Auvie not available' });
 
         const userId = req.user._id;
-        if (auvie.purchasedBy.includes(userId)) return res.status(400).json({ error: 'Already owned' });
+        // Fix: Check for purchase using .toString() logic
+        if (auvie.purchasedBy.some(id => id.toString() === userId.toString())) {
+            return res.status(400).json({ error: 'Already owned' });
+        }
 
         const user = await User.findById(userId);
         if (user.coins < auvie.coinPrice) return res.status(400).json({ error: 'Insufficient coins' });
 
-        // Split Logic
         const commission = Math.floor(auvie.coinPrice * PLATFORM_COMMISSION);
         const authorEarning = auvie.coinPrice - commission;
 
         // Transactions
         user.coins -= auvie.coinPrice;
-        user.purchasedAuvies.push(auvie._id); // Add to user library
+        user.purchasedAuvies.push(auvie._id);
         await user.save();
 
         await User.findByIdAndUpdate(auvie.author, { $inc: { coins: authorEarning } });
