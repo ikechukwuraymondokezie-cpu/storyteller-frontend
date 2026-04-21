@@ -4,7 +4,7 @@ const mongoose = require('mongoose');
 const multer = require('multer');
 const cloudinary = require('cloudinary').v2;
 const fs = require('fs-extra');
-const path = require('path'); // FIX: needed for extension-based mimetype fallback
+const path = require('path');
 const Novel = require('../models/Novel');
 const User = require('../models/User');
 const CoinTransaction = require('../models/CoinTransaction');
@@ -17,17 +17,12 @@ const coverUpload = multer({
     limits: { fileSize: 5 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
         const allowedMimes = [
-            'image/jpeg',
-            'image/jpg',
-            'image/png',
-            'image/x-png',
-            'image/webp',
-            'application/octet-stream', // FIX: Android (especially Samsung) often sends this
+            'image/jpeg', 'image/jpg', 'image/png',
+            'image/x-png', 'image/webp',
+            'application/octet-stream',
         ];
-        // FIX: also accept by file extension as fallback for devices with wrong mimetypes
         const allowedExts = ['.jpg', '.jpeg', '.png', '.webp'];
         const ext = path.extname(file.originalname).toLowerCase();
-
         if (allowedMimes.includes(file.mimetype) || allowedExts.includes(ext)) {
             cb(null, true);
         } else {
@@ -61,6 +56,21 @@ const formatNovelFeed = (novel, userId) => ({
     updatedAt: novel.updatedAt,
 });
 
+// FIX: separate formatter for writer's own novels — includes chapter stubs with _id
+// so BibliographyScreen can extract chapterId without a second fetch
+const formatNovelForWriter = (novel, userId) => ({
+    ...formatNovelFeed(novel, userId),
+    // Include minimal chapter data: _id and title only (not full content)
+    // This is enough for the Workshop flow without sending huge payloads
+    chapters: novel.chapters.map(ch => ({
+        _id: ch._id,
+        title: ch.title,
+        order: ch.order,
+        wordCount: ch.wordCount,
+        createdAt: ch.createdAt,
+    })),
+});
+
 const formatChapter = (chapter, index, freeCount, hasUnlocked) => ({
     _id: chapter._id,
     title: chapter.title,
@@ -91,9 +101,7 @@ router.post('/upload-cover', protect, (req, res, next) => {
             folder: 'novel_covers',
             resource_type: 'image',
             transformation: [
-                // Increase to at least 1080x1620 for "Retina" quality on full screens
                 { width: 1080, height: 1620, crop: 'fill', gravity: 'auto' },
-                // Force high quality (80-90 is the sweet spot for mobile)
                 { quality: '90', fetch_format: 'auto' }
             ]
         });
@@ -143,11 +151,13 @@ router.get('/trending', async (req, res) => {
     }
 });
 
+// FIX: /my now uses formatNovelForWriter which includes chapters with _id
+// Previously used formatNovelFeed which stripped chapters entirely
 router.get('/my', protect, async (req, res) => {
     try {
         const novels = await Novel.find({ author: req.user._id })
             .sort({ updatedAt: -1 });
-        res.json(novels.map(n => formatNovelFeed(n, req.user._id)));
+        res.json(novels.map(n => formatNovelForWriter(n, req.user._id)));
     } catch (err) {
         res.status(500).json({ error: 'Failed to fetch your novels' });
     }
@@ -205,7 +215,6 @@ router.get('/:id/chapters/:chapterId', async (req, res) => {
 
         if (!isFree) {
             if (!req.user) return res.status(401).json({ error: 'Login required' });
-
             const user = await User.findById(req.user._id).select('unlockedNovels');
             const hasUnlocked = user.unlockedNovels.some(
                 id => id.toString() === novel._id.toString()
@@ -438,9 +447,17 @@ router.post('/:id/chapters', protect, async (req, res) => {
         novel.totalChapters = novel.chapters.length;
         await novel.save();
 
+        const savedChapter = novel.chapters[novel.chapters.length - 1];
+
         res.status(201).json({
             message: 'Chapter added',
-            chapter: novel.chapters[novel.chapters.length - 1],
+            chapter: {
+                _id: savedChapter._id,
+                title: savedChapter.title,
+                order: savedChapter.order,
+                wordCount: savedChapter.wordCount,
+                createdAt: savedChapter.createdAt,
+            },
             totalChapters: novel.totalChapters,
         });
     } catch (err) {
