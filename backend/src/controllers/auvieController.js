@@ -19,7 +19,7 @@ const {
     generateSpeech,
     uploadAudioToCloudinary,
     fetchElevenLabsVoices
-} = require('../utils/elevenlabs');
+} = require('../utils/elevenLabs');
 
 // Constants
 const AUVIE_PURCHASE_PRICE = 200;
