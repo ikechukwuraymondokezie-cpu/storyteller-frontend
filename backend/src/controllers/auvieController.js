@@ -36,12 +36,11 @@ exports.getVoices = async (req, res) => {
     try {
         const rawVoices = await fetchElevenLabsVoices();
 
-        // Enrichment: Provide enough data for the Flutter Workshop UI
         const cleanVoices = rawVoices.map(v => ({
             voice_id: v.voice_id,
             name: v.name,
             preview_url: v.preview_url,
-            category: v.category, // e.g., 'cloned', 'generated', 'professional'
+            category: v.category,
             labels: v.labels
         }));
 
@@ -49,6 +48,17 @@ exports.getVoices = async (req, res) => {
     } catch (err) {
         console.error('ElevenLabs voices error:', err.message);
         res.status(500).json({ error: 'Failed to fetch voices' });
+    }
+};
+
+// FIXED: Added missing getSounds function to prevent Express route crash
+exports.getSounds = async (req, res) => {
+    try {
+        const sounds = getAllSoundTags();
+        res.json(sounds);
+    } catch (err) {
+        console.error('Sound library error:', err.message);
+        res.status(500).json({ error: 'Failed to fetch sound library' });
     }
 };
 
