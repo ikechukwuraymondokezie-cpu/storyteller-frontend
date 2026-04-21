@@ -18,12 +18,11 @@ function parseHashtags(content) {
 
     /**
      * Regex breakdown:
-     * #([a-z][a-z0-9_]*) -> standard tags with names
-     * |#(?=\s|$)         -> looks for '#' followed by space or end of string (Blank Reset)
+     * #([a-zA-Z][a-zA-Z0-9_]*) -> standard tags (now allowing caps for names like #John)
+     * |#(?=\s|$)               -> looks for '#' followed by space or end of string (Blank Reset)
      */
-    const tagPattern = /#([a-z][a-z0-9_]*)|#(?=\s|$)/gi;
+    const tagPattern = /#([a-zA-Z][a-zA-Z0-9_]*)|#(?=\s|$)/g;
 
-    // We use a manual split/match loop here to ensure the "Blank Tag" is captured correctly
     const parts = content.split(tagPattern);
     const segments = [];
     let order = 0;
@@ -32,26 +31,26 @@ function parseHashtags(content) {
     for (let i = 0; i < parts.length; i++) {
         const part = parts[i];
 
-        // Handle undefined parts from the regex capture groups
         if (part === undefined) continue;
         if (!part && i % 2 === 0) continue;
 
         if (i % 2 === 1) {
-            // Captured hashtag name
-            const tag = part.toLowerCase().trim();
+            // Captured hashtag name - Keep original casing for display, but lowercase for SFX check
+            const originalTag = part.trim();
+            const lowerTag = originalTag.toLowerCase();
 
             // 1. BLANK RESET (#) or MANUAL NARRATOR (#n)
-            if (tag === "" || tag === "n") {
+            if (lowerTag === "" || lowerTag === "n") {
                 currentVoiceTag = 'narrator';
                 continue;
             }
 
             // 2. LOOP STOP
-            if (tag.endsWith('_stop')) {
-                const baseName = tag.slice(0, -5);
+            if (lowerTag.endsWith('_stop')) {
+                const baseName = lowerTag.slice(0, -5);
                 segments.push({
                     type: 'loop_stop',
-                    value: baseName,
+                    value: baseName, // Use the actual name (e.g., 'rain')
                     voiceTag: currentVoiceTag,
                     order: order++,
                     audioUrl: null,
@@ -60,8 +59,8 @@ function parseHashtags(content) {
                 });
 
                 // 3. LOOP START
-            } else if (tag.endsWith('_start')) {
-                const baseName = tag.slice(0, -6);
+            } else if (lowerTag.endsWith('_start')) {
+                const baseName = lowerTag.slice(0, -6);
                 segments.push({
                     type: 'loop_start',
                     value: baseName,
@@ -73,20 +72,20 @@ function parseHashtags(content) {
                 });
 
                 // 4. KNOWN SFX (oneshot)
-            } else if (Object.prototype.hasOwnProperty.call(SOUND_LIBRARY, tag)) {
+            } else if (Object.prototype.hasOwnProperty.call(SOUND_LIBRARY, lowerTag)) {
                 segments.push({
                     type: 'oneshot',
-                    value: tag,
+                    value: lowerTag, // Shows 'gunshot' instead of 'sfx'
                     voiceTag: currentVoiceTag,
                     order: order++,
-                    audioUrl: SOUND_LIBRARY[tag],
+                    audioUrl: SOUND_LIBRARY[lowerTag],
                     volume: 1.0,
                     delay: 0,
                 });
 
-                // 5. UNKNOWN TAG -> Character Switch
+                // 5. UNKNOWN TAG -> Character Switch (e.g., #John)
             } else {
-                currentVoiceTag = tag;
+                currentVoiceTag = originalTag;
             }
 
         } else {
@@ -97,7 +96,8 @@ function parseHashtags(content) {
                 segments.push({
                     type: 'text',
                     value: cleanText,
-                    voiceTag: currentVoiceTag, // Uses whatever character is currently active
+                    voiceTag: currentVoiceTag.toLowerCase(), // For logic/ElevenLabs
+                    characterName: currentVoiceTag,         // For Workshop UI Display (e.g., 'John')
                     order: order++,
                     audioUrl: null,
                     volume: 1.0,
@@ -112,11 +112,10 @@ function parseHashtags(content) {
 
 /**
  * Strip all #hashtags from text for reader-facing display.
- * Includes lone hashtags.
  */
 function stripHashtags(text) {
     return text
-        .replace(/#([a-z][a-z0-9_]*)|#(?=\s|$)/gi, '')
+        .replace(/#([a-zA-Z][a-zA-Z0-9_]*)|#(?=\s|$)/g, '')
         .replace(/\s{2,}/g, ' ')
         .trim();
 }
