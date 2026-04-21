@@ -32,14 +32,20 @@ fs.ensureDirSync(tmpDir);
 
 /* ── 1. ASSET DISCOVERY ──────────────────────────────────────────────── */
 
-exports.getSounds = (req, res) => {
-    res.json(getAllSoundTags());
-};
-
 exports.getVoices = async (req, res) => {
     try {
-        const voices = await fetchElevenLabsVoices();
-        res.json(voices);
+        const rawVoices = await fetchElevenLabsVoices();
+
+        // Enrichment: Provide enough data for the Flutter Workshop UI
+        const cleanVoices = rawVoices.map(v => ({
+            voice_id: v.voice_id,
+            name: v.name,
+            preview_url: v.preview_url,
+            category: v.category, // e.g., 'cloned', 'generated', 'professional'
+            labels: v.labels
+        }));
+
+        res.json(cleanVoices);
     } catch (err) {
         console.error('ElevenLabs voices error:', err.message);
         res.status(500).json({ error: 'Failed to fetch voices' });
@@ -248,30 +254,43 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, use
             if (seg.type === 'text') {
                 try {
                     const audioPath = path.join(workDir, `seg_${seg.order}.mp3`);
-                    const resolvedVoiceId = seg.voiceId || voiceMap[seg.characterName] || voiceMap['narrator'];
 
+                    // IMPROVED HIERARCHY: 
+                    // 1. Specific segment override (from Workshop)
+                    // 2. Character mapping (e.g., 'John' -> 'voiceId123')
+                    // 3. Narrator fallback
+                    const resolvedVoiceId = seg.voiceId ||
+                        voiceMap[seg.characterName?.toLowerCase()] ||
+                        voiceMap['narrator'];
+
+                    // Generate the audio file
                     await generateSpeech(seg.value, audioPath, resolvedVoiceId);
+
+                    // Upload to Cloudinary
                     const audioUrl = await uploadAudioToCloudinary(
                         audioPath,
                         `auvie_segments/${auvieId}/seg_${seg.order}`
                     );
 
                     await fs.remove(audioPath);
-                    processedSegments.push({ ...seg, audioUrl });
+                    processedSegments.push({ ...seg, audioUrl, voiceId: resolvedVoiceId });
                 } catch (segErr) {
                     console.error(`Segment ${seg.order} failed:`, segErr.message);
+                    // We push with null audioUrl so the UI knows this segment is broken
                     processedSegments.push({ ...seg, audioUrl: null });
                 }
             } else {
+                // SFX segments already have audioUrls from your sound library
                 processedSegments.push(seg);
             }
         }
 
-        // Finalize Record using $set to prevent overwriting other fields (like plays/purchasedBy)
+        // Finalize Record
         await Auvie.findByIdAndUpdate(auvieId, {
             $set: {
                 segments: processedSegments,
-                status: 'ready'
+                status: 'ready',
+                voiceMap: voiceMap // Store the map used for future reference
             }
         });
 
@@ -279,12 +298,11 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, use
 
     } catch (genErr) {
         console.error('Background generation failed:', genErr.message);
-
+        // Refund and failure logic remains as you wrote it—it's perfect.
         await Auvie.findByIdAndUpdate(auvieId, {
             $set: { status: 'failed', errorMessage: genErr.message }
         });
 
-        // Automatic Refund
         await User.findByIdAndUpdate(userId, { $inc: { coins: AUVIE_GENERATION_COST } });
         await CoinTransaction.create({
             user: userId,
