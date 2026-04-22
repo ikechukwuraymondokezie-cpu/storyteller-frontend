@@ -178,7 +178,7 @@ exports.updateSegments = async (req, res) => {
 
 /* ── 4. GENERATION ENGINE ────────────────────────────────────────────── */
 
-exports.generateAuvie = async (req, res) => {
+exports.generateAuvie = async (req, res, next) => {
     try {
         const { novelId, chapterId } = req.params;
         const { segments: workshopSegments, voiceMap: workshopVoiceMap } = req.body;
