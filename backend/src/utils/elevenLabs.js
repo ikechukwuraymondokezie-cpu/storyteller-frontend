@@ -18,7 +18,7 @@ exports.generateSpeech = async (text, outputPath, voiceId) => {
             url: `https://api.elevenlabs.io/v1/text-to-speech/${vId}`,
             data: {
                 text: text,
-                model_id: 'eleven_multilingual_v2',
+                model_id: 'eleven_multilingual_v2', // V2 Model handles the context and accent better
                 voice_settings: {
                     stability: 0.5,
                     similarity_boost: 0.75
@@ -42,8 +42,7 @@ exports.generateSpeech = async (text, outputPath, voiceId) => {
 };
 
 /**
- * UPDATED: Renamed to match auvieController.js import
- * Proxy function to fetch available voices for the Flutter UI
+ * Fetches all voices with V2 attributes and Preview URLs for the Flutter Workshop
  */
 exports.fetchElevenLabsVoices = async () => {
     try {
@@ -54,9 +53,36 @@ exports.fetchElevenLabsVoices = async () => {
                 'xi-api-key': process.env.ELEVENLABS_API_KEY
             }
         });
-        return response.data.voices;
+
+        // Ensure we pass the preview_url so you can listen to them in the app
+        return response.data.voices.map(v => ({
+            voice_id: v.voice_id,
+            name: v.name,
+            preview_url: v.preview_url, // Direct link to listen to the voice
+            category: v.category,
+            labels: v.labels,
+            description: v.description
+        }));
     } catch (err) {
         console.error('ElevenLabs Fetch Voices Error:', err.response?.data || err.message);
         throw new Error('Failed to fetch voices from ElevenLabs');
+    }
+};
+
+/**
+ * ADMIN UTILITY: Use this to give your account coins for testing
+ * You can call this from a temporary route or directly in your code
+ */
+exports.grantTestCoins = async (User, userId, amount = 50000) => {
+    try {
+        const user = await User.findById(userId);
+        if (user) {
+            user.coins += amount;
+            await user.save();
+            console.log(`✅ Success: Added ${amount} coins to user ${user.username}`);
+            return user.coins;
+        }
+    } catch (err) {
+        console.error('Failed to grant test coins:', err.message);
     }
 };
