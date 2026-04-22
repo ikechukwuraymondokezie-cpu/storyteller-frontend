@@ -327,7 +327,7 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, use
 
 /* ── 6. COMMERCE (PURCHASING) ────────────────────────────────────────── */
 
-exports.purchaseAuvie = async (req, res) => {
+exports.purchaseAuvie = async (req, res, next) => {
     try {
         const auvie = await Auvie.findById(req.params.id).populate('novel', 'title');
         if (!auvie || auvie.status !== 'ready') return res.status(400).json({ error: 'Auvie not available' });
