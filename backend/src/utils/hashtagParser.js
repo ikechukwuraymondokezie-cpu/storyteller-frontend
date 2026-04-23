@@ -1,6 +1,6 @@
 /* ── HASHTAG PARSER ──────────────────────────────────────────────────────
  * Converts novel chapter content into ordered Auvie segments.
- *
+ * * Updated: Direct Address SFX support (e.g., #gunshot1, #rain2_start)
  * Voice tagging:
  * Unknown hashtags (e.g. #hero, #villain) are character switches.
  * Blank tags (#) or #n reset the voice to 'narrator'.
@@ -18,7 +18,7 @@ function parseHashtags(content) {
 
     /**
      * Regex breakdown:
-     * #([a-zA-Z][a-zA-Z0-9_]*) -> standard tags (now allowing caps for names like #John)
+     * #([a-zA-Z][a-zA-Z0-9_]*) -> standard tags (allowing alphanumeric for variants like #gunshot1)
      * |#(?=\s|$)               -> looks for '#' followed by space or end of string (Blank Reset)
      */
     const tagPattern = /#([a-zA-Z][a-zA-Z0-9_]*)|#(?=\s|$)/g;
@@ -45,38 +45,39 @@ function parseHashtags(content) {
                 continue;
             }
 
-            // 2. LOOP STOP
+            // 2. LOOP STOP (#rain_stop)
             if (lowerTag.endsWith('_stop')) {
                 const baseName = lowerTag.slice(0, -5);
                 segments.push({
                     type: 'loop_stop',
-                    value: baseName, // Use the actual name (e.g., 'rain')
-                    voiceTag: currentVoiceTag,
+                    value: baseName,
+                    voiceTag: currentVoiceTag.toLowerCase(),
                     order: order++,
                     audioUrl: null,
                     volume: 1.0,
                     delay: 0,
                 });
 
-                // 3. LOOP START
+                // 3. LOOP START (#rain1_start or #rain_start)
             } else if (lowerTag.endsWith('_start')) {
                 const baseName = lowerTag.slice(0, -6);
                 segments.push({
                     type: 'loop_start',
                     value: baseName,
-                    voiceTag: currentVoiceTag,
+                    voiceTag: currentVoiceTag.toLowerCase(),
                     order: order++,
-                    audioUrl: SOUND_LIBRARY[baseName] || SOUND_LIBRARY[`${baseName}_start`] || null,
+                    // Checks for specific variant start first, then falls back to baseName URL
+                    audioUrl: SOUND_LIBRARY[lowerTag] || SOUND_LIBRARY[baseName] || null,
                     volume: 1.0,
                     delay: 0,
                 });
 
-                // 4. KNOWN SFX (oneshot)
+                // 4. KNOWN SFX (oneshot) - Handles #gunshot1, #explosion, etc.
             } else if (Object.prototype.hasOwnProperty.call(SOUND_LIBRARY, lowerTag)) {
                 segments.push({
                     type: 'oneshot',
-                    value: lowerTag, // Shows 'gunshot' instead of 'sfx'
-                    voiceTag: currentVoiceTag,
+                    value: lowerTag,
+                    voiceTag: currentVoiceTag.toLowerCase(),
                     order: order++,
                     audioUrl: SOUND_LIBRARY[lowerTag],
                     volume: 1.0,
@@ -97,7 +98,7 @@ function parseHashtags(content) {
                     type: 'text',
                     value: cleanText,
                     voiceTag: currentVoiceTag.toLowerCase(), // For logic/ElevenLabs
-                    characterName: currentVoiceTag,         // For Workshop UI Display (e.g., 'John')
+                    characterName: currentVoiceTag,         // For Workshop UI Display
                     order: order++,
                     audioUrl: null,
                     volume: 1.0,

@@ -1,6 +1,6 @@
 /* ── SOUND LIBRARY ───────────────────────────────────────────────────────
- * All Cloudinary sound URLs live here.
- * The routes and controller never need to know about URLs directly.
+ * Updated: Direct Address System. 
+ * Allows authors to specify exact variants like #gunshot1 or #rain3.
  * ─────────────────────────────────────────────────────────────────────── */
 
 const SOUND_VARIANTS = {
@@ -60,36 +60,56 @@ const SOUND_VARIANTS = {
 };
 
 /**
- * Pick a random variant from an array of URLs.
- */
-function pickVariant(variants) {
-    if (!variants || variants.length === 0) return null;
-    return variants[Math.floor(Math.random() * variants.length)];
-}
-
-/**
- * Build a flat key → URL map with random variant selection.
- * Also auto-generates _start/_stop keys for every sound.
+ * Builds a comprehensive map of tag -> URL.
+ * Every variant is registered as 'tag' + 'index+1' (e.g., rain1, rain2).
+ * For backward compatibility, the base tag (e.g., 'rain') uses variant 1.
  */
 function buildSoundLibrary() {
     const lib = {};
+
     for (const [key, variants] of Object.entries(SOUND_VARIANTS)) {
-        const picked = pickVariant(variants);
-        lib[key] = picked;
-        lib[`${key}_start`] = picked;
-        lib[`${key}_stop`] = null; // stop tag carries no audio
+        variants.forEach((url, index) => {
+            const variantNumber = index + 1;
+            const uniqueTag = `${key}${variantNumber}`;
+
+            lib[uniqueTag] = url;
+
+            // Map the primary/start tags to the first variant by default
+            if (index === 0) {
+                lib[key] = url;
+                lib[`${key}_start`] = url;
+            }
+        });
+
+        // Loop stops never carry audio
+        lib[`${key}_stop`] = null;
     }
+
     return lib;
 }
 
 /**
- * Returns all sound tag names Flutter should know about
- * (base names + _start/_stop variants).
+ * Returns a flat list of all valid tags for the Flutter dropdown.
+ * Includes indexed variants (rain1, rain2) and control tags (rain_stop).
  */
 function getAllSoundTags() {
-    const keys = Object.keys(SOUND_VARIANTS);
-    const loops = keys.flatMap(k => [`${k}_start`, `${k}_stop`]);
-    return [...keys, ...loops];
+    const allTags = [];
+
+    for (const [key, variants] of Object.entries(SOUND_VARIANTS)) {
+        // Add indexed variants: gunshot1, gunshot2...
+        variants.forEach((_, index) => {
+            allTags.push(`${key}${index + 1}`);
+        });
+
+        // Add control tags
+        allTags.push(`${key}_start`);
+        allTags.push(`${key}_stop`);
+
+        // Add the base tag as a generic option
+        allTags.push(key);
+    }
+
+    return [...new Set(allTags)].sort(); // Deduplicate and sort
 }
 
 module.exports = { SOUND_VARIANTS, buildSoundLibrary, getAllSoundTags };
