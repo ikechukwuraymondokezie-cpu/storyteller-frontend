@@ -32,7 +32,7 @@ fs.ensureDirSync(tmpDir);
 
 /* ── 1. ASSET DISCOVERY ──────────────────────────────────────────────── */
 
-exports.getVoices = async (req, res) => {
+exports.getVoices = async (req, res, next) => {
     try {
         const rawVoices = await fetchElevenLabsVoices();
 
@@ -46,13 +46,13 @@ exports.getVoices = async (req, res) => {
 
         res.json(cleanVoices);
     } catch (err) {
-        console.error('ElevenLabs voices error:', err.message);
-        res.status(500).json({ error: 'Failed to fetch voices' });
+        console.error('Purchase error:', err.message);
+        return next(err);
     }
 };
 
 // FIXED: Added missing getSounds function to prevent Express route crash
-exports.getSounds = async (req, res) => {
+exports.getSounds = async (req, res, next) => {
     try {
         const sounds = getAllSoundTags();
         res.json(sounds);
@@ -64,7 +64,7 @@ exports.getSounds = async (req, res) => {
 
 /* ── 2. DATA FETCHING & STATUS ───────────────────────────────────────── */
 
-exports.getAuvie = async (req, res) => {
+exports.getAuvie = async (req, res, next) => {
     try {
         const auvie = await Auvie.findById(req.params.id)
             .populate('novel', 'title cover')
@@ -96,8 +96,8 @@ exports.getAuvie = async (req, res) => {
             createdAt: auvie.createdAt,
         });
     } catch (err) {
-        console.error('Fetch auvie error:', err.message);
-        res.status(500).json({ error: 'Failed to fetch auvie' });
+        console.error('Purchase error:', err.message);
+        return next(err);
     }
 };
 
@@ -132,8 +132,8 @@ exports.getDraftPreview = async (req, res) => {
             totalCost: AUVIE_GENERATION_COST,
         });
     } catch (err) {
-        console.error('Draft preview error:', err.message);
-        res.status(500).json({ error: 'Failed to generate preview' });
+        console.error('Purchase error:', err.message);
+        return next(err);
     }
 };
 
@@ -171,8 +171,8 @@ exports.updateSegments = async (req, res) => {
 
         res.json({ message: 'Segments updated', segments: auvie.segments });
     } catch (err) {
-        console.error('Update segments error:', err.message);
-        res.status(500).json({ error: 'Failed to update segments' });
+        console.error('Purchase error:', err.message);
+        return next(err);
     }
 };
 
@@ -243,11 +243,14 @@ exports.generateAuvie = async (req, res, next) => {
         });
 
         // 4. Trigger Background Worker
+        // We don't await this so the user gets the 202 response immediately
         _runBackgroundWorker(auvie._id, segmentsToProcess, voiceMap, novel.title, req.user._id);
 
     } catch (err) {
         console.error('Generate error:', err.message);
-        res.status(500).json({ error: 'Failed to start generation' });
+        // CHANGE: Use return and pass the error to next()
+        // This stops execution and lets Express handle the lifecycle properly
+        return next(err);
     }
 };
 
@@ -380,6 +383,6 @@ exports.purchaseAuvie = async (req, res, next) => {
         });
     } catch (err) {
         console.error('Purchase error:', err.message);
-        res.status(500).json({ error: 'Purchase failed' });
+        return next(err);
     }
 };
