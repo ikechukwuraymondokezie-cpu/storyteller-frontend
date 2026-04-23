@@ -26,6 +26,22 @@ const AUVIE_PURCHASE_PRICE = 200;
 const AUVIE_GENERATION_COST = 100;
 const PLATFORM_COMMISSION = 0.25;
 
+// ── FREE TIER SAFETY FLAGS ────────────────────────────────────────────
+// Set DEV_MODE=true in your Render env vars while testing on free tier.
+// Set it to false (or remove it) when you upgrade to a paid ElevenLabs plan.
+const DEV_MODE = process.env.DEV_MODE === 'true';
+
+// How long to wait between ElevenLabs calls (ms).
+// 3000ms = 3 seconds. Prevents "unusual activity" flag on free tier.
+const ELEVENLABS_CALL_DELAY_MS = DEV_MODE ? 3000 : 500;
+
+// Max characters per segment sent to ElevenLabs in dev mode.
+// Keeps you well under the 10k/month free tier limit during testing.
+const DEV_MAX_CHARS_PER_SEGMENT = 120;
+
+// Helper — pause execution between API calls
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 // Local temp directory setup - Using /tmp for better compatibility with Render/Serverless
 const tmpDir = path.join('/tmp', 'auvie');
 fs.ensureDirSync(tmpDir);
@@ -46,12 +62,11 @@ exports.getVoices = async (req, res, next) => {
 
         res.json(cleanVoices);
     } catch (err) {
-        console.error('Purchase error:', err.message);
+        console.error('getVoices error:', err.message);
         return next(err);
     }
 };
 
-// FIXED: Added missing getSounds function to prevent Express route crash
 exports.getSounds = async (req, res, next) => {
     try {
         const sounds = getAllSoundTags();
@@ -73,9 +88,7 @@ exports.getAuvie = async (req, res, next) => {
         if (!auvie) return res.status(404).json({ error: 'Auvie not found' });
 
         const userId = req.user._id.toString();
-        // Fix: Author comparison using ._id after population
         const isAuthor = auvie.author._id.toString() === userId;
-        // Fix: Explicitly stringify IDs for comparison
         const hasPurchased = auvie.purchasedBy.some(id => id.toString() === userId);
         const canAccess = isAuthor || hasPurchased;
 
@@ -96,7 +109,7 @@ exports.getAuvie = async (req, res, next) => {
             createdAt: auvie.createdAt,
         });
     } catch (err) {
-        console.error('Purchase error:', err.message);
+        console.error('getAuvie error:', err.message);
         return next(err);
     }
 };
@@ -132,8 +145,8 @@ exports.getDraftPreview = async (req, res) => {
             totalCost: AUVIE_GENERATION_COST,
         });
     } catch (err) {
-        console.error('Purchase error:', err.message);
-        return next(err);
+        console.error('getDraftPreview error:', err.message);
+        return res.status(500).json({ error: 'Failed to get draft preview' });
     }
 };
 
@@ -154,7 +167,6 @@ exports.updateSegments = async (req, res) => {
             if (typeof edit.order === 'number') editMap[edit.order] = edit;
         }
 
-        // Fix: Use .set() and markModified for complex subdocument updates
         auvie.segments.forEach((seg) => {
             const edit = editMap[seg.order];
             if (edit) {
@@ -171,8 +183,8 @@ exports.updateSegments = async (req, res) => {
 
         res.json({ message: 'Segments updated', segments: auvie.segments });
     } catch (err) {
-        console.error('Purchase error:', err.message);
-        return next(err);
+        console.error('updateSegments error:', err.message);
+        return res.status(500).json({ error: 'Failed to update segments' });
     }
 };
 
@@ -195,14 +207,15 @@ exports.generateAuvie = async (req, res, next) => {
             return res.status(400).json({ error: 'Insufficient coins', current: user.coins });
         }
 
-        // Logic: Use segments from Flutter workshop if provided, else parse fresh
         const segmentsToProcess = (workshopSegments && workshopSegments.length > 0)
             ? workshopSegments
             : parseHashtags(chapter.content);
 
-        const voiceMap = workshopVoiceMap || { narrator: process.env.ELEVENLABS_VOICE_ID || 'pNInz6obpg8ndPey74S' };
+        const voiceMap = workshopVoiceMap || {
+            narrator: process.env.ELEVENLABS_VOICE_ID || 'pNInz6obpg8ndPey74S'
+        };
 
-        // 1. Transaction: Deduct coins
+        // Deduct coins
         user.coins -= AUVIE_GENERATION_COST;
         await user.save();
 
@@ -215,7 +228,6 @@ exports.generateAuvie = async (req, res, next) => {
             relatedNovel: novel._id
         });
 
-        // 2. Database Record: Use $set with findOneAndUpdate to avoid versioning conflicts
         const auvie = await Auvie.findOneAndUpdate(
             { novel: novelId, chapterId: chapterId },
             {
@@ -235,93 +247,134 @@ exports.generateAuvie = async (req, res, next) => {
         novel.hasAuvie = true;
         await novel.save();
 
-        // 3. Respond immediately
+        // Respond immediately so Flutter gets the 202 right away
         res.status(202).json({
             message: 'Generation started',
             auvieId: auvie._id,
             status: 'generating'
         });
 
-        // 4. Trigger Background Worker
-        // We don't await this so the user gets the 202 response immediately
+        // Fire background worker — NOT awaited
         _runBackgroundWorker(auvie._id, segmentsToProcess, voiceMap, novel.title, req.user._id);
 
     } catch (err) {
-        console.error('Generate error:', err.message);
-        // CHANGE: Use return and pass the error to next()
-        // This stops execution and lets Express handle the lifecycle properly
+        console.error('generateAuvie error:', err.message);
         return next(err);
     }
 };
 
-/* ── 5. THE BACKGROUND WORKER (TTS & Processing) ───────────────────── */
+/* ── 5. THE BACKGROUND WORKER (TTS & Processing) ────────────────────── */
 
 async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, userId) {
     const workDir = path.join(tmpDir, auvieId.toString());
     await fs.ensureDir(workDir);
 
+    if (DEV_MODE) {
+        console.log(`[Auvie Worker] DEV_MODE ON — delay: ${ELEVENLABS_CALL_DELAY_MS}ms, max chars: ${DEV_MAX_CHARS_PER_SEGMENT}`);
+    }
+
     try {
         const processedSegments = [];
+        let segmentCallCount = 0;
 
         for (const seg of segments) {
             if (seg.type === 'text') {
                 try {
                     const audioPath = path.join(workDir, `seg_${seg.order}.mp3`);
 
-                    // IMPROVED HIERARCHY: 
-                    // 1. Specific segment override (from Workshop)
-                    // 2. Character mapping (e.g., 'John' -> 'voiceId123')
-                    // 3. Narrator fallback
-                    const resolvedVoiceId = seg.voiceId ||
+                    // Voice resolution hierarchy:
+                    // 1. Segment-level override (set in Workshop)
+                    // 2. Character name mapped to a voice (e.g. "John" -> voiceId)
+                    // 3. Narrator fallback from voiceMap
+                    // 4. Hard fallback to env var
+                    const resolvedVoiceId =
+                        seg.voiceId ||
                         voiceMap[seg.characterName?.toLowerCase()] ||
-                        voiceMap['narrator'];
+                        voiceMap['narrator'] ||
+                        process.env.ELEVENLABS_VOICE_ID ||
+                        'pNInz6obpg8ndPey74S';
 
-                    // Generate the audio file
-                    await generateSpeech(seg.value, audioPath, resolvedVoiceId);
+                    // ── FREE TIER: truncate long segments to save quota ──
+                    // In DEV_MODE each segment is capped at DEV_MAX_CHARS_PER_SEGMENT
+                    // so a 10-segment chapter costs ~1,200 chars instead of ~5,000+
+                    const textToSend = DEV_MODE
+                        ? seg.value.substring(0, DEV_MAX_CHARS_PER_SEGMENT)
+                        : seg.value;
 
-                    // Upload to Cloudinary
+                    console.log(
+                        `[Auvie Worker] Segment ${seg.order} — voice: ${resolvedVoiceId} — ${textToSend.length} chars`
+                    );
+
+                    // ── RATE LIMIT GUARD ──
+                    // Wait before every call EXCEPT the very first one.
+                    // This is the main fix for the "detected_unusual_activity" 401.
+                    if (segmentCallCount > 0) {
+                        console.log(`[Auvie Worker] Waiting ${ELEVENLABS_CALL_DELAY_MS}ms before next ElevenLabs call...`);
+                        await sleep(ELEVENLABS_CALL_DELAY_MS);
+                    }
+
+                    await generateSpeech(textToSend, audioPath, resolvedVoiceId);
+                    segmentCallCount++;
+
                     const audioUrl = await uploadAudioToCloudinary(
                         audioPath,
                         `auvie_segments/${auvieId}/seg_${seg.order}`
                     );
 
                     await fs.remove(audioPath);
-                    processedSegments.push({ ...seg, audioUrl, voiceId: resolvedVoiceId });
+
+                    processedSegments.push({
+                        ...seg,
+                        // Store the full original text (not the truncated version)
+                        // so readers always see the complete prose
+                        value: seg.value,
+                        audioUrl,
+                        voiceId: resolvedVoiceId,
+                    });
+
+                    console.log(`[Auvie Worker] Segment ${seg.order} done — uploaded: ${audioUrl}`);
+
                 } catch (segErr) {
-                    console.error(`Segment ${seg.order} failed:`, segErr.message);
-                    // We push with null audioUrl so the UI knows this segment is broken
+                    console.error(`[Auvie Worker] Segment ${seg.order} failed:`, segErr.message);
+                    // Push with null audioUrl — player will skip this segment gracefully
                     processedSegments.push({ ...seg, audioUrl: null });
                 }
+
             } else {
-                // SFX segments already have audioUrls from your sound library
+                // SFX / loop_start / loop_stop — audioUrls already resolved from soundLibrary
                 processedSegments.push(seg);
+                console.log(`[Auvie Worker] Segment ${seg.order} — SFX: ${seg.value}`);
             }
         }
 
-        // Finalize Record
+        console.log(`[Auvie Worker] All segments processed. Saving to DB...`);
+
         await Auvie.findByIdAndUpdate(auvieId, {
             $set: {
                 segments: processedSegments,
                 status: 'ready',
-                voiceMap: voiceMap // Store the map used for future reference
+                voiceMap: voiceMap,
             }
         });
 
         await fs.remove(workDir);
+        console.log(`[Auvie Worker] Done — Auvie ${auvieId} is ready.`);
 
     } catch (genErr) {
-        console.error('Background generation failed:', genErr.message);
-        // Refund and failure logic remains as you wrote it—it's perfect.
+        console.error('[Auvie Worker] Fatal error:', genErr.message);
+
         await Auvie.findByIdAndUpdate(auvieId, {
             $set: { status: 'failed', errorMessage: genErr.message }
         });
 
+        // Refund coins
         await User.findByIdAndUpdate(userId, { $inc: { coins: AUVIE_GENERATION_COST } });
+
         await CoinTransaction.create({
             user: userId,
             type: 'refund',
             amount: AUVIE_GENERATION_COST,
-            description: `Refund: Auvie failed for ${novelTitle}`,
+            description: `Refund: Auvie generation failed for "${novelTitle}"`,
         });
 
         if (await fs.pathExists(workDir)) await fs.remove(workDir);
@@ -333,21 +386,24 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, use
 exports.purchaseAuvie = async (req, res, next) => {
     try {
         const auvie = await Auvie.findById(req.params.id).populate('novel', 'title');
-        if (!auvie || auvie.status !== 'ready') return res.status(400).json({ error: 'Auvie not available' });
+        if (!auvie || auvie.status !== 'ready') {
+            return res.status(400).json({ error: 'Auvie not available' });
+        }
 
         const userId = req.user._id;
-        // Fix: Check for purchase using .toString() logic
+
         if (auvie.purchasedBy.some(id => id.toString() === userId.toString())) {
             return res.status(400).json({ error: 'Already owned' });
         }
 
         const user = await User.findById(userId);
-        if (user.coins < auvie.coinPrice) return res.status(400).json({ error: 'Insufficient coins' });
+        if (user.coins < auvie.coinPrice) {
+            return res.status(400).json({ error: 'Insufficient coins' });
+        }
 
         const commission = Math.floor(auvie.coinPrice * PLATFORM_COMMISSION);
         const authorEarning = auvie.coinPrice - commission;
 
-        // Transactions
         user.coins -= auvie.coinPrice;
         user.purchasedAuvies.push(auvie._id);
         await user.save();
@@ -358,7 +414,6 @@ exports.purchaseAuvie = async (req, res, next) => {
         auvie.plays += 1;
         await auvie.save();
 
-        // Logs
         await CoinTransaction.create({
             user: userId,
             type: 'spend_auvie',
@@ -382,7 +437,7 @@ exports.purchaseAuvie = async (req, res, next) => {
             segments: auvie.segments
         });
     } catch (err) {
-        console.error('Purchase error:', err.message);
+        console.error('purchaseAuvie error:', err.message);
         return next(err);
     }
 };
