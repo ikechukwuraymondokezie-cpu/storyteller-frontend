@@ -16,7 +16,7 @@ const userSchema = new mongoose.Schema({
     password: {
         type: String,
         required: [true, 'Please add a password'],
-        select: false // Automatically hides password from API responses for security
+        select: false // Automatically hides password from API responses
     },
     avatar: {
         type: String,
@@ -68,18 +68,30 @@ const userSchema = new mongoose.Schema({
         default: 'NGN'
     },
 
-}, { 
+}, {
     timestamps: true,
-    toJSON: { virtuals: true }, // Ensures populated fields show up in Flutter
-    toObject: { virtuals: true } 
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true }
 });
 
-// Middleware to hash password
-userSchema.pre('save', async function (next) {
-    if (!this.isModified('password')) return next();
+/* ── MIDDLEWARE ──────────────────────────────────────────────────────── */
+
+/**
+ * FIXED: Removed 'next' from the async function signature.
+ * Modern Mongoose handles the completion of the hook via the returned Promise.
+ * This prevents the "next is not a function" error during .save() calls.
+ */
+userSchema.pre('save', async function () {
+    // If the password field hasn't been changed (e.g., just updating coins), skip hashing
+    if (!this.isModified('password')) {
+        return;
+    }
+
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);
 });
+
+/* ── METHODS ─────────────────────────────────────────────────────────── */
 
 // Method to compare password for login
 userSchema.methods.comparePassword = async function (enteredPassword) {
