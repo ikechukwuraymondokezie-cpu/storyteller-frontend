@@ -33,7 +33,7 @@ const DEV_MODE = process.env.DEV_MODE === 'true';
 
 // How long to wait between ElevenLabs calls (ms).
 // 3000ms = 3 seconds. Prevents "unusual activity" flag on free tier.
-const ELEVENLABS_CALL_DELAY_MS = DEV_MODE ? 3000 : 500;
+const ELEVENLABS_CALL_DELAY_MS = DEV_MODE ? 3000 : 3000;
 
 // Max characters per segment sent to ElevenLabs in dev mode.
 // Keeps you well under the 10k/month free tier limit during testing.
@@ -263,6 +263,34 @@ exports.generateAuvie = async (req, res, next) => {
     }
 };
 
+// ── RETRY + BACKOFF WRAPPER FOR ELEVENLABS ───────────────────────────
+async function generateWithRetry(text, audioPath, voiceId, retries = 3) {
+    try {
+        return await generateSpeech(text, audioPath, voiceId);
+    } catch (err) {
+        const status = err?.response?.status;
+        const detail = err?.response?.data?.detail?.status;
+
+        console.error(`[ElevenLabs Retry] Status: ${status}, Detail: ${detail}`);
+
+        // If ElevenLabs flags unusual activity → cooldown
+        if (detail === 'detected_unusual_activity') {
+            console.log('[Auvie Worker] Cooldown triggered (10s)...');
+            await sleep(10000);
+        }
+
+        // Retry only for rate/authorization issues
+        if (retries > 0 && (status === 401 || status === 429)) {
+            const backoff = (4 - retries) * 2000; // 2s → 4s → 6s
+            console.log(`[Retry] Waiting ${backoff}ms before retry...`);
+            await sleep(backoff);
+            return generateWithRetry(text, audioPath, voiceId, retries - 1);
+        }
+
+        throw err;
+    }
+}
+
 /* ── 5. THE BACKGROUND WORKER (TTS & Processing) ────────────────────── */
 
 async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, userId) {
@@ -308,13 +336,27 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, use
                     // ── RATE LIMIT GUARD ──
                     // Wait before every call EXCEPT the very first one.
                     // This is the main fix for the "detected_unusual_activity" 401.
+                    // ── RATE LIMIT + BURST CONTROL ──
                     if (segmentCallCount > 0) {
-                        console.log(`[Auvie Worker] Waiting ${ELEVENLABS_CALL_DELAY_MS}ms before next ElevenLabs call...`);
+                        console.log(`[Auvie Worker] Waiting ${ELEVENLABS_CALL_DELAY_MS}ms before next call...`);
                         await sleep(ELEVENLABS_CALL_DELAY_MS);
                     }
 
-                    await generateSpeech(textToSend, audioPath, resolvedVoiceId);
+                    // Every 5 segments → extra cooldown to avoid detection
+                    if (segmentCallCount > 0 && segmentCallCount % 5 === 0) {
+                        console.log('[Auvie Worker] Batch cooldown (5s)...');
+                        await sleep(5000);
+                    }
+
+                    // Use retry wrapper instead of raw call
+                    await generateWithRetry(textToSend, audioPath, resolvedVoiceId);
+
+                    // Treat retries as real calls → enforce delay AFTER success
                     segmentCallCount++;
+
+                    // Extra safety: small delay after each successful generation
+                    console.log('[Auvie Worker] Post-success cooldown (1s)...');
+                    await sleep(1000);
 
                     const audioUrl = await uploadAudioToCloudinary(
                         audioPath,
