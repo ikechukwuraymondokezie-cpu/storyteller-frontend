@@ -33,7 +33,7 @@ const DEV_MODE = process.env.DEV_MODE === 'true';
 
 // How long to wait between ElevenLabs calls (ms).
 // 3000ms = 3 seconds. Prevents "unusual activity" flag on free tier.
-const ELEVENLABS_CALL_DELAY_MS = DEV_MODE ? 3000 : 3000;
+const ELEVENLABS_CALL_DELAY_MS = DEV_MODE ? 3000 : 30000;
 
 // Max characters per segment sent to ElevenLabs in dev mode.
 // Keeps you well under the 10k/month free tier limit during testing.
