@@ -38,7 +38,7 @@ const userSchema = new mongoose.Schema({
     },
     role: {
         type: String,
-        enum: ['reader', 'writer', 'both'],
+        enum: ['reader', 'writer', 'both', 'admin'],
         default: 'reader'
     },
     coins: {
