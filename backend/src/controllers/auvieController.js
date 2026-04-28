@@ -297,128 +297,44 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, use
     const workDir = path.join(tmpDir, auvieId.toString());
     await fs.ensureDir(workDir);
 
-    if (DEV_MODE) {
-        console.log(`[Auvie Worker] DEV_MODE ON — delay: ${ELEVENLABS_CALL_DELAY_MS}ms, max chars: ${DEV_MAX_CHARS_PER_SEGMENT}`);
-    }
-
     try {
         const processedSegments = [];
         let segmentCallCount = 0;
 
         for (const seg of segments) {
             if (seg.type === 'text') {
-                try {
-                    const audioPath = path.join(workDir, `seg_${seg.order}.mp3`);
+                const audioPath = path.join(workDir, `seg_${seg.order}.mp3`);
+                const resolvedVoiceId = seg.voiceId || voiceMap[seg.characterName?.toLowerCase()] || voiceMap['narrator'] || 'pNInz6obpg8ndPey74S';
+                const textToSend = DEV_MODE ? seg.value.substring(0, DEV_MAX_CHARS_PER_SEGMENT) : seg.value;
 
-                    // Voice resolution hierarchy:
-                    // 1. Segment-level override (set in Workshop)
-                    // 2. Character name mapped to a voice (e.g. "John" -> voiceId)
-                    // 3. Narrator fallback from voiceMap
-                    // 4. Hard fallback to env var
-                    const resolvedVoiceId =
-                        seg.voiceId ||
-                        voiceMap[seg.characterName?.toLowerCase()] ||
-                        voiceMap['narrator'] ||
-                        process.env.ELEVENLABS_VOICE_ID ||
-                        'pNInz6obpg8ndPey74S';
+                if (segmentCallCount > 0) await sleep(ELEVENLABS_CALL_DELAY_MS);
 
-                    // ── FREE TIER: truncate long segments to save quota ──
-                    // In DEV_MODE each segment is capped at DEV_MAX_CHARS_PER_SEGMENT
-                    // so a 10-segment chapter costs ~1,200 chars instead of ~5,000+
-                    const textToSend = DEV_MODE
-                        ? seg.value.substring(0, DEV_MAX_CHARS_PER_SEGMENT)
-                        : seg.value;
+                // Any failure here now triggers the catch block below
+                await generateWithRetry(textToSend, audioPath, resolvedVoiceId);
+                segmentCallCount++;
 
-                    console.log(
-                        `[Auvie Worker] Segment ${seg.order} — voice: ${resolvedVoiceId} — ${textToSend.length} chars`
-                    );
+                const audioUrl = await uploadAudioToCloudinary(audioPath, `auvie_segments/${auvieId}/seg_${seg.order}`);
+                await fs.remove(audioPath);
 
-                    // ── RATE LIMIT GUARD ──
-                    // Wait before every call EXCEPT the very first one.
-                    // This is the main fix for the "detected_unusual_activity" 401.
-                    // ── RATE LIMIT + BURST CONTROL ──
-                    if (segmentCallCount > 0) {
-                        console.log(`[Auvie Worker] Waiting ${ELEVENLABS_CALL_DELAY_MS}ms before next call...`);
-                        await sleep(ELEVENLABS_CALL_DELAY_MS);
-                    }
-
-                    // Every 5 segments → extra cooldown to avoid detection
-                    if (segmentCallCount > 0 && segmentCallCount % 5 === 0) {
-                        console.log('[Auvie Worker] Batch cooldown (5s)...');
-                        await sleep(5000);
-                    }
-
-                    // Use retry wrapper instead of raw call
-                    await generateWithRetry(textToSend, audioPath, resolvedVoiceId);
-
-                    // Treat retries as real calls → enforce delay AFTER success
-                    segmentCallCount++;
-
-                    // Extra safety: small delay after each successful generation
-                    console.log('[Auvie Worker] Post-success cooldown (1s)...');
-                    await sleep(1000);
-
-                    const audioUrl = await uploadAudioToCloudinary(
-                        audioPath,
-                        `auvie_segments/${auvieId}/seg_${seg.order}`
-                    );
-
-                    await fs.remove(audioPath);
-
-                    processedSegments.push({
-                        ...seg,
-                        // Store the full original text (not the truncated version)
-                        // so readers always see the complete prose
-                        value: seg.value,
-                        audioUrl,
-                        voiceId: resolvedVoiceId,
-                    });
-
-                    console.log(`[Auvie Worker] Segment ${seg.order} done — uploaded: ${audioUrl}`);
-
-                } catch (segErr) {
-                    console.error(`[Auvie Worker] Segment ${seg.order} failed:`, segErr.message);
-                    // Push with null audioUrl — player will skip this segment gracefully
-                    processedSegments.push({ ...seg, audioUrl: null });
-                }
-
+                processedSegments.push({ ...seg, audioUrl, voiceId: resolvedVoiceId });
             } else {
-                // SFX / loop_start / loop_stop — audioUrls already resolved from soundLibrary
                 processedSegments.push(seg);
-                console.log(`[Auvie Worker] Segment ${seg.order} — SFX: ${seg.value}`);
             }
         }
 
-        console.log(`[Auvie Worker] All segments processed. Saving to DB...`);
-
         await Auvie.findByIdAndUpdate(auvieId, {
-            $set: {
-                segments: processedSegments,
-                status: 'ready',
-                voiceMap: voiceMap,
-            }
+            $set: { segments: processedSegments, status: 'ready', voiceMap }
         });
 
-        await fs.remove(workDir);
-        console.log(`[Auvie Worker] Done — Auvie ${auvieId} is ready.`);
-
     } catch (genErr) {
-        console.error('[Auvie Worker] Fatal error:', genErr.message);
-
+        console.error('[Auvie Worker] Fatal Failure:', genErr.message);
         await Auvie.findByIdAndUpdate(auvieId, {
             $set: { status: 'failed', errorMessage: genErr.message }
         });
-
-        // Refund coins
+        // Automatic Refund
         await User.findByIdAndUpdate(userId, { $inc: { coins: AUVIE_GENERATION_COST } });
-
-        await CoinTransaction.create({
-            user: userId,
-            type: 'refund',
-            amount: AUVIE_GENERATION_COST,
-            description: `Refund: Auvie generation failed for "${novelTitle}"`,
-        });
-
+    } finally {
+        // Always clean up the temp folder
         if (await fs.pathExists(workDir)) await fs.remove(workDir);
     }
 }

@@ -1,3 +1,31 @@
+/* ── NOVEL SCHEMA PATCH ──────────────────────────────────────────────────
+ * Add these two fields to your existing novelSchema in Novel.js,
+ * just before the closing of novelSchema fields (before { timestamps: true }).
+ *
+ * These power the "F3 Recommends" / Staff Picks feature.
+ * ─────────────────────────────────────────────────────────────────────── */
+
+// ADD TO novelSchema:
+//
+//    isStaffPick: {
+//        type: Boolean,
+//        default: false,
+//        index: true,
+//    },
+//    staffPickOrder: {
+//        type: Number,
+//        default: 0,
+//    },
+//
+// Also add 'admin' to the User role enum in User.js:
+//    role: {
+//        type: String,
+//        enum: ['reader', 'writer', 'both', 'admin'],
+//        default: 'reader'
+//    },
+
+// ── FULL UPDATED Novel.js ─────────────────────────────────────────────
+
 const mongoose = require('mongoose');
 
 const chapterSchema = new mongoose.Schema({
@@ -17,7 +45,7 @@ const novelSchema = new mongoose.Schema({
     },
     title: { type: String, required: true, trim: true },
     description: { type: String, default: "" },
-    cover: { type: String, default: "" }, // URL to Cloudinary
+    cover: { type: String, default: "" },
     genre: {
         type: String,
         enum: [
@@ -45,20 +73,23 @@ const novelSchema = new mongoose.Schema({
         default: null
     },
     unlockPrice: { type: Number, default: 50 },
+
+    // ── STAFF PICKS ───────────────────────────────────────────────────
+    isStaffPick: { type: Boolean, default: false, index: true },
+    staffPickOrder: { type: Number, default: 0 },
+
 }, { timestamps: true });
 
-// Auto-update totalChapters before saving
-novelSchema.pre('save', async function () {
-    if (this.chapters) {
-        this.totalChapters = this.chapters.length;
-    }
+novelSchema.pre('save', function (next) {
+    if (this.chapters) this.totalChapters = this.chapters.length;
+    next();
 });
 
-// Indexes
-// Note: If Render still gives issues, we can remove the 'text' index and use regex search
 novelSchema.index({ title: 'text', description: 'text', tags: 'text' });
 novelSchema.index({ author: 1, status: 1 });
 novelSchema.index({ genre: 1, status: 1 });
 novelSchema.index({ createdAt: -1 });
+novelSchema.index({ views: -1 });          // for trending sort
+novelSchema.index({ isStaffPick: 1, staffPickOrder: 1 }); // for staff picks
 
 module.exports = mongoose.model('Novel', novelSchema);
