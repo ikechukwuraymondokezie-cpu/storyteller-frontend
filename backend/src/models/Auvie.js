@@ -1,67 +1,93 @@
 const mongoose = require('mongoose');
 
-/**
- * A segment represents a single unit of the Auvie.
- * It is either a block of TTS text or a specific Sound Cue.
- */
+/* ── 1. CHARACTER PROFILE MODEL ─────────────────────────────────────────
+ * Centralized settings for specific characters within a Novel.
+ * ─────────────────────────────────────────────────────────────────────── */
+const characterProfileSchema = new mongoose.Schema({
+    novel: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Novel',
+        required: true
+    },
+    name: {
+        type: String,
+        required: true,
+        trim: true
+    },
+    voiceId: {
+        type: String,
+        required: true
+    },
+    // ElevenLabs specific fine-tuning
+    settings: {
+        stability: { type: Number, default: 0.5 },
+        similarity_boost: { type: Number, default: 0.75 },
+        style: { type: Number, default: 0.0 },
+        use_speaker_boost: { type: Boolean, default: true }
+    },
+    avatarUrl: { type: String, default: null },
+    description: { type: String, default: '' }
+}, { timestamps: true });
+
+// Ensure character names are unique within a single novel
+characterProfileSchema.index({ novel: 1, name: 1 }, { unique: true });
+
+/* ── 2. SEGMENT SCHEMA ──────────────────────────────────────────────────
+ * Individual units of audio (TTS or SFX).
+ * ─────────────────────────────────────────────────────────────────────── */
 const segmentSchema = new mongoose.Schema({
     type: {
         type: String,
-        // text: TTS content, oneshot: SFX like #gunshot
-        enum: ['text', 'cue', 'oneshot', 'loop_start', 'loop_stop'],
+        enum: ['text', 'cue', 'oneshot', 'hashtag', 'loop_start', 'loop_stop'],
         required: true
     },
-    // The actual text content or the name of the sound (e.g., 'explosion')
     value: {
         type: String,
         required: true
     },
-    // The Cloudinary URL for the generated TTS or the SFX file
     audioUrl: {
         type: String,
         default: null
     },
-    // Position in the playback sequence
     order: {
         type: Number,
         required: true
     },
-
-    /* ── WRITER CUSTOMIZATION FIELDS ── */
-    // The ElevenLabs Voice ID assigned to this specific text block
+    // Audio Metadata for Flutter performance optimization
+    metadata: {
+        fileSize: { type: Number, default: 0 }, // in bytes
+        bitrate: { type: Number, default: 128 }, // in kbps
+        mimeType: { type: String, default: 'audio/mpeg' }
+    },
     voiceId: {
         type: String,
         default: null
     },
-    // The tag used in the novel (e.g., 'narrator', 'hero', 'villain')
     characterName: {
         type: String,
         default: 'narrator'
     },
-    // Volume multiplier: 0.0 to 2.0
     volume: {
         type: Number,
         default: 1.0,
         min: 0,
         max: 2
     },
-    // Seconds of silence to wait before playing this segment
     delay: {
         type: Number,
         default: 0,
         min: 0,
         max: 15
     }
-}, { _id: false });
+}, { _id: true }); // Enabled _id to allow targeted debugging of segments
 
+/* ── 3. MAIN AUVIE SCHEMA ─────────────────────────────────────────────── */
 const auvieSchema = new mongoose.Schema({
     novel: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Novel',
         required: true
     },
-    // ── ATTACHMENT TO CHAPTER ──
-    // Points to the specific chapter ID within the Novel's chapters array
     chapterId: {
         type: mongoose.Schema.Types.ObjectId,
         required: true
@@ -71,65 +97,58 @@ const auvieSchema = new mongoose.Schema({
         ref: 'User',
         required: true
     },
-
-    // Permanent Cloudinary URL (if segments are stitched later)
+    // References to Character Profiles used in this Auvie
+    characters: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'CharacterProfile'
+    }],
     audioUrl: {
         type: String,
         default: null
     },
-
-    // Map of character tags to Voice IDs (e.g. { "hero": "pNInz..." })
     voiceMap: {
         type: Map,
         of: String,
         default: {}
     },
-
     duration: {
         type: Number,
         default: 0
     },
-
     coinPrice: {
         type: Number,
         default: 200
     },
-
     status: {
         type: String,
         enum: ['pending', 'generating', 'ready', 'failed'],
         default: 'pending'
     },
-
     errorMessage: {
         type: String,
         default: null
     },
-
-    // The array of segments updated by the Flutter Workshop
     segments: [segmentSchema],
-
     purchasedBy: [{
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'
     }],
-
     generationCost: {
         type: Number,
         default: 100
     },
-
     plays: {
         type: Number,
         default: 0
     },
-
 }, { timestamps: true });
 
 /* ── INDEXING ── */
-// Compound index ensures one Auvie per chapter per novel
 auvieSchema.index({ novel: 1, chapterId: 1 }, { unique: true });
 auvieSchema.index({ author: 1 });
 auvieSchema.index({ status: 1 });
 
-module.exports = mongoose.model('Auvie', auvieSchema);
+const CharacterProfile = mongoose.model('CharacterProfile', characterProfileSchema);
+const Auvie = mongoose.model('Auvie', auvieSchema);
+
+module.exports = { Auvie, CharacterProfile };

@@ -1,9 +1,14 @@
 const axios = require('axios');
 const fs = require('fs-extra');
+const cloudinary = require('cloudinary').v2;
+
+// ── CLOUDINARY CONFIGURATION ─────────────────────────────────────────
+// This uses your CLOUDINARY_URL environment variable automatically
+cloudinary.config({
+    cloudinary_url: process.env.CLOUDINARY_URL,
+});
 
 // ── MODEL SETTINGS ───────────────────────────────────────────────────
-// We are now defaulting to v2 for everything. 
-// If a specific generation fails, check if that specific voice supports v2.
 const MODEL_ID = 'eleven_multilingual_v2';
 
 // ── RETRY HELPER ──────────────────────────────────────────────────────
@@ -22,7 +27,6 @@ async function _withRetry(fn, retries = 2, baseDelayMs = 3000) {
                 const body = err.response?.data;
                 let detail;
                 try {
-                    // Check for the "unusual activity" ban
                     detail = Buffer.isBuffer(body)
                         ? JSON.parse(body.toString())?.detail?.status
                         : body?.detail?.status;
@@ -35,7 +39,6 @@ async function _withRetry(fn, retries = 2, baseDelayMs = 3000) {
                 throw err;
             }
 
-            // 429 = Rate limit / 5xx = Server error
             if ((status === 429 || status >= 500) && attempt < retries) {
                 const wait = baseDelayMs * (attempt + 1);
                 console.log(`[ElevenLabs] Error ${status}. Retrying in ${wait}ms...`);
@@ -49,11 +52,28 @@ async function _withRetry(fn, retries = 2, baseDelayMs = 3000) {
 }
 
 /**
+ * Uploads generated audio to Cloudinary.
+ * Required for the Auvie background worker.
+ */
+exports.uploadAudioToCloudinary = async (filePath, publicId) => {
+    try {
+        const result = await cloudinary.uploader.upload(filePath, {
+            resource_type: 'video', // Required for audio files
+            public_id: publicId,
+            overwrite: true,
+        });
+        console.log(`[Cloudinary] Upload Success: ${result.secure_url}`);
+        return result.secure_url;
+    } catch (error) {
+        console.error('[Cloudinary] Upload Error:', error.message);
+        throw error;
+    }
+};
+
+/**
  * Generates speech via ElevenLabs API.
- * Now uses V2 by default and uses whatever voiceId you provide.
  */
 exports.generateSpeech = async (text, outputPath, voiceId) => {
-    // We use the voiceId exactly as it comes from the Workshop
     const finalVoiceId = voiceId || process.env.ELEVENLABS_VOICE_ID;
 
     if (!finalVoiceId) {
@@ -91,7 +111,6 @@ exports.generateSpeech = async (text, outputPath, voiceId) => {
 
 /**
  * Fetches ALL available voices.
- * No more filtering in DEV_MODE.
  */
 exports.fetchElevenLabsVoices = async () => {
     try {

@@ -14,12 +14,15 @@ const CoinTransaction = require('../models/CoinTransaction');
 
 // Utilities
 const { parseHashtags } = require('../utils/hashtagParser');
-const { getAllSoundTags } = require('../utils/soundLibrary');
+const { getAllSoundTags, buildSoundLibrary } = require('../utils/soundLibrary'); // Added buildSoundLibrary
 const {
     generateSpeech,
     uploadAudioToCloudinary,
     fetchElevenLabsVoices
 } = require('../utils/elevenLabs');
+
+// Initialize the static sound library map (#gunshot -> Cloudinary URL)
+const soundLibrary = buildSoundLibrary();
 
 // Constants
 const AUVIE_PURCHASE_PRICE = 200;
@@ -27,22 +30,12 @@ const AUVIE_GENERATION_COST = 100;
 const PLATFORM_COMMISSION = 0.25;
 
 // ── FREE TIER SAFETY FLAGS ────────────────────────────────────────────
-// Set DEV_MODE=true in your Render env vars while testing on free tier.
-// Set it to false (or remove it) when you upgrade to a paid ElevenLabs plan.
 const DEV_MODE = process.env.DEV_MODE === 'true';
-
-// How long to wait between ElevenLabs calls (ms).
-// 3000ms = 3 seconds. Prevents "unusual activity" flag on free tier.
 const ELEVENLABS_CALL_DELAY_MS = DEV_MODE ? 3000 : 30000;
-
-// Max characters per segment sent to ElevenLabs in dev mode.
-// Keeps you well under the 10k/month free tier limit during testing.
 const DEV_MAX_CHARS_PER_SEGMENT = 120;
 
-// Helper — pause execution between API calls
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Local temp directory setup - Using /tmp for better compatibility with Render/Serverless
 const tmpDir = path.join('/tmp', 'auvie');
 fs.ensureDirSync(tmpDir);
 
@@ -51,7 +44,6 @@ fs.ensureDirSync(tmpDir);
 exports.getVoices = async (req, res, next) => {
     try {
         const rawVoices = await fetchElevenLabsVoices();
-
         const cleanVoices = rawVoices.map(v => ({
             voice_id: v.voice_id,
             name: v.name,
@@ -59,7 +51,6 @@ exports.getVoices = async (req, res, next) => {
             category: v.category,
             labels: v.labels
         }));
-
         res.json(cleanVoices);
     } catch (err) {
         console.error('getVoices error:', err.message);
@@ -215,7 +206,6 @@ exports.generateAuvie = async (req, res, next) => {
             narrator: process.env.ELEVENLABS_VOICE_ID || 'pNInz6obpg8ndPey74S'
         };
 
-        // Deduct coins
         user.coins -= AUVIE_GENERATION_COST;
         await user.save();
 
@@ -247,14 +237,12 @@ exports.generateAuvie = async (req, res, next) => {
         novel.hasAuvie = true;
         await novel.save();
 
-        // Respond immediately so Flutter gets the 202 right away
         res.status(202).json({
             message: 'Generation started',
             auvieId: auvie._id,
             status: 'generating'
         });
 
-        // Fire background worker — NOT awaited
         _runBackgroundWorker(auvie._id, segmentsToProcess, voiceMap, novel.title, req.user._id);
 
     } catch (err) {
@@ -263,7 +251,6 @@ exports.generateAuvie = async (req, res, next) => {
     }
 };
 
-// ── RETRY + BACKOFF WRAPPER FOR ELEVENLABS ───────────────────────────
 async function generateWithRetry(text, audioPath, voiceId, retries = 3) {
     try {
         return await generateSpeech(text, audioPath, voiceId);
@@ -271,22 +258,15 @@ async function generateWithRetry(text, audioPath, voiceId, retries = 3) {
         const status = err?.response?.status;
         const detail = err?.response?.data?.detail?.status;
 
-        console.error(`[ElevenLabs Retry] Status: ${status}, Detail: ${detail}`);
-
-        // If ElevenLabs flags unusual activity → cooldown
         if (detail === 'detected_unusual_activity') {
-            console.log('[Auvie Worker] Cooldown triggered (10s)...');
             await sleep(10000);
         }
 
-        // Retry only for rate/authorization issues
         if (retries > 0 && (status === 401 || status === 429)) {
-            const backoff = (4 - retries) * 2000; // 2s → 4s → 6s
-            console.log(`[Retry] Waiting ${backoff}ms before retry...`);
+            const backoff = (4 - retries) * 2000;
             await sleep(backoff);
             return generateWithRetry(text, audioPath, voiceId, retries - 1);
         }
-
         throw err;
     }
 }
@@ -302,6 +282,7 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, use
         let segmentCallCount = 0;
 
         for (const seg of segments) {
+            // TYPE: TEXT -> Generate Voice via ElevenLabs
             if (seg.type === 'text') {
                 const audioPath = path.join(workDir, `seg_${seg.order}.mp3`);
                 const resolvedVoiceId = seg.voiceId || voiceMap[seg.characterName?.toLowerCase()] || voiceMap['narrator'] || 'pNInz6obpg8ndPey74S';
@@ -309,7 +290,6 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, use
 
                 if (segmentCallCount > 0) await sleep(ELEVENLABS_CALL_DELAY_MS);
 
-                // Any failure here now triggers the catch block below
                 await generateWithRetry(textToSend, audioPath, resolvedVoiceId);
                 segmentCallCount++;
 
@@ -317,7 +297,17 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, use
                 await fs.remove(audioPath);
 
                 processedSegments.push({ ...seg, audioUrl, voiceId: resolvedVoiceId });
-            } else {
+            }
+            // TYPE: HASHTAG -> Map to static Sound Library URL
+            else if (seg.type === 'hashtag') {
+                const sfxUrl = soundLibrary[seg.value];
+                processedSegments.push({
+                    ...seg,
+                    audioUrl: sfxUrl || null
+                });
+            }
+            // OTHER: e.g., pauses
+            else {
                 processedSegments.push(seg);
             }
         }
@@ -331,10 +321,8 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, use
         await Auvie.findByIdAndUpdate(auvieId, {
             $set: { status: 'failed', errorMessage: genErr.message }
         });
-        // Automatic Refund
         await User.findByIdAndUpdate(userId, { $inc: { coins: AUVIE_GENERATION_COST } });
     } finally {
-        // Always clean up the temp folder
         if (await fs.pathExists(workDir)) await fs.remove(workDir);
     }
 }
