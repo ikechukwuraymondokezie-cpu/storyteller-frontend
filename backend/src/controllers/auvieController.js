@@ -7,7 +7,7 @@ const fs = require('fs-extra');
 const mongoose = require('mongoose');
 
 // Models
-const Auvie = require('../models/Auvie');
+const { Auvie, CharacterProfile } = require('../models/Auvie');
 const Novel = require('../models/Novel');
 const User = require('../models/User');
 const CoinTransaction = require('../models/CoinTransaction');

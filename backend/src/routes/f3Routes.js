@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Novel = require('../models/Novel');
 const Snippet = require('../models/Snippet');
-const Auvie = require('../models/Auvie');
+const { Auvie } = require('../models/Auvie'); // Now Auvie is the Mongoose model again
 const User = require('../models/User');
 const { protect } = require('../middleware/authMiddleware');
 
