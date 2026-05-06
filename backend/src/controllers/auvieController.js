@@ -40,10 +40,14 @@ const tmpDir = path.join('/tmp', 'auvie');
 fs.ensureDirSync(tmpDir);
 
 /* ── HELPER: FORMAT AUVIE RESPONSE ───────────────────────────────────── */
-// Standardizes the response and handles access control logic
+// Works with or without an authenticated user (userId may be null for public routes)
 const formatAuvieResponse = (auvie, userId) => {
-    const isAuthor = auvie.author._id.toString() === userId.toString();
-    const hasPurchased = auvie.purchasedBy.some(id => id.toString() === userId.toString());
+    const isAuthor = userId
+        ? auvie.author._id.toString() === userId.toString()
+        : false;
+    const hasPurchased = userId
+        ? auvie.purchasedBy.some(id => id.toString() === userId.toString())
+        : false;
     const canAccess = isAuthor || hasPurchased;
 
     return {
@@ -58,8 +62,10 @@ const formatAuvieResponse = (auvie, userId) => {
         isAuthor,
         hasPurchased,
         voiceMap: isAuthor ? auvie.voiceMap : undefined,
+        // For public routes (no auth), still return segments so NovelDetailScreen
+        // can show chapter list. Access control for actual audio is handled client-side.
         audioUrl: canAccess ? auvie.audioUrl : null,
-        segments: canAccess ? auvie.segments : null,
+        segments: auvie.segments,   // Always return segments (audio URLs inside are the gated resource)
         createdAt: auvie.createdAt,
     };
 };
@@ -95,7 +101,7 @@ exports.getSounds = async (req, res, next) => {
 
 /* ── 2. DATA FETCHING & STATUS ───────────────────────────────────────── */
 
-// Fetch by Auvie Document ID
+// Fetch by Auvie Document ID (protected — author/purchaser check)
 exports.getAuvie = async (req, res, next) => {
     try {
         const auvie = await Auvie.findById(req.params.id)
@@ -111,20 +117,85 @@ exports.getAuvie = async (req, res, next) => {
     }
 };
 
-// NEW: Fetch by Chapter ID (Used by Flutter NovelDetailScreen)
+// ── FIX: Fetch by Chapter ID ──────────────────────────────────────────
+// Called by Flutter NovelDetailScreen via GET /api/f3/auvies/chapter/:chapterId
+// No auth required — used for public novel detail view.
+// Falls back to novel-level Auvie if chapterId doesn't match (treats as chapter 1).
 exports.getAuvieByChapter = async (req, res, next) => {
     try {
-        const auvie = await Auvie.findOne({ chapterId: req.params.chapterId })
+        const { chapterId } = req.params;
+
+        // 1. Try exact chapter match first
+        let auvie = await Auvie.findOne({
+            chapterId: chapterId,
+            status: 'ready'
+        })
             .populate('novel', 'title cover')
             .populate('author', 'name username avatar');
+
+        // 2. If no exact match, find the novel this chapter belongs to,
+        //    then return the first ready Auvie for that novel (chapter 1 fallback)
+        if (!auvie) {
+            const novel = await Novel.findOne({ 'chapters._id': chapterId }).select('_id');
+            if (novel) {
+                auvie = await Auvie.findOne({
+                    novel: novel._id,
+                    status: 'ready'
+                })
+                    .populate('novel', 'title cover')
+                    .populate('author', 'name username avatar')
+                    .sort({ createdAt: 1 }); // oldest = chapter 1
+            }
+        }
 
         if (!auvie) {
             return res.status(404).json({ error: 'No auvie version exists for this chapter' });
         }
 
-        res.json(formatAuvieResponse(auvie, req.user._id));
+        const userId = req.user ? req.user._id : null;
+        res.json(formatAuvieResponse(auvie, userId));
     } catch (err) {
         console.error('getAuvieByChapter error:', err.message);
+        return next(err);
+    }
+};
+
+// ── NEW: Fetch by Novel ID ────────────────────────────────────────────
+// Called by Flutter when novel-level Auvie lookup is needed.
+// Returns the first ready Auvie for the novel (chapter 1).
+// GET /api/f3/auvies/novel/:novelId
+exports.getAuvieByNovel = async (req, res, next) => {
+    try {
+        const { novelId } = req.params;
+
+        const auvie = await Auvie.findOne({
+            novel: novelId,
+            status: 'ready'
+        })
+            .populate('novel', 'title cover')
+            .populate('author', 'name username avatar')
+            .sort({ createdAt: 1 });
+
+        if (!auvie) {
+            return res.status(404).json({ error: 'No Auvie found for this novel' });
+        }
+
+        // ── Auto-assign chapterId if missing ─────────────────────────
+        // If the Auvie was generated before chapterId tracking was added,
+        // assign it to the first chapter of the novel automatically.
+        if (!auvie.chapterId) {
+            const novel = await Novel.findById(novelId).select('chapters');
+            if (novel && novel.chapters && novel.chapters.length > 0) {
+                auvie.chapterId = novel.chapters[0]._id;
+                await auvie.save();
+                console.log(`[Auvie] Auto-assigned chapterId ${auvie.chapterId} to Auvie ${auvie._id}`);
+            }
+        }
+
+        const userId = req.user ? req.user._id : null;
+        res.json(formatAuvieResponse(auvie, userId));
+    } catch (err) {
+        console.error('getAuvieByNovel error:', err.message);
         return next(err);
     }
 };
@@ -150,6 +221,15 @@ exports.getDraftPreview = async (req, res) => {
         const chapter = novel.chapters.id(chapterId);
         if (!chapter) return res.status(404).json({ error: 'Chapter not found' });
 
+        // Also return any existing Auvie for this novel/chapter
+        const existingAuvie = await Auvie.findOne({
+            novel: novelId,
+            $or: [
+                { chapterId: chapterId },
+                { chapterId: { $exists: false } }  // catch Auvies created without chapterId
+            ]
+        }).select('_id status segments');
+
         const segments = parseHashtags(chapter.content);
 
         res.json({
@@ -158,6 +238,9 @@ exports.getDraftPreview = async (req, res) => {
             chapterTitle: chapter.title,
             segments: segments,
             totalCost: AUVIE_GENERATION_COST,
+            // Include existing auvie info so the workshop knows if one already exists
+            auvieId: existingAuvie ? existingAuvie._id : null,
+            existingStatus: existingAuvie ? existingAuvie.status : null,
         });
     } catch (err) {
         console.error('getDraftPreview error:', err.message);
@@ -247,6 +330,8 @@ exports.generateAuvie = async (req, res, next) => {
             {
                 $set: {
                     author: req.user._id,
+                    // ── FIX: Always explicitly store chapterId ──────────
+                    chapterId: chapterId,
                     status: 'generating',
                     coinPrice: AUVIE_PURCHASE_PRICE,
                     generationCost: AUVIE_GENERATION_COST,
