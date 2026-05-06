@@ -8,23 +8,41 @@ const router = express.Router();
 const { protect } = require('../middleware/authMiddleware');
 const ctrl = require('../controllers/auvieController');
 
-// ── Public / sound metadata ───────────────────────────────────────────
+// ── 1. PUBLIC ROUTES ──────────────────────────────────────────────────
+// These must be accessible without a token so the Novel Detail screen 
+// can check for audio versions immediately.
+
 router.get('/sounds', ctrl.getSounds);
 
-// ── Auth required ─────────────────────────────────────────────────────
-router.get('/voices', protect, ctrl.getVoices);
+// New: Fetch Auvie data by Chapter ID (Public)
+router.get('/chapter/:chapterId', ctrl.getAuvieByChapter);
 
-// UPDATED: Now requires chapterId to match controller logic
-router.get('/draft/:novelId/:chapterId', protect, ctrl.getDraftPreview);
+// New: Fetch Auvie data by Novel ID (Public fallback)
+router.get('/novel/:novelId', ctrl.getAuvieByNovel);
 
-router.get('/:id/status', protect, ctrl.getStatus);
-router.get('/:id', protect, ctrl.getAuvie);
 
-// UPDATED: Now requires chapterId for specific audio generation
-router.post('/generate/:novelId/:chapterId', protect, ctrl.generateAuvie);
+// ── 2. PROTECTED ROUTES (Require Auth) ────────────────────────────────
+// Any route below 'router.use(protect)' will require a Bearer Token.
 
-router.post('/:id/purchase', protect, ctrl.purchaseAuvie);
+router.use(protect);
 
-router.put('/:id/segments', protect, ctrl.updateSegments);
+// Populate Flutter Workshop dropdown
+router.get('/voices', ctrl.getVoices);
+
+// Draft preview for the Workshop
+router.get('/draft/:novelId/:chapterId', ctrl.getDraftPreview);
+
+// Status and specific Auvie document lookups
+router.get('/:id/status', ctrl.getStatus);
+router.get('/:id', ctrl.getAuvie);
+
+// Audio generation
+router.post('/generate/:novelId/:chapterId', ctrl.generateAuvie);
+
+// Commerce
+router.post('/:id/purchase', ctrl.purchaseAuvie);
+
+// Persistent Workshop edits
+router.put('/:id/segments', ctrl.updateSegments);
 
 module.exports = router;
