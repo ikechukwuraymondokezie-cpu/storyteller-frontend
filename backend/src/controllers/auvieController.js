@@ -14,7 +14,7 @@ const CoinTransaction = require('../models/CoinTransaction');
 
 // Utilities
 const { parseHashtags } = require('../utils/hashtagParser');
-const { getAllSoundTags, buildSoundLibrary } = require('../utils/soundLibrary'); // Added buildSoundLibrary
+const { getAllSoundTags, buildSoundLibrary } = require('../utils/soundLibrary');
 const {
     generateSpeech,
     uploadAudioToCloudinary,
@@ -38,6 +38,31 @@ const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 const tmpDir = path.join('/tmp', 'auvie');
 fs.ensureDirSync(tmpDir);
+
+/* ── HELPER: FORMAT AUVIE RESPONSE ───────────────────────────────────── */
+// Standardizes the response and handles access control logic
+const formatAuvieResponse = (auvie, userId) => {
+    const isAuthor = auvie.author._id.toString() === userId.toString();
+    const hasPurchased = auvie.purchasedBy.some(id => id.toString() === userId.toString());
+    const canAccess = isAuthor || hasPurchased;
+
+    return {
+        _id: auvie._id,
+        novel: auvie.novel,
+        chapterId: auvie.chapterId,
+        author: auvie.author,
+        status: auvie.status,
+        duration: auvie.duration,
+        coinPrice: auvie.coinPrice,
+        plays: auvie.plays,
+        isAuthor,
+        hasPurchased,
+        voiceMap: isAuthor ? auvie.voiceMap : undefined,
+        audioUrl: canAccess ? auvie.audioUrl : null,
+        segments: canAccess ? auvie.segments : null,
+        createdAt: auvie.createdAt,
+    };
+};
 
 /* ── 1. ASSET DISCOVERY ──────────────────────────────────────────────── */
 
@@ -70,6 +95,7 @@ exports.getSounds = async (req, res, next) => {
 
 /* ── 2. DATA FETCHING & STATUS ───────────────────────────────────────── */
 
+// Fetch by Auvie Document ID
 exports.getAuvie = async (req, res, next) => {
     try {
         const auvie = await Auvie.findById(req.params.id)
@@ -78,29 +104,27 @@ exports.getAuvie = async (req, res, next) => {
 
         if (!auvie) return res.status(404).json({ error: 'Auvie not found' });
 
-        const userId = req.user._id.toString();
-        const isAuthor = auvie.author._id.toString() === userId;
-        const hasPurchased = auvie.purchasedBy.some(id => id.toString() === userId);
-        const canAccess = isAuthor || hasPurchased;
-
-        res.json({
-            _id: auvie._id,
-            novel: auvie.novel,
-            chapterId: auvie.chapterId,
-            author: auvie.author,
-            status: auvie.status,
-            duration: auvie.duration,
-            coinPrice: auvie.coinPrice,
-            plays: auvie.plays,
-            isAuthor,
-            hasPurchased,
-            voiceMap: isAuthor ? auvie.voiceMap : undefined,
-            audioUrl: canAccess ? auvie.audioUrl : null,
-            segments: canAccess ? auvie.segments : null,
-            createdAt: auvie.createdAt,
-        });
+        res.json(formatAuvieResponse(auvie, req.user._id));
     } catch (err) {
         console.error('getAuvie error:', err.message);
+        return next(err);
+    }
+};
+
+// NEW: Fetch by Chapter ID (Used by Flutter NovelDetailScreen)
+exports.getAuvieByChapter = async (req, res, next) => {
+    try {
+        const auvie = await Auvie.findOne({ chapterId: req.params.chapterId })
+            .populate('novel', 'title cover')
+            .populate('author', 'name username avatar');
+
+        if (!auvie) {
+            return res.status(404).json({ error: 'No auvie version exists for this chapter' });
+        }
+
+        res.json(formatAuvieResponse(auvie, req.user._id));
+    } catch (err) {
+        console.error('getAuvieByChapter error:', err.message);
         return next(err);
     }
 };

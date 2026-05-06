@@ -40,6 +40,7 @@ router.get('/feed', async (req, res) => {
                 genre: n.genre,
                 author: n.author,
                 totalChapters: n.totalChapters,
+                chapters: n.chapters,
                 hasAuvie: n.hasAuvie,
                 views: n.views,
                 likeCount: n.likes ? n.likes.length : 0,
