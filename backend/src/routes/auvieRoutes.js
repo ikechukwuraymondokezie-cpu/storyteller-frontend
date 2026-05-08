@@ -9,22 +9,20 @@ const { protect } = require('../middleware/authMiddleware');
 const ctrl = require('../controllers/auvieController');
 
 // ── 1. PUBLIC ROUTES ──────────────────────────────────────────────────
-// These must be accessible without a token so the Novel Detail screen 
-// can check for audio versions immediately.
+// These must be accessible without a token for immediate UI checks.
 
 router.get('/sounds', ctrl.getSounds);
 
-// New: Fetch Auvie data by Chapter ID (Public)
+// Specific lookups must come BEFORE generic /:id routes
 router.get('/chapter/:chapterId', ctrl.getAuvieByChapter);
-
-// New: Fetch Auvie data by Novel ID (Public fallback)
 router.get('/novel/:novelId', ctrl.getAuvieByNovel);
 
 
 // ── 2. PROTECTED ROUTES (Require Auth) ────────────────────────────────
-// Any route below 'router.use(protect)' will require a Bearer Token.
-
 router.use(protect);
+
+// Status list for a specific novel's chapters
+router.get('/novel/:novelId/chapters', ctrl.getChapterAuvieStatuses);
 
 // Populate Flutter Workshop dropdown
 router.get('/voices', ctrl.getVoices);
@@ -32,7 +30,7 @@ router.get('/voices', ctrl.getVoices);
 // Draft preview for the Workshop
 router.get('/draft/:novelId/:chapterId', ctrl.getDraftPreview);
 
-// Status and specific Auvie document lookups
+// Generic ID lookups (Keep these at the bottom)
 router.get('/:id/status', ctrl.getStatus);
 router.get('/:id', ctrl.getAuvie);
 
