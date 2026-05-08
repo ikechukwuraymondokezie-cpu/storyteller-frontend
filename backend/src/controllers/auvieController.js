@@ -21,15 +21,12 @@ const {
     fetchElevenLabsVoices
 } = require('../utils/elevenLabs');
 
-// Initialize the static sound library map (#gunshot -> Cloudinary URL)
 const soundLibrary = buildSoundLibrary();
 
-// Constants
 const AUVIE_PURCHASE_PRICE = 200;
 const AUVIE_GENERATION_COST = 100;
 const PLATFORM_COMMISSION = 0.25;
 
-// ── FREE TIER SAFETY FLAGS ────────────────────────────────────────────
 const DEV_MODE = process.env.DEV_MODE === 'true';
 const ELEVENLABS_CALL_DELAY_MS = DEV_MODE ? 3000 : 30000;
 const DEV_MAX_CHARS_PER_SEGMENT = 120;
@@ -40,7 +37,6 @@ const tmpDir = path.join('/tmp', 'auvie');
 fs.ensureDirSync(tmpDir);
 
 /* ── HELPER: FORMAT AUVIE RESPONSE ───────────────────────────────────── */
-// Works with or without an authenticated user (userId may be null for public routes)
 const formatAuvieResponse = (auvie, userId) => {
     const isAuthor = userId
         ? auvie.author._id.toString() === userId.toString()
@@ -62,10 +58,8 @@ const formatAuvieResponse = (auvie, userId) => {
         isAuthor,
         hasPurchased,
         voiceMap: isAuthor ? auvie.voiceMap : undefined,
-        // For public routes (no auth), still return segments so NovelDetailScreen
-        // can show chapter list. Access control for actual audio is handled client-side.
         audioUrl: canAccess ? auvie.audioUrl : null,
-        segments: auvie.segments,   // Always return segments (audio URLs inside are the gated resource)
+        segments: auvie.segments,
         createdAt: auvie.createdAt,
     };
 };
@@ -101,7 +95,7 @@ exports.getSounds = async (req, res, next) => {
 
 /* ── 2. DATA FETCHING & STATUS ───────────────────────────────────────── */
 
-// Fetch by Auvie Document ID (protected — author/purchaser check)
+// Fetch by Auvie Document ID
 exports.getAuvie = async (req, res, next) => {
     try {
         const auvie = await Auvie.findById(req.params.id)
@@ -117,34 +111,27 @@ exports.getAuvie = async (req, res, next) => {
     }
 };
 
-// ── FIX: Fetch by Chapter ID ──────────────────────────────────────────
-// Called by Flutter NovelDetailScreen via GET /api/f3/auvies/chapter/:chapterId
-// No auth required — used for public novel detail view.
-// Falls back to novel-level Auvie if chapterId doesn't match (treats as chapter 1).
+// ── Fetch by Chapter ID ───────────────────────────────────────────────
+// GET /api/f3/auvies/chapter/:chapterId
+// Used by BibliographyScreen playback and NovelDetailScreen.
+// Falls back to novel-level Auvie if exact chapterId match not found.
 exports.getAuvieByChapter = async (req, res, next) => {
     try {
         const { chapterId } = req.params;
 
-        // 1. Try exact chapter match first
-        let auvie = await Auvie.findOne({
-            chapterId: chapterId,
-            status: 'ready'
-        })
+        // 1. Exact match
+        let auvie = await Auvie.findOne({ chapterId, status: 'ready' })
             .populate('novel', 'title cover')
             .populate('author', 'name username avatar');
 
-        // 2. If no exact match, find the novel this chapter belongs to,
-        //    then return the first ready Auvie for that novel (chapter 1 fallback)
+        // 2. Fallback: find novel containing this chapter, return its first Auvie
         if (!auvie) {
             const novel = await Novel.findOne({ 'chapters._id': chapterId }).select('_id');
             if (novel) {
-                auvie = await Auvie.findOne({
-                    novel: novel._id,
-                    status: 'ready'
-                })
+                auvie = await Auvie.findOne({ novel: novel._id, status: 'ready' })
                     .populate('novel', 'title cover')
                     .populate('author', 'name username avatar')
-                    .sort({ createdAt: 1 }); // oldest = chapter 1
+                    .sort({ createdAt: 1 });
             }
         }
 
@@ -160,18 +147,68 @@ exports.getAuvieByChapter = async (req, res, next) => {
     }
 };
 
-// ── NEW: Fetch by Novel ID ────────────────────────────────────────────
-// Called by Flutter when novel-level Auvie lookup is needed.
-// Returns the first ready Auvie for the novel (chapter 1).
+// ── NEW: Per-chapter Auvie statuses for a novel ───────────────────────
+// GET /api/f3/auvies/novel/:novelId/chapters
+// Called by BibliographyScreen on load to populate per-chapter Auvie status.
+// Returns: [{ chapterId, status, auvieId }, ...] — one entry per chapter.
+// Chapters with no Auvie get status: 'none'.
+exports.getChapterAuvieStatuses = async (req, res, next) => {
+    try {
+        const { novelId } = req.params;
+
+        // Must be the author
+        const novel = await Novel.findOne({ _id: novelId, author: req.user._id })
+            .select('chapters');
+
+        if (!novel) {
+            return res.status(404).json({ error: 'Novel not found' });
+        }
+
+        // Fetch all Auvies for this novel in one query
+        const auvies = await Auvie.find({ novel: novelId })
+            .select('chapterId status _id')
+            .lean();
+
+        // Build a lookup map: chapterId (string) -> { status, auvieId }
+        const auvieMap = {};
+        for (const a of auvies) {
+            if (a.chapterId) {
+                const key = a.chapterId.toString();
+                // If multiple auvies exist for a chapter (shouldn't happen but be safe),
+                // prefer 'ready' > 'generating' > others
+                const existing = auvieMap[key];
+                if (!existing || a.status === 'ready' ||
+                    (a.status === 'generating' && existing.status !== 'ready')) {
+                    auvieMap[key] = { status: a.status, auvieId: a._id.toString() };
+                }
+            }
+        }
+
+        // Build response: one entry per chapter
+        const result = novel.chapters.map(ch => {
+            const chIdStr = ch._id.toString();
+            const auvieInfo = auvieMap[chIdStr];
+            return {
+                chapterId: chIdStr,
+                status: auvieInfo ? auvieInfo.status : 'none',
+                auvieId: auvieInfo ? auvieInfo.auvieId : null,
+            };
+        });
+
+        res.json(result);
+    } catch (err) {
+        console.error('getChapterAuvieStatuses error:', err.message);
+        return next(err);
+    }
+};
+
+// ── Fetch first ready Auvie for a novel (novel-level fallback) ────────
 // GET /api/f3/auvies/novel/:novelId
 exports.getAuvieByNovel = async (req, res, next) => {
     try {
         const { novelId } = req.params;
 
-        const auvie = await Auvie.findOne({
-            novel: novelId,
-            status: 'ready'
-        })
+        const auvie = await Auvie.findOne({ novel: novelId, status: 'ready' })
             .populate('novel', 'title cover')
             .populate('author', 'name username avatar')
             .sort({ createdAt: 1 });
@@ -180,9 +217,7 @@ exports.getAuvieByNovel = async (req, res, next) => {
             return res.status(404).json({ error: 'No Auvie found for this novel' });
         }
 
-        // ── Auto-assign chapterId if missing ─────────────────────────
-        // If the Auvie was generated before chapterId tracking was added,
-        // assign it to the first chapter of the novel automatically.
+        // Auto-assign chapterId if missing (legacy data fix)
         if (!auvie.chapterId) {
             const novel = await Novel.findById(novelId).select('chapters');
             if (novel && novel.chapters && novel.chapters.length > 0) {
@@ -221,13 +256,10 @@ exports.getDraftPreview = async (req, res) => {
         const chapter = novel.chapters.id(chapterId);
         if (!chapter) return res.status(404).json({ error: 'Chapter not found' });
 
-        // Also return any existing Auvie for this novel/chapter
+        // Return existing Auvie ID if one exists for this chapter
         const existingAuvie = await Auvie.findOne({
             novel: novelId,
-            $or: [
-                { chapterId: chapterId },
-                { chapterId: { $exists: false } }  // catch Auvies created without chapterId
-            ]
+            chapterId: chapterId,
         }).select('_id status segments');
 
         const segments = parseHashtags(chapter.content);
@@ -236,9 +268,8 @@ exports.getDraftPreview = async (req, res) => {
             novelId: novel._id,
             chapterId: chapter._id,
             chapterTitle: chapter.title,
-            segments: segments,
+            segments,
             totalCost: AUVIE_GENERATION_COST,
-            // Include existing auvie info so the workshop knows if one already exists
             auvieId: existingAuvie ? existingAuvie._id : null,
             existingStatus: existingAuvie ? existingAuvie.status : null,
         });
@@ -275,7 +306,6 @@ exports.updateSegments = async (req, res) => {
         });
 
         if (voiceMap) auvie.voiceMap = voiceMap;
-
         auvie.markModified('segments');
         await auvie.save();
 
@@ -325,19 +355,19 @@ exports.generateAuvie = async (req, res, next) => {
             relatedNovel: novel._id
         });
 
+        // Always upsert by novelId + chapterId so each chapter gets its own Auvie doc
         const auvie = await Auvie.findOneAndUpdate(
             { novel: novelId, chapterId: chapterId },
             {
                 $set: {
                     author: req.user._id,
-                    // ── FIX: Always explicitly store chapterId ──────────
-                    chapterId: chapterId,
+                    chapterId: chapterId,   // always explicitly set
                     status: 'generating',
                     coinPrice: AUVIE_PURCHASE_PRICE,
                     generationCost: AUVIE_GENERATION_COST,
                     segments: segmentsToProcess,
-                    voiceMap: voiceMap,
-                    errorMessage: null
+                    voiceMap,
+                    errorMessage: null,
                 }
             },
             { upsert: true, new: true }
@@ -367,20 +397,17 @@ async function generateWithRetry(text, audioPath, voiceId, retries = 3) {
         const status = err?.response?.status;
         const detail = err?.response?.data?.detail?.status;
 
-        if (detail === 'detected_unusual_activity') {
-            await sleep(10000);
-        }
+        if (detail === 'detected_unusual_activity') await sleep(10000);
 
         if (retries > 0 && (status === 401 || status === 429)) {
-            const backoff = (4 - retries) * 2000;
-            await sleep(backoff);
+            await sleep((4 - retries) * 2000);
             return generateWithRetry(text, audioPath, voiceId, retries - 1);
         }
         throw err;
     }
 }
 
-/* ── 5. THE BACKGROUND WORKER (TTS & Processing) ────────────────────── */
+/* ── 5. BACKGROUND WORKER ────────────────────────────────────────────── */
 
 async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, userId) {
     const workDir = path.join(tmpDir, auvieId.toString());
@@ -391,32 +418,34 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, use
         let segmentCallCount = 0;
 
         for (const seg of segments) {
-            // TYPE: TEXT -> Generate Voice via ElevenLabs
             if (seg.type === 'text') {
                 const audioPath = path.join(workDir, `seg_${seg.order}.mp3`);
-                const resolvedVoiceId = seg.voiceId || voiceMap[seg.characterName?.toLowerCase()] || voiceMap['narrator'] || 'pNInz6obpg8ndPey74S';
-                const textToSend = DEV_MODE ? seg.value.substring(0, DEV_MAX_CHARS_PER_SEGMENT) : seg.value;
+                const resolvedVoiceId = seg.voiceId
+                    || voiceMap[seg.characterName?.toLowerCase()]
+                    || voiceMap['narrator']
+                    || 'pNInz6obpg8ndPey74S';
+                const textToSend = DEV_MODE
+                    ? seg.value.substring(0, DEV_MAX_CHARS_PER_SEGMENT)
+                    : seg.value;
 
                 if (segmentCallCount > 0) await sleep(ELEVENLABS_CALL_DELAY_MS);
 
                 await generateWithRetry(textToSend, audioPath, resolvedVoiceId);
                 segmentCallCount++;
 
-                const audioUrl = await uploadAudioToCloudinary(audioPath, `auvie_segments/${auvieId}/seg_${seg.order}`);
+                const audioUrl = await uploadAudioToCloudinary(
+                    audioPath,
+                    `auvie_segments/${auvieId}/seg_${seg.order}`
+                );
                 await fs.remove(audioPath);
 
                 processedSegments.push({ ...seg, audioUrl, voiceId: resolvedVoiceId });
-            }
-            // TYPE: HASHTAG -> Map to static Sound Library URL
-            else if (seg.type === 'hashtag') {
+
+            } else if (seg.type === 'hashtag') {
                 const sfxUrl = soundLibrary[seg.value];
-                processedSegments.push({
-                    ...seg,
-                    audioUrl: sfxUrl || null
-                });
-            }
-            // OTHER: e.g., pauses
-            else {
+                processedSegments.push({ ...seg, audioUrl: sfxUrl || null });
+
+            } else {
                 processedSegments.push(seg);
             }
         }
@@ -436,7 +465,7 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, use
     }
 }
 
-/* ── 6. COMMERCE (PURCHASING) ────────────────────────────────────────── */
+/* ── 6. COMMERCE ─────────────────────────────────────────────────────── */
 
 exports.purchaseAuvie = async (req, res, next) => {
     try {
