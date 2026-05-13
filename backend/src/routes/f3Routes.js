@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const Novel = require('../models/Novel');
 const Snippet = require('../models/Snippet');
-const { Auvie } = require('../models/Auvie'); // Now Auvie is the Mongoose model again
+const { Auvie } = require('../models/Auvie');
 const User = require('../models/User');
 const { protect } = require('../middleware/authMiddleware');
 
@@ -10,41 +10,75 @@ const { protect } = require('../middleware/authMiddleware');
 
 /**
  * GET /api/f3/feed
- * Returns content for the Storyteller public side.
+ * Returns all sections for the Storyteller public feed.
  */
 router.get('/feed', async (req, res) => {
     try {
-        const [featuredNovels, latestSnippets, topAuvies] = await Promise.all([
+        const [
+            featuredNovels,
+            trendingNovels,
+            staffPicks,
+            latestSnippets,
+            topAuvies,
+        ] = await Promise.all([
+
+            // Featured: published, sorted by likes count
             Novel.find({ status: 'published' })
                 .populate('author', 'name username avatar')
                 .sort({ views: -1 })
                 .limit(10),
 
+            // Trending: all published novels sorted by views descending
+            Novel.find({ status: 'published' })
+                .populate('author', 'name username avatar')
+                .sort({ views: -1 })
+                .limit(20),
+
+            // Staff picks: novels with staffPick flag (fallback to newest published)
+            Novel.find({ status: 'published', staffPick: true })
+                .populate('author', 'name username avatar')
+                .sort({ createdAt: -1 })
+                .limit(10),
+
+            // Latest snippets
             Snippet.find({ status: 'published' })
                 .populate('author', 'name username avatar')
                 .sort({ createdAt: -1 })
                 .limit(10),
 
+            // Top Auvies: ready ones sorted by newest (so new ones appear first)
+            // Populate the novel so we can show its cover on the card
             Auvie.find({ status: 'ready' })
                 .populate('novel', 'title cover genre')
                 .populate('author', 'name username avatar')
-                .sort({ plays: -1 })
-                .limit(10),
+                .sort({ createdAt: -1 })   // newest first = "new" Auvies at front
+                .limit(15),
         ]);
 
+        // ── Format novel helper ───────────────────────────────────────
+        const formatNovel = (n) => ({
+            _id: n._id,
+            title: n.title,
+            description: n.description,
+            cover: n.cover,
+            genre: n.genre,
+            author: n.author,
+            totalChapters: n.totalChapters,
+            chapters: n.chapters,
+            hasAuvie: n.hasAuvie,
+            views: n.views,
+            status: n.status,
+            likeCount: n.likes ? n.likes.length : 0,
+        });
+
         res.json({
-            featuredNovels: featuredNovels.map(n => ({
-                _id: n._id,
-                title: n.title,
-                cover: n.cover,
-                genre: n.genre,
-                author: n.author,
-                totalChapters: n.totalChapters,
-                chapters: n.chapters,
-                hasAuvie: n.hasAuvie,
-                views: n.views,
-                likeCount: n.likes ? n.likes.length : 0,
-            })),
+            featuredNovels: featuredNovels.map(formatNovel),
+
+            // Trending is all novels by views — deduplicate from featured on client
+            trendingNovels: trendingNovels.map(formatNovel),
+
+            staffPicks: staffPicks.map(formatNovel),
+
             latestSnippets: latestSnippets.map(s => ({
                 _id: s._id,
                 title: s.title,
@@ -54,13 +88,17 @@ router.get('/feed', async (req, res) => {
                 likeCount: s.likes ? s.likes.length : 0,
                 duration: s.duration,
             })),
+
+            // topAuvies: includes populated novel (with cover) for the card UI
             topAuvies: topAuvies.map(a => ({
                 _id: a._id,
-                novel: a.novel,
-                author: a.author,
+                novel: a.novel,       // { _id, title, cover, genre }
+                author: a.author,     // { name, username, avatar }
                 coinPrice: a.coinPrice,
                 plays: a.plays,
                 duration: a.duration,
+                status: a.status,
+                createdAt: a.createdAt,
             })),
         });
     } catch (err) {
