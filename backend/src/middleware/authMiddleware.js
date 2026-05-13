@@ -9,7 +9,7 @@ const protect = async (req, res, next) => {
             token = req.headers.authorization.split(' ')[1];
             const decoded = jwt.verify(token, process.env.JWT_SECRET);
             req.user = await User.findById(decoded.id).select('-password');
-            return next(); // Use return here!
+            return next();
         } catch (error) {
             console.error("JWT Verify Error:", error.message);
             return res.status(401).json({ message: 'Not authorized, token failed' });
@@ -17,8 +17,32 @@ const protect = async (req, res, next) => {
     }
 
     if (!token) {
-        return res.status(401).json({ message: 'Not authorized, no token' }); // Use return here!
+        return res.status(401).json({ message: 'Not authorized, no token' });
     }
 };
 
-module.exports = { protect };
+/**
+ * Allows guests to access a route, but identifies the user if a token exists.
+ * Does NOT return 401 if token is missing.
+ */
+const optionalProtect = async (req, res, next) => {
+    let token;
+
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+        try {
+            token = req.headers.authorization.split(' ')[1];
+            const decoded = jwt.verify(token, process.env.JWT_SECRET);
+            req.user = await User.findById(decoded.id).select('-password');
+        } catch (error) {
+            // Silently fail auth for optional routes
+            console.warn("Optional JWT Verify Error:", error.message);
+            req.user = null;
+        }
+    } else {
+        req.user = null;
+    }
+
+    next();
+};
+
+module.exports = { protect, optionalProtect };

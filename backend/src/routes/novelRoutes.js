@@ -71,14 +71,15 @@ const formatNovelForWriter = (novel, userId) => ({
     })),
 });
 
-const formatChapter = (chapter, index, freeCount, hasUnlocked) => ({
+const formatChapter = (chapter, index, freeCount, hasUnlocked, isAuthor = false) => ({
     _id: chapter._id,
     title: chapter.title,
     order: chapter.order,
     wordCount: chapter.wordCount,
     isFree: index < freeCount,
-    isLocked: index >= freeCount && !hasUnlocked,
-    content: (index < freeCount || hasUnlocked) ? chapter.content : null,
+    isLocked: !isAuthor && index >= freeCount && !hasUnlocked,
+    // Content is available if: it's free, OR user is author, OR user purchased
+    content: (index < freeCount || isAuthor || hasUnlocked) ? chapter.content : null,
     createdAt: chapter.createdAt,
 });
 
@@ -182,12 +183,14 @@ router.get('/:id', async (req, res) => {
         await Novel.findByIdAndUpdate(req.params.id, { $inc: { views: 1 } });
 
         const userId = req.user?._id;
+        const isAuthor = userId && novel.author.toString() === userId.toString();
+
         const user = userId ? await User.findById(userId).select('unlockedNovels') : null;
         const hasUnlocked = user?.unlockedNovels?.some(id => id.toString() === novel._id.toString()) || false;
 
         const formattedNovel = formatNovelFeed(novel, userId);
         formattedNovel.chapters = novel.chapters.map((ch, i) =>
-            formatChapter(ch, i, novel.freeChapterCount, hasUnlocked)
+            formatChapter(ch, i, novel.freeChapterCount, hasUnlocked, isAuthor)
         );
 
         res.json(formattedNovel);
@@ -211,25 +214,31 @@ router.get('/:id/chapters/:chapterId', async (req, res) => {
         );
         if (chapterIndex === -1) return res.status(404).json({ error: 'Chapter not found' });
 
+        // 1. Identify User Status
+        const userId = req.user ? req.user._id : null;
+        const isAuthor = userId && novel.author.toString() === userId.toString();
         const isFree = chapterIndex < novel.freeChapterCount;
 
-        if (!isFree) {
-            if (!req.user) return res.status(401).json({ error: 'Login required' });
-            const user = await User.findById(req.user._id).select('unlockedNovels');
-            const hasUnlocked = user.unlockedNovels.some(
+        let hasUnlocked = false;
+        if (userId && !isAuthor) {
+            const user = await User.findById(userId).select('unlockedNovels');
+            hasUnlocked = user.unlockedNovels.some(
                 id => id.toString() === novel._id.toString()
             );
-            if (!hasUnlocked) {
-                return res.status(403).json({
-                    error: 'Chapter locked',
-                    unlockPrice: novel.unlockPrice,
-                    message: `Spend ${novel.unlockPrice} coins to unlock all chapters`
-                });
-            }
+        }
+
+        // 2. Logic Gate
+        if (!isFree && !isAuthor && !hasUnlocked) {
+            return res.status(403).json({
+                error: 'Chapter locked',
+                unlockPrice: novel.unlockPrice,
+                message: `Spend ${novel.unlockPrice} coins to unlock all chapters`
+            });
         }
 
         const chapter = novel.chapters[chapterIndex];
-        res.json(formatChapter(chapter, chapterIndex, novel.freeChapterCount, true));
+        // 3. Return formatted chapter
+        res.json(formatChapter(chapter, chapterIndex, novel.freeChapterCount, hasUnlocked, isAuthor));
     } catch (err) {
         console.error('Fetch chapter error:', err.message);
         res.status(500).json({ error: 'Failed to fetch chapter' });
