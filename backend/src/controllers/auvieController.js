@@ -13,7 +13,7 @@ const User = require('../models/User');
 const CoinTransaction = require('../models/CoinTransaction');
 
 // Utilities
-const { parseHashtags } = require('../utils/hashtagParser');
+const { parseHashtags } = require('../utils/hashtagparser');
 const { getAllSoundTags, buildSoundLibrary } = require('../utils/soundLibrary');
 const {
     generateSpeech,
@@ -38,13 +38,22 @@ fs.ensureDirSync(tmpDir);
 
 /* ── HELPER: FORMAT AUVIE RESPONSE ───────────────────────────────────── */
 const formatAuvieResponse = (auvie, userId) => {
+    // 1. Author check
     const isAuthor = userId
         ? auvie.author._id.toString() === userId.toString()
         : false;
+
+    // 2. Purchase check
     const hasPurchased = userId
         ? auvie.purchasedBy.some(id => id.toString() === userId.toString())
         : false;
-    const canAccess = isAuthor || hasPurchased;
+
+    // 3. GLOBAL RULE: Is this Chapter 1? 
+    const isChapterOne = auvie.novel && auvie.novel.chapters && auvie.novel.chapters.length > 0
+        ? auvie.novel.chapters[0]._id.toString() === auvie.chapterId.toString()
+        : false;
+
+    const canAccess = isAuthor || hasPurchased || isChapterOne;
 
     return {
         _id: auvie._id,
@@ -57,6 +66,7 @@ const formatAuvieResponse = (auvie, userId) => {
         plays: auvie.plays,
         isAuthor,
         hasPurchased,
+        isFreePreview: isChapterOne,
         voiceMap: isAuthor ? auvie.voiceMap : undefined,
         audioUrl: canAccess ? auvie.audioUrl : null,
         segments: auvie.segments,
@@ -95,7 +105,6 @@ exports.getSounds = async (req, res, next) => {
 
 /* ── 2. DATA FETCHING & STATUS ───────────────────────────────────────── */
 
-// Fetch by Auvie Document ID
 exports.getAuvie = async (req, res, next) => {
     try {
         const auvie = await Auvie.findById(req.params.id)
@@ -111,33 +120,25 @@ exports.getAuvie = async (req, res, next) => {
     }
 };
 
-// ── Fetch by Chapter ID ───────────────────────────────────────────────
-// GET /api/f3/auvies/chapter/:chapterId
-// Used by BibliographyScreen playback and NovelDetailScreen.
-// Falls back to novel-level Auvie if exact chapterId match not found.
 exports.getAuvieByChapter = async (req, res, next) => {
     try {
         const { chapterId } = req.params;
 
-        // 1. Exact match
         let auvie = await Auvie.findOne({ chapterId, status: 'ready' })
-            .populate('novel', 'title cover')
+            .populate('novel', 'title cover chapters')
             .populate('author', 'name username avatar');
 
-        // 2. Fallback: find novel containing this chapter, return its first Auvie
         if (!auvie) {
             const novel = await Novel.findOne({ 'chapters._id': chapterId }).select('_id');
             if (novel) {
                 auvie = await Auvie.findOne({ novel: novel._id, status: 'ready' })
-                    .populate('novel', 'title cover')
+                    .populate('novel', 'title cover chapters')
                     .populate('author', 'name username avatar')
                     .sort({ createdAt: 1 });
             }
         }
 
-        if (!auvie) {
-            return res.status(404).json({ error: 'No auvie version exists for this chapter' });
-        }
+        if (!auvie) return res.status(404).json({ error: 'Auvie not found' });
 
         const userId = req.user ? req.user._id : null;
         res.json(formatAuvieResponse(auvie, userId));
@@ -147,35 +148,22 @@ exports.getAuvieByChapter = async (req, res, next) => {
     }
 };
 
-// ── NEW: Per-chapter Auvie statuses for a novel ───────────────────────
-// GET /api/f3/auvies/novel/:novelId/chapters
-// Called by BibliographyScreen on load to populate per-chapter Auvie status.
-// Returns: [{ chapterId, status, auvieId }, ...] — one entry per chapter.
-// Chapters with no Auvie get status: 'none'.
 exports.getChapterAuvieStatuses = async (req, res, next) => {
     try {
         const { novelId } = req.params;
-
-        // Must be the author
         const novel = await Novel.findOne({ _id: novelId, author: req.user._id })
             .select('chapters');
 
-        if (!novel) {
-            return res.status(404).json({ error: 'Novel not found' });
-        }
+        if (!novel) return res.status(404).json({ error: 'Novel not found' });
 
-        // Fetch all Auvies for this novel in one query
         const auvies = await Auvie.find({ novel: novelId })
             .select('chapterId status _id')
             .lean();
 
-        // Build a lookup map: chapterId (string) -> { status, auvieId }
         const auvieMap = {};
         for (const a of auvies) {
             if (a.chapterId) {
                 const key = a.chapterId.toString();
-                // If multiple auvies exist for a chapter (shouldn't happen but be safe),
-                // prefer 'ready' > 'generating' > others
                 const existing = auvieMap[key];
                 if (!existing || a.status === 'ready' ||
                     (a.status === 'generating' && existing.status !== 'ready')) {
@@ -184,7 +172,6 @@ exports.getChapterAuvieStatuses = async (req, res, next) => {
             }
         }
 
-        // Build response: one entry per chapter
         const result = novel.chapters.map(ch => {
             const chIdStr = ch._id.toString();
             const auvieInfo = auvieMap[chIdStr];
@@ -202,28 +189,22 @@ exports.getChapterAuvieStatuses = async (req, res, next) => {
     }
 };
 
-// ── Fetch first ready Auvie for a novel (novel-level fallback) ────────
-// GET /api/f3/auvies/novel/:novelId
 exports.getAuvieByNovel = async (req, res, next) => {
     try {
         const { novelId } = req.params;
 
         const auvie = await Auvie.findOne({ novel: novelId, status: 'ready' })
-            .populate('novel', 'title cover')
+            .populate('novel', 'title cover chapters')
             .populate('author', 'name username avatar')
             .sort({ createdAt: 1 });
 
-        if (!auvie) {
-            return res.status(404).json({ error: 'No Auvie found for this novel' });
-        }
+        if (!auvie) return res.status(404).json({ error: 'No Auvie found' });
 
-        // Auto-assign chapterId if missing (legacy data fix)
         if (!auvie.chapterId) {
             const novel = await Novel.findById(novelId).select('chapters');
             if (novel && novel.chapters && novel.chapters.length > 0) {
                 auvie.chapterId = novel.chapters[0]._id;
                 await auvie.save();
-                console.log(`[Auvie] Auto-assigned chapterId ${auvie.chapterId} to Auvie ${auvie._id}`);
             }
         }
 
@@ -256,7 +237,6 @@ exports.getDraftPreview = async (req, res) => {
         const chapter = novel.chapters.id(chapterId);
         if (!chapter) return res.status(404).json({ error: 'Chapter not found' });
 
-        // Return existing Auvie ID if one exists for this chapter
         const existingAuvie = await Auvie.findOne({
             novel: novelId,
             chapterId: chapterId,
@@ -274,7 +254,6 @@ exports.getDraftPreview = async (req, res) => {
             existingStatus: existingAuvie ? existingAuvie.status : null,
         });
     } catch (err) {
-        console.error('getDraftPreview error:', err.message);
         return res.status(500).json({ error: 'Failed to get draft preview' });
     }
 };
@@ -311,7 +290,6 @@ exports.updateSegments = async (req, res) => {
 
         res.json({ message: 'Segments updated', segments: auvie.segments });
     } catch (err) {
-        console.error('updateSegments error:', err.message);
         return res.status(500).json({ error: 'Failed to update segments' });
     }
 };
@@ -355,13 +333,12 @@ exports.generateAuvie = async (req, res, next) => {
             relatedNovel: novel._id
         });
 
-        // Always upsert by novelId + chapterId so each chapter gets its own Auvie doc
         const auvie = await Auvie.findOneAndUpdate(
             { novel: novelId, chapterId: chapterId },
             {
                 $set: {
                     author: req.user._id,
-                    chapterId: chapterId,   // always explicitly set
+                    chapterId: chapterId,
                     status: 'generating',
                     coinPrice: AUVIE_PURCHASE_PRICE,
                     generationCost: AUVIE_GENERATION_COST,
@@ -385,7 +362,6 @@ exports.generateAuvie = async (req, res, next) => {
         _runBackgroundWorker(auvie._id, segmentsToProcess, voiceMap, novel.title, req.user._id);
 
     } catch (err) {
-        console.error('generateAuvie error:', err.message);
         return next(err);
     }
 };
@@ -394,12 +370,10 @@ async function generateWithRetry(text, audioPath, voiceId, retries = 3) {
     try {
         return await generateSpeech(text, audioPath, voiceId);
     } catch (err) {
-        const status = err?.response?.status;
         const detail = err?.response?.data?.detail?.status;
-
         if (detail === 'detected_unusual_activity') await sleep(10000);
 
-        if (retries > 0 && (status === 401 || status === 429)) {
+        if (retries > 0 && (err.response?.status === 401 || err.response?.status === 429)) {
             await sleep((4 - retries) * 2000);
             return generateWithRetry(text, audioPath, voiceId, retries - 1);
         }
@@ -424,6 +398,7 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, use
                     || voiceMap[seg.characterName?.toLowerCase()]
                     || voiceMap['narrator']
                     || 'pNInz6obpg8ndPey74S';
+
                 const textToSend = DEV_MODE
                     ? seg.value.substring(0, DEV_MAX_CHARS_PER_SEGMENT)
                     : seg.value;
@@ -455,7 +430,6 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, use
         });
 
     } catch (genErr) {
-        console.error('[Auvie Worker] Fatal Failure:', genErr.message);
         await Auvie.findByIdAndUpdate(auvieId, {
             $set: { status: 'failed', errorMessage: genErr.message }
         });
@@ -521,7 +495,6 @@ exports.purchaseAuvie = async (req, res, next) => {
             segments: auvie.segments
         });
     } catch (err) {
-        console.error('purchaseAuvie error:', err.message);
         return next(err);
     }
 };
