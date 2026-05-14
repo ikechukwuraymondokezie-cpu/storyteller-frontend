@@ -13,7 +13,7 @@ const User = require('../models/User');
 const CoinTransaction = require('../models/CoinTransaction');
 
 // Utilities
-const { parseHashtags } = require('../utils/hashtagparser');
+const { parseHashtags } = require('../utils/hashtagParser');
 const { getAllSoundTags, buildSoundLibrary } = require('../utils/soundLibrary');
 const {
     generateSpeech,
