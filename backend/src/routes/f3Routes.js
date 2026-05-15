@@ -22,7 +22,7 @@ router.get('/feed', async (req, res) => {
             topAuvies,
         ] = await Promise.all([
 
-            // Featured: published, sorted by likes count
+            // Featured: published, sorted by views
             Novel.find({ status: 'published' })
                 .populate('author', 'name username avatar')
                 .sort({ views: -1 })
@@ -34,7 +34,7 @@ router.get('/feed', async (req, res) => {
                 .sort({ views: -1 })
                 .limit(20),
 
-            // Staff picks: novels with staffPick flag (fallback to newest published)
+            // Staff picks: novels with staffPick flag
             Novel.find({ status: 'published', staffPick: true })
                 .populate('author', 'name username avatar')
                 .sort({ createdAt: -1 })
@@ -46,12 +46,12 @@ router.get('/feed', async (req, res) => {
                 .sort({ createdAt: -1 })
                 .limit(10),
 
-            // Top Auvies: ready ones sorted by newest (so new ones appear first)
-            // Populate the novel so we can show its cover on the card
+            // Top Auvies: newest ready ones first
+            // Populate novel for cover image on the card
             Auvie.find({ status: 'ready' })
                 .populate('novel', 'title cover genre')
                 .populate('author', 'name username avatar')
-                .sort({ createdAt: -1 })   // newest first = "new" Auvies at front
+                .sort({ createdAt: -1 })
                 .limit(15),
         ]);
 
@@ -73,10 +73,7 @@ router.get('/feed', async (req, res) => {
 
         res.json({
             featuredNovels: featuredNovels.map(formatNovel),
-
-            // Trending is all novels by views — deduplicate from featured on client
             trendingNovels: trendingNovels.map(formatNovel),
-
             staffPicks: staffPicks.map(formatNovel),
 
             latestSnippets: latestSnippets.map(s => ({
@@ -89,11 +86,13 @@ router.get('/feed', async (req, res) => {
                 duration: s.duration,
             })),
 
-            // topAuvies: includes populated novel (with cover) for the card UI
+            // ── FIX: chapterId is now included so Flutter can call
+            //         /api/f3/auvies/chapter/:chapterId correctly ──────
             topAuvies: topAuvies.map(a => ({
                 _id: a._id,
-                novel: a.novel,       // { _id, title, cover, genre }
-                author: a.author,     // { name, username, avatar }
+                chapterId: a.chapterId,   // ← THIS was missing — now included
+                novel: a.novel,           // { _id, title, cover, genre }
+                author: a.author,         // { name, username, avatar }
                 coinPrice: a.coinPrice,
                 plays: a.plays,
                 duration: a.duration,
