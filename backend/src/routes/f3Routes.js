@@ -7,7 +7,7 @@ const User = require('../models/User');
 const { protect } = require('../middleware/authMiddleware');
 
 /* ─────────────────────────────────────────────────────────────
-   F3 MAIN FEED
+    F3 MAIN FEED
 ───────────────────────────────────────────────────────────── */
 
 router.get('/feed', async (req, res) => {
@@ -97,11 +97,11 @@ router.get('/feed', async (req, res) => {
 });
 
 /* ─────────────────────────────────────────────────────────────
-   SEE ALL NOVELS ENDPOINTS (🔥 FIX FOR YOUR BUG)
+    SEE ALL NOVELS ENDPOINTS (FIXED EXTRA URL PATH SEGMENT)
 ───────────────────────────────────────────────────────────── */
 
-// FEATURED NOVELS
-router.get('/novels/featured', async (req, res) => {
+// FEATURED NOVELS -> maps cleanly to /api/f3/novels/featured
+router.get('/featured', async (req, res) => {
     try {
         const { page = 1, limit = 20 } = req.query;
 
@@ -117,8 +117,8 @@ router.get('/novels/featured', async (req, res) => {
     }
 });
 
-// TRENDING NOVELS
-router.get('/novels/trending', async (req, res) => {
+// TRENDING NOVELS -> maps cleanly to /api/f3/novels/trending
+router.get('/trending', async (req, res) => {
     try {
         const { page = 1, limit = 20 } = req.query;
 
@@ -134,8 +134,8 @@ router.get('/novels/trending', async (req, res) => {
     }
 });
 
-// STAFF PICKS
-router.get('/novels/staff-picks', async (req, res) => {
+// STAFF PICKS -> maps cleanly to /api/f3/novels/staff-picks
+router.get('/staff-picks', async (req, res) => {
     try {
         const { page = 1, limit = 20 } = req.query;
 
@@ -155,7 +155,7 @@ router.get('/novels/staff-picks', async (req, res) => {
 });
 
 /* ─────────────────────────────────────────────────────────────
-   SEARCH
+    SEARCH
 ───────────────────────────────────────────────────────────── */
 
 router.get('/search', async (req, res) => {
@@ -191,7 +191,7 @@ router.get('/search', async (req, res) => {
 });
 
 /* ─────────────────────────────────────────────────────────────
-   USER PROFILE
+    USER PROFILE
 ───────────────────────────────────────────────────────────── */
 
 router.get('/users/:username', async (req, res) => {
@@ -228,7 +228,7 @@ router.get('/users/:username', async (req, res) => {
 });
 
 /* ─────────────────────────────────────────────────────────────
-   UPDATE PROFILE
+    UPDATE PROFILE
 ───────────────────────────────────────────────────────────── */
 
 router.put('/users/profile', protect, async (req, res) => {
@@ -266,7 +266,7 @@ router.put('/users/profile', protect, async (req, res) => {
 });
 
 /* ─────────────────────────────────────────────────────────────
-   FOLLOW / UNFOLLOW
+    FOLLOW / UNFOLLOW
 ───────────────────────────────────────────────────────────── */
 
 router.post('/users/:id/follow', protect, async (req, res) => {
