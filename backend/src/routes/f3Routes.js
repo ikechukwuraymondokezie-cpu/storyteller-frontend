@@ -6,12 +6,10 @@ const { Auvie } = require('../models/Auvie');
 const User = require('../models/User');
 const { protect } = require('../middleware/authMiddleware');
 
-/* ── F3 MAIN FEED ────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────
+   F3 MAIN FEED
+───────────────────────────────────────────────────────────── */
 
-/**
- * GET /api/f3/feed
- * Returns all sections for the Storyteller public feed.
- */
 router.get('/feed', async (req, res) => {
     try {
         const [
@@ -22,32 +20,26 @@ router.get('/feed', async (req, res) => {
             topAuvies,
         ] = await Promise.all([
 
-            // Featured: published, sorted by views
             Novel.find({ status: 'published' })
                 .populate('author', 'name username avatar')
                 .sort({ views: -1 })
                 .limit(10),
 
-            // Trending: all published novels sorted by views descending
             Novel.find({ status: 'published' })
                 .populate('author', 'name username avatar')
                 .sort({ views: -1 })
                 .limit(20),
 
-            // Staff picks: novels with staffPick flag
             Novel.find({ status: 'published', staffPick: true })
                 .populate('author', 'name username avatar')
                 .sort({ createdAt: -1 })
                 .limit(10),
 
-            // Latest snippets
             Snippet.find({ status: 'published' })
                 .populate('author', 'name username avatar')
                 .sort({ createdAt: -1 })
                 .limit(10),
 
-            // Top Auvies: newest ready ones first
-            // Populate novel for cover image on the card
             Auvie.find({ status: 'ready' })
                 .populate('novel', 'title cover genre')
                 .populate('author', 'name username avatar')
@@ -55,7 +47,6 @@ router.get('/feed', async (req, res) => {
                 .limit(15),
         ]);
 
-        // ── Format novel helper ───────────────────────────────────────
         const formatNovel = (n) => ({
             _id: n._id,
             title: n.title,
@@ -86,13 +77,11 @@ router.get('/feed', async (req, res) => {
                 duration: s.duration,
             })),
 
-            // ── FIX: chapterId is now included so Flutter can call
-            //         /api/f3/auvies/chapter/:chapterId correctly ──────
             topAuvies: topAuvies.map(a => ({
                 _id: a._id,
-                chapterId: a.chapterId,   // ← THIS was missing — now included
-                novel: a.novel,           // { _id, title, cover, genre }
-                author: a.author,         // { name, username, avatar }
+                chapterId: a.chapterId,
+                novel: a.novel,
+                author: a.author,
                 coinPrice: a.coinPrice,
                 plays: a.plays,
                 duration: a.duration,
@@ -100,13 +89,74 @@ router.get('/feed', async (req, res) => {
                 createdAt: a.createdAt,
             })),
         });
+
     } catch (err) {
         console.error("F3 Feed Error:", err);
         res.status(500).json({ error: 'Failed to fetch feed' });
     }
 });
 
-/* ── SEARCH ──────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────
+   SEE ALL NOVELS ENDPOINTS (🔥 FIX FOR YOUR BUG)
+───────────────────────────────────────────────────────────── */
+
+// FEATURED NOVELS
+router.get('/novels/featured', async (req, res) => {
+    try {
+        const { page = 1, limit = 20 } = req.query;
+
+        const novels = await Novel.find({ status: 'published' })
+            .populate('author', 'name username avatar')
+            .sort({ views: -1 })
+            .skip((page - 1) * limit)
+            .limit(Number(limit));
+
+        res.json({ novels });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to load featured novels' });
+    }
+});
+
+// TRENDING NOVELS
+router.get('/novels/trending', async (req, res) => {
+    try {
+        const { page = 1, limit = 20 } = req.query;
+
+        const novels = await Novel.find({ status: 'published' })
+            .populate('author', 'name username avatar')
+            .sort({ views: -1 })
+            .skip((page - 1) * limit)
+            .limit(Number(limit));
+
+        res.json({ novels });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to load trending novels' });
+    }
+});
+
+// STAFF PICKS
+router.get('/novels/staff-picks', async (req, res) => {
+    try {
+        const { page = 1, limit = 20 } = req.query;
+
+        const novels = await Novel.find({
+            status: 'published',
+            staffPick: true
+        })
+            .populate('author', 'name username avatar')
+            .sort({ createdAt: -1 })
+            .skip((page - 1) * limit)
+            .limit(Number(limit));
+
+        res.json({ novels });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to load staff picks' });
+    }
+});
+
+/* ─────────────────────────────────────────────────────────────
+   SEARCH
+───────────────────────────────────────────────────────────── */
 
 router.get('/search', async (req, res) => {
     try {
@@ -140,12 +190,15 @@ router.get('/search', async (req, res) => {
     }
 });
 
-/* ── WRITER PROFILES ─────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────
+   USER PROFILE
+───────────────────────────────────────────────────────────── */
 
 router.get('/users/:username', async (req, res) => {
     try {
-        const user = await User.findOne({ username: req.params.username.toLowerCase() })
-            .select('name username avatar bio role followers following createdAt');
+        const user = await User.findOne({
+            username: req.params.username.toLowerCase()
+        }).select('name username avatar bio role followers following createdAt');
 
         if (!user) return res.status(404).json({ error: 'User not found' });
 
@@ -153,6 +206,7 @@ router.get('/users/:username', async (req, res) => {
             Novel.find({ author: user._id, status: 'published' })
                 .select('title cover genre totalChapters hasAuvie views')
                 .sort({ createdAt: -1 }),
+
             Snippet.find({ author: user._id, status: 'published' })
                 .select('title plays likes createdAt')
                 .sort({ createdAt: -1 })
@@ -161,16 +215,21 @@ router.get('/users/:username', async (req, res) => {
         res.json({
             user: {
                 ...user.toObject(),
-                followerCount: user.followers ? user.followers.length : 0,
-                followingCount: user.following ? user.following.length : 0,
+                followerCount: user.followers?.length || 0,
+                followingCount: user.following?.length || 0,
             },
             novels,
             snippets,
         });
+
     } catch (err) {
         res.status(500).json({ error: 'Failed to fetch profile' });
     }
 });
+
+/* ─────────────────────────────────────────────────────────────
+   UPDATE PROFILE
+───────────────────────────────────────────────────────────── */
 
 router.put('/users/profile', protect, async (req, res) => {
     try {
@@ -181,7 +240,10 @@ router.put('/users/profile', protect, async (req, res) => {
                 username: username.toLowerCase(),
                 _id: { $ne: req.user._id }
             });
-            if (existing) return res.status(400).json({ error: 'Username already taken' });
+
+            if (existing) {
+                return res.status(400).json({ error: 'Username already taken' });
+            }
         }
 
         const updates = {};
@@ -197,10 +259,15 @@ router.put('/users/profile', protect, async (req, res) => {
         ).select('name username avatar bio role coins currency');
 
         res.json(user);
+
     } catch (err) {
         res.status(500).json({ error: 'Failed to update profile' });
     }
 });
+
+/* ─────────────────────────────────────────────────────────────
+   FOLLOW / UNFOLLOW
+───────────────────────────────────────────────────────────── */
 
 router.post('/users/:id/follow', protect, async (req, res) => {
     try {
@@ -211,7 +278,9 @@ router.post('/users/:id/follow', protect, async (req, res) => {
         const target = await User.findById(req.params.id);
         const currentUser = await User.findById(req.user._id);
 
-        if (!target || !currentUser) return res.status(404).json({ error: 'User not found' });
+        if (!target || !currentUser) {
+            return res.status(404).json({ error: 'User not found' });
+        }
 
         const isFollowing = currentUser.following.includes(target._id);
 
@@ -229,6 +298,7 @@ router.post('/users/:id/follow', protect, async (req, res) => {
             following: !isFollowing,
             followerCount: target.followers.length,
         });
+
     } catch (err) {
         res.status(500).json({ error: 'Operation failed' });
     }
