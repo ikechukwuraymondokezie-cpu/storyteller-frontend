@@ -20,6 +20,20 @@ const Folder = mongoose.models.Folder || mongoose.model("Folder", new mongoose.S
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }));
 
+/* ── ADDED CONTROLLER IMPORTS ─────────────────────────────────────────── */
+const { saveNovel, unsaveNovel, getSavedNovels } = require('../controllers/bookController');
+
+/* ── ADDED INTERCEPT ROUTEMATCHERS ────────────────────────────────────── */
+// Save an F3 novel to personal library
+router.post('/save-novel', protect, saveNovel);
+
+// Unsave an F3 novel from personal library
+router.delete('/save-novel/:novelId', protect, unsaveNovel);
+
+// Get all saved F3 novels (used by LibraryScreen)
+router.get('/saved-novels', protect, getSavedNovels);
+/* ─────────────────────────────────────────────────────────────────────── */
+
 /* -------------------- CONFIG & DIRECTORIES -------------------- */
 const pdfDir = path.join(__dirname, "../../temp/pdfs");
 const coversDir = path.join(__dirname, "../../temp/covers");
@@ -41,7 +55,7 @@ const upload = multer({
     }
 });
 
-/* ---------------- HELPERS ---------------- */
+/* ---------------- HELPERS (Updated with new schema fields) ---------------- */
 
 const formatBook = (book) => ({
     _id: book._id,
@@ -59,7 +73,12 @@ const formatBook = (book) => ({
     summary: book.summary || "",
     toc: book.toc || [],
     lastAccessed: book.lastAccessed,
-    createdAt: book.createdAt
+    createdAt: book.createdAt,
+    // Safely mapping the new fields to your frontend responses
+    source: book.source || 'upload',
+    novelId: book.novelId || null,
+    genre: book.genre || '',
+    description: book.description || ''
 });
 
 function getCloudinaryPublicId(url) {
@@ -119,27 +138,6 @@ function extractTOC(text, pageNum) {
     return tocEntries;
 }
 
-/**
- * Cleans page text while preserving paragraph and header structure.
- *
- * Core insight:
- * - pdftotext uses \n\n for REAL paragraph breaks
- * - pdftotext uses single \n for visual line wraps at the page border
- *
- * So: split on \n\n first to get real paragraphs, then within each
- * paragraph merge all single-\n lines together (they are border wraps).
- *
- * Only exceptions inside a paragraph:
- * - Line ends with .!? → real sentence end, flush as its own block
- * - Next line is a header → flush and keep header separate
- * - Hyphenated word break → merge without space
- */
-/**
- * A short phrase sandwiched between longer lines with single \n on both
- * sides is almost certainly a header — e.g. "Minibooks(2019)" sitting
- * between body text. Won't pass isHeaderLine (mixed case, has digits)
- * but the sandwich pattern identifies it reliably.
- */
 function isSandwichedHeader(line, prevLine, nextLine) {
     const t = line.trim();
     if (!t || t.length > 60) return false;
@@ -153,7 +151,6 @@ function isSandwichedHeader(line, prevLine, nextLine) {
 function smartClean(text) {
     if (!text) return "";
 
-    // Split on double newlines — real paragraph breaks from pdftotext
     const paragraphs = text.split(/\n\n+/);
     const cleanedParagraphs = [];
 
@@ -161,11 +158,9 @@ function smartClean(text) {
         const trimmed = para.trim();
         if (!trimmed) continue;
 
-        // Split into visual lines (single \n = border wrap)
         const lines = trimmed.split('\n').map(l => l.trim()).filter(l => l.length > 0);
         if (lines.length === 0) continue;
 
-        // Single-line paragraph that is a header — keep isolated
         if (lines.length === 1 && isHeaderLine(lines[0])) {
             cleanedParagraphs.push(lines[0]);
             continue;
@@ -182,13 +177,11 @@ function smartClean(text) {
             const lineIsHeader = isHeaderLine(line) || isSandwichedHeader(line, prev, next);
             const nextIsHeader = next && (isHeaderLine(next) || isSandwichedHeader(next, line, nextNext));
 
-            // Hyphenated word break — merge without space
             if (/\w-$/.test(line) && next && /^\w/.test(next) && !lineIsHeader && !nextIsHeader) {
                 buffer += line.replace(/-$/, '');
                 continue;
             }
 
-            // This line is a header — flush buffer first, then push header alone
             if (lineIsHeader) {
                 if (buffer.trim()) cleanedParagraphs.push(buffer.trim());
                 buffer = '';
@@ -196,7 +189,6 @@ function smartClean(text) {
                 continue;
             }
 
-            // Next line is a header — flush buffer before it
             if (nextIsHeader) {
                 buffer += line;
                 if (buffer.trim()) cleanedParagraphs.push(buffer.trim());
@@ -211,7 +203,6 @@ function smartClean(text) {
                 if (buffer.trim()) cleanedParagraphs.push(buffer.trim());
                 buffer = '';
             } else {
-                // Border wrap — join with space
                 buffer += line + ' ';
             }
         }
@@ -284,7 +275,7 @@ async function extractPageText(pdfPath, pageNum) {
     }
 }
 
-/* ---------------- ROUTES ---------------- */
+/* ---------------- CONTINGENT SYSTEM ROUTEMATCHERS ---------------- */
 
 router.get("/continue", protect, async (req, res) => {
     try {
@@ -316,7 +307,6 @@ router.get("/folders", protect, async (req, res) => {
 
 router.post("/folders", protect, async (req, res) => {
     try {
-        // Check if this specific user already has a folder with this name
         const exists = await Folder.findOne({ name: req.body.name, user: req.user._id });
         if (exists) return res.status(400).json({ error: "Folder already exists" });
 
@@ -366,7 +356,7 @@ router.get("/:id/load-pages", protect, async (req, res) => {
         const book = await Book.findOneAndUpdate(
             {
                 _id: req.params.id,
-                user: req.user._id, // Ownership check
+                user: req.user._id,
                 status: { $nin: ['processing_pages', 'completed'] }
             },
             { status: 'processing_pages' },
@@ -429,7 +419,6 @@ router.get("/:id/load-pages", protect, async (req, res) => {
             a.findIndex(t => t.text === v.text && t.page === v.page) === i
         );
 
-        // SECURE UPDATE: Ensure we only save if the book belongs to the user
         const updatedBook = await Book.findOneAndUpdate(
             { _id: req.params.id, user: req.user._id },
             {
@@ -456,7 +445,6 @@ router.get("/:id/load-pages", protect, async (req, res) => {
 
     } catch (err) {
         console.error("load-pages error:", err.message);
-        // SECURE RESET: Ensure we only update the status if the book belongs to the user
         await Book.findOneAndUpdate({ _id: req.params.id, user: req.user._id }, { status: 'processing' });
         if (tempPath && await fs.pathExists(tempPath)) await fs.remove(tempPath);
         res.status(500).json({ error: "Lazy load failed" });
@@ -550,7 +538,6 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
     }
 });
 
-// --- INSERT BULK DELETE HERE ---
 router.post("/bulk-delete", protect, async (req, res) => {
     try {
         const { ids } = req.body;
