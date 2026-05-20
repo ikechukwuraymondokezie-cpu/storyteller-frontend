@@ -48,27 +48,23 @@ const formatNovelFeed = (novel, userId) => ({
     hasAuvie: novel.hasAuvie,
     auvie: novel.auvie,
     views: novel.views,
-    likeCount: novel.likes.length,
-    isLiked: userId
-        ? novel.likes.some(id => id.toString() === userId.toString())
+    likeCount: novel.likes ? novel.likes.length : 0,
+    isLiked: (userId && novel.likes)
+        ? novel.likes.some(id => id && id.toString() === userId.toString())
         : false,
     createdAt: novel.createdAt,
     updatedAt: novel.updatedAt,
 });
 
-// FIX: separate formatter for writer's own novels — includes chapter stubs with _id
-// so BibliographyScreen can extract chapterId without a second fetch
 const formatNovelForWriter = (novel, userId) => ({
     ...formatNovelFeed(novel, userId),
-    // Include minimal chapter data: _id and title only (not full content)
-    // This is enough for the Workshop flow without sending huge payloads
-    chapters: novel.chapters.map(ch => ({
+    chapters: novel.chapters ? novel.chapters.map(ch => ({
         _id: ch._id,
         title: ch.title,
         order: ch.order,
         wordCount: ch.wordCount,
         createdAt: ch.createdAt,
-    })),
+    })) : [],
 });
 
 const formatChapter = (chapter, index, freeCount, hasUnlocked, isAuthor = false) => ({
@@ -78,7 +74,6 @@ const formatChapter = (chapter, index, freeCount, hasUnlocked, isAuthor = false)
     wordCount: chapter.wordCount,
     isFree: index < freeCount,
     isLocked: !isAuthor && index >= freeCount && !hasUnlocked,
-    // Content is available if: it's free, OR user is author, OR user purchased
     content: (index < freeCount || isAuthor || hasUnlocked) ? chapter.content : null,
     createdAt: chapter.createdAt,
 });
@@ -131,7 +126,8 @@ router.get('/', async (req, res) => {
             .skip((page - 1) * limit)
             .limit(parseInt(limit));
 
-        const userId = req.user?._id;
+        const userId = (req.user && req.user._id) ? req.user._id : null;
+
         res.json(novels.map(n => formatNovelFeed(n, userId)));
     } catch (err) {
         console.error('Fetch novels error:', err.message);
@@ -146,20 +142,21 @@ router.get('/trending', async (req, res) => {
             .sort({ views: -1 })
             .limit(20);
 
-        res.json(novels.map(n => formatNovelFeed(n, req.user?._id)));
+        const userId = (req.user && req.user._id) ? req.user._id : null;
+        res.json(novels.map(n => formatNovelFeed(n, userId)));
     } catch (err) {
+        console.error('Fetch trending error:', err.message);
         res.status(500).json({ error: 'Failed to fetch trending novels' });
     }
 });
 
-// FIX: /my now uses formatNovelForWriter which includes chapters with _id
-// Previously used formatNovelFeed which stripped chapters entirely
 router.get('/my', protect, async (req, res) => {
     try {
         const novels = await Novel.find({ author: req.user._id })
             .sort({ updatedAt: -1 });
         res.json(novels.map(n => formatNovelForWriter(n, req.user._id)));
     } catch (err) {
+        console.error('Fetch my novels error:', err.message);
         res.status(500).json({ error: 'Failed to fetch your novels' });
     }
 });
@@ -182,16 +179,16 @@ router.get('/:id', async (req, res) => {
 
         await Novel.findByIdAndUpdate(req.params.id, { $inc: { views: 1 } });
 
-        const userId = req.user?._id;
-        const isAuthor = userId && novel.author.toString() === userId.toString();
+        const userId = (req.user && req.user._id) ? req.user._id : null;
+        const isAuthor = userId && novel.author && novel.author._id.toString() === userId.toString();
 
         const user = userId ? await User.findById(userId).select('unlockedNovels') : null;
         const hasUnlocked = user?.unlockedNovels?.some(id => id.toString() === novel._id.toString()) || false;
 
         const formattedNovel = formatNovelFeed(novel, userId);
-        formattedNovel.chapters = novel.chapters.map((ch, i) =>
+        formattedNovel.chapters = novel.chapters ? novel.chapters.map((ch, i) =>
             formatChapter(ch, i, novel.freeChapterCount, hasUnlocked, isAuthor)
-        );
+        ) : [];
 
         res.json(formattedNovel);
     } catch (err) {
@@ -214,20 +211,18 @@ router.get('/:id/chapters/:chapterId', async (req, res) => {
         );
         if (chapterIndex === -1) return res.status(404).json({ error: 'Chapter not found' });
 
-        // 1. Identify User Status
-        const userId = req.user ? req.user._id : null;
+        const userId = (req.user && req.user._id) ? req.user._id : null;
         const isAuthor = userId && novel.author.toString() === userId.toString();
         const isFree = chapterIndex < novel.freeChapterCount;
 
         let hasUnlocked = false;
         if (userId && !isAuthor) {
             const user = await User.findById(userId).select('unlockedNovels');
-            hasUnlocked = user.unlockedNovels.some(
+            hasUnlocked = user ? user.unlockedNovels.some(
                 id => id.toString() === novel._id.toString()
-            );
+            ) : false;
         }
 
-        // 2. Logic Gate
         if (!isFree && !isAuthor && !hasUnlocked) {
             return res.status(403).json({
                 error: 'Chapter locked',
@@ -237,7 +232,6 @@ router.get('/:id/chapters/:chapterId', async (req, res) => {
         }
 
         const chapter = novel.chapters[chapterIndex];
-        // 3. Return formatted chapter
         res.json(formatChapter(chapter, chapterIndex, novel.freeChapterCount, hasUnlocked, isAuthor));
     } catch (err) {
         console.error('Fetch chapter error:', err.message);
@@ -330,6 +324,7 @@ router.post('/:id/like', protect, async (req, res) => {
         await novel.save();
         res.json({ liked: !alreadyLiked, likeCount: novel.likes.length });
     } catch (err) {
+        console.error('Like novel error:', err.message);
         res.status(500).json({ error: 'Failed to like novel' });
     }
 });
@@ -429,6 +424,7 @@ router.delete('/:id', protect, async (req, res) => {
         if (!novel) return res.status(404).json({ error: 'Novel not found' });
         res.json({ message: 'Novel deleted' });
     } catch (err) {
+        console.error('Delete novel error:', err.message);
         res.status(500).json({ error: 'Failed to delete novel' });
     }
 });
@@ -519,6 +515,7 @@ router.delete('/:id/chapters/:chapterId', protect, async (req, res) => {
 
         res.json({ message: 'Chapter deleted', totalChapters: novel.totalChapters });
     } catch (err) {
+        console.error('Delete chapter error:', err.message);
         res.status(500).json({ error: 'Failed to delete chapter' });
     }
 });
