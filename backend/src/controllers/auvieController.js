@@ -2,8 +2,8 @@
  * Full Business Logic for Auvie: Parsing, Background Generation, & Sales.
  *
  * Access rules:
- *   - Chapter 1 Auvie  → free for everyone (no purchase needed)
- *   - Chapter 2+ Auvie → must purchase (200 coins) regardless of subscription
+ *   - Chapter 1 Auvie  → free for everyone (segments always returned)
+ *   - Chapter 2+ Auvie → segments null unless purchased or author
  *   - Novel author      → always unrestricted
  * ─────────────────────────────────────────────────────────────────────── */
 
@@ -11,11 +11,13 @@ const path = require('path');
 const fs = require('fs-extra');
 const mongoose = require('mongoose');
 
+// Models
 const { Auvie, CharacterProfile } = require('../models/Auvie');
 const Novel = require('../models/Novel');
 const User = require('../models/User');
 const CoinTransaction = require('../models/CoinTransaction');
 
+// Utilities
 const { parseHashtags } = require('../utils/hashtagParser');
 const { getAllSoundTags, buildSoundLibrary } = require('../utils/soundLibrary');
 const {
@@ -42,56 +44,56 @@ fs.ensureDirSync(tmpDir);
 /* ── ACCESS HELPERS ──────────────────────────────────────────────────── */
 
 /**
- * Returns the 0-based chapter index for a given chapterId within a novel.
- * Returns -1 if not found.
- */
-const getChapterIndex = (novel, chapterId) => {
-    return novel.chapters.findIndex(
-        ch => ch._id.toString() === chapterId.toString()
-    );
-};
-
-/**
- * Returns true if the user has purchased this Auvie.
- */
-const hasPurchased = (auvie, userId) => {
-    if (!userId) return false;
-    return auvie.purchasedBy.some(id => id.toString() === userId.toString());
-};
-
-/**
- * Core access gate for Auvie content.
+ * Determines whether this Auvie belongs to chapter 1 of its novel.
  *
- * Chapter 1 Auvie → free for everyone
- * Author          → always unrestricted
- * Purchased       → access granted
- * Everyone else   → must purchase
+ * We fetch the novel separately with only `author` and `chapters._id` so
+ * we are NOT depending on the populated novel object having chapters on it
+ * (which only happens when the populate includes 'chapters').
  *
- * Returns: { canAccess: boolean, isAuthor: boolean, hasPurchased: boolean, isChapterOne: boolean }
+ * Returns: { isChapterOne, isAuthor, hasPurchased }
  */
-const resolveAuvieAccess = async (auvie, userId) => {
-    // Find the novel to determine chapter index
-    const novel = await Novel.findById(auvie.novel).select('author chapters');
-    if (!novel) return { canAccess: false, isAuthor: false, hasPurchased: false, isChapterOne: false };
+const resolveAccess = async (auvie, userId) => {
+    // Fetch the novel with just what we need for access decisions
+    const novelId = auvie.novel._id
+        ? auvie.novel._id.toString()
+        : auvie.novel.toString();
 
-    const chapterIndex = getChapterIndex(novel, auvie.chapterId);
-    const isChapterOne = chapterIndex === 0;
+    const novel = await Novel.findById(novelId).select('author chapters._id');
 
-    const isAuthor = userId && novel.author.toString() === userId.toString();
-    const purchased = hasPurchased(auvie, userId);
+    if (!novel) {
+        return { isChapterOne: false, isAuthor: false, hasPurchased: false };
+    }
 
-    const canAccess = isChapterOne || isAuthor || purchased;
+    // Chapter 1 check: does the first chapter's _id match this auvie's chapterId?
+    const isChapterOne = novel.chapters.length > 0 &&
+        novel.chapters[0]._id.toString() === auvie.chapterId.toString();
 
-    return { canAccess, isAuthor, hasPurchased: purchased, isChapterOne };
+    const isAuthor = userId
+        ? novel.author.toString() === userId.toString()
+        : false;
+
+    const hasPurchased = userId
+        ? auvie.purchasedBy.some(id => id.toString() === userId.toString())
+        : false;
+
+    return { isChapterOne, isAuthor, hasPurchased };
 };
 
 /* ── FORMAT RESPONSE ─────────────────────────────────────────────────── */
 
 /**
- * Formats the Auvie response according to access rules.
- * Segments and audioUrl are only included when canAccess is true.
+ * Builds the API response for an Auvie.
+ *
+ * segments and audioUrl:
+ *   - Chapter 1 → always included (free preview)
+ *   - Author    → always included
+ *   - Purchased → always included
+ *   - Everyone else on ch2+ → null
  */
 const formatAuvieResponse = (auvie, access) => {
+    const { isChapterOne, isAuthor, hasPurchased } = access;
+    const canAccess = isChapterOne || isAuthor || hasPurchased;
+
     return {
         _id: auvie._id,
         novel: auvie.novel,
@@ -101,13 +103,12 @@ const formatAuvieResponse = (auvie, access) => {
         duration: auvie.duration,
         coinPrice: auvie.coinPrice,
         plays: auvie.plays,
-        isAuthor: access.isAuthor,
-        hasPurchased: access.hasPurchased,
-        isChapterOne: access.isChapterOne,
-        isFree: access.isChapterOne,
-        voiceMap: access.isAuthor ? auvie.voiceMap : undefined,
-        audioUrl: access.canAccess ? auvie.audioUrl : null,
-        segments: access.canAccess ? auvie.segments : null,
+        isAuthor,
+        hasPurchased,
+        isFreePreview: isChapterOne,   // tells the client this is always free
+        voiceMap: isAuthor ? auvie.voiceMap : undefined,
+        audioUrl: canAccess ? auvie.audioUrl : null,
+        segments: canAccess ? auvie.segments : null,
         createdAt: auvie.createdAt,
     };
 };
@@ -143,7 +144,7 @@ exports.getSounds = async (req, res, next) => {
 
 /* ── 2. DATA FETCHING & STATUS ───────────────────────────────────────── */
 
-// GET /api/f3/auvies/:id  (protected — for author/purchaser use)
+// GET /api/f3/auvies/:id
 exports.getAuvie = async (req, res, next) => {
     try {
         const auvie = await Auvie.findById(req.params.id)
@@ -152,8 +153,8 @@ exports.getAuvie = async (req, res, next) => {
 
         if (!auvie) return res.status(404).json({ error: 'Auvie not found' });
 
-        const userId = req.user?._id ?? null;
-        const access = await resolveAuvieAccess(auvie, userId);
+        const userId = req.user ? req.user._id : null;
+        const access = await resolveAccess(auvie, userId);
         res.json(formatAuvieResponse(auvie, access));
     } catch (err) {
         console.error('getAuvie error:', err.message);
@@ -161,20 +162,23 @@ exports.getAuvie = async (req, res, next) => {
     }
 };
 
-// GET /api/f3/auvies/chapter/:chapterId  (public — used by NovelDetailScreen & F3Screen)
-// Chapter 1 → free segments returned. Chapter 2+ → segments null unless purchased/author.
+// GET /api/f3/auvies/chapter/:chapterId
+// Public route — used by NovelDetailScreen and F3Screen.
+// Chapter 1 segments are always returned. Chapter 2+ gated by purchase/author.
 exports.getAuvieByChapter = async (req, res, next) => {
     try {
         const { chapterId } = req.params;
 
-        // 1. Try exact chapter match
+        // 1. Exact match by chapterId
         let auvie = await Auvie.findOne({ chapterId, status: 'ready' })
             .populate('novel', 'title cover')
             .populate('author', 'name username avatar');
 
-        // 2. Fallback: find novel containing this chapter, return its first ready Auvie
+        // 2. Fallback: find the novel this chapter belongs to,
+        //    return its first ready Auvie (legacy support)
         if (!auvie) {
-            const novel = await Novel.findOne({ 'chapters._id': chapterId }).select('_id');
+            const novel = await Novel.findOne({ 'chapters._id': chapterId })
+                .select('_id');
             if (novel) {
                 auvie = await Auvie.findOne({ novel: novel._id, status: 'ready' })
                     .populate('novel', 'title cover')
@@ -187,8 +191,8 @@ exports.getAuvieByChapter = async (req, res, next) => {
             return res.status(404).json({ error: 'No auvie version exists for this chapter' });
         }
 
-        const userId = req.user?._id ?? null;
-        const access = await resolveAuvieAccess(auvie, userId);
+        const userId = req.user ? req.user._id : null;
+        const access = await resolveAccess(auvie, userId);
         res.json(formatAuvieResponse(auvie, access));
     } catch (err) {
         console.error('getAuvieByChapter error:', err.message);
@@ -196,7 +200,8 @@ exports.getAuvieByChapter = async (req, res, next) => {
     }
 };
 
-// GET /api/f3/auvies/novel/:novelId  (novel-level fallback)
+// GET /api/f3/auvies/novel/:novelId
+// Novel-level fallback — returns the first ready Auvie for the novel.
 exports.getAuvieByNovel = async (req, res, next) => {
     try {
         const { novelId } = req.params;
@@ -212,16 +217,16 @@ exports.getAuvieByNovel = async (req, res, next) => {
 
         // Auto-assign chapterId if missing (legacy data)
         if (!auvie.chapterId) {
-            const novel = await Novel.findById(novelId).select('chapters');
-            if (novel?.chapters?.length > 0) {
+            const novel = await Novel.findById(novelId).select('chapters._id');
+            if (novel && novel.chapters && novel.chapters.length > 0) {
                 auvie.chapterId = novel.chapters[0]._id;
                 await auvie.save();
                 console.log(`[Auvie] Auto-assigned chapterId ${auvie.chapterId} to Auvie ${auvie._id}`);
             }
         }
 
-        const userId = req.user?._id ?? null;
-        const access = await resolveAuvieAccess(auvie, userId);
+        const userId = req.user ? req.user._id : null;
+        const access = await resolveAccess(auvie, userId);
         res.json(formatAuvieResponse(auvie, access));
     } catch (err) {
         console.error('getAuvieByNovel error:', err.message);
@@ -229,13 +234,15 @@ exports.getAuvieByNovel = async (req, res, next) => {
     }
 };
 
-// GET /api/f3/auvies/novel/:novelId/chapters  (per-chapter status for BibliographyScreen)
+// GET /api/f3/auvies/novel/:novelId/chapters
+// Returns per-chapter Auvie status for BibliographyScreen.
+// Protected — author only.
 exports.getChapterAuvieStatuses = async (req, res, next) => {
     try {
         const { novelId } = req.params;
 
         const novel = await Novel.findOne({ _id: novelId, author: req.user._id })
-            .select('chapters');
+            .select('chapters._id');
 
         if (!novel) return res.status(404).json({ error: 'Novel not found' });
 
@@ -243,25 +250,27 @@ exports.getChapterAuvieStatuses = async (req, res, next) => {
             .select('chapterId status _id')
             .lean();
 
+        // Build chapterId → { status, auvieId } map
+        // Prefer 'ready' over 'generating' if multiple exist
         const auvieMap = {};
         for (const a of auvies) {
-            if (a.chapterId) {
-                const key = a.chapterId.toString();
-                const existing = auvieMap[key];
-                if (!existing || a.status === 'ready' ||
-                    (a.status === 'generating' && existing.status !== 'ready')) {
-                    auvieMap[key] = { status: a.status, auvieId: a._id.toString() };
-                }
+            if (!a.chapterId) continue;
+            const key = a.chapterId.toString();
+            const existing = auvieMap[key];
+            if (!existing ||
+                a.status === 'ready' ||
+                (a.status === 'generating' && existing.status !== 'ready')) {
+                auvieMap[key] = { status: a.status, auvieId: a._id.toString() };
             }
         }
 
         const result = novel.chapters.map(ch => {
-            const chIdStr = ch._id.toString();
-            const auvieInfo = auvieMap[chIdStr];
+            const key = ch._id.toString();
+            const info = auvieMap[key];
             return {
-                chapterId: chIdStr,
-                status: auvieInfo ? auvieInfo.status : 'none',
-                auvieId: auvieInfo ? auvieInfo.auvieId : null,
+                chapterId: key,
+                status: info ? info.status : 'none',
+                auvieId: info ? info.auvieId : null,
             };
         });
 
@@ -272,9 +281,11 @@ exports.getChapterAuvieStatuses = async (req, res, next) => {
     }
 };
 
+// GET /api/f3/auvies/:id/status
 exports.getStatus = async (req, res) => {
     try {
-        const auvie = await Auvie.findById(req.params.id).select('status errorMessage');
+        const auvie = await Auvie.findById(req.params.id)
+            .select('status errorMessage');
         if (!auvie) return res.status(404).json({ error: 'Auvie not found' });
         res.json({ status: auvie.status, errorMessage: auvie.errorMessage });
     } catch (err) {
@@ -284,9 +295,11 @@ exports.getStatus = async (req, res) => {
 
 /* ── 3. THE WORKSHOP (DRAFTS & EDITS) ────────────────────────────────── */
 
+// GET /api/f3/auvies/draft/:novelId/:chapterId
 exports.getDraftPreview = async (req, res) => {
     try {
         const { novelId, chapterId } = req.params;
+
         const novel = await Novel.findOne({ _id: novelId, author: req.user._id });
         if (!novel) return res.status(404).json({ error: 'Novel not found' });
 
@@ -295,7 +308,7 @@ exports.getDraftPreview = async (req, res) => {
 
         const existingAuvie = await Auvie.findOne({
             novel: novelId,
-            chapterId: chapterId,
+            chapterId,
         }).select('_id status segments');
 
         const segments = parseHashtags(chapter.content);
@@ -315,6 +328,7 @@ exports.getDraftPreview = async (req, res) => {
     }
 };
 
+// PUT /api/f3/auvies/:id/segments
 exports.updateSegments = async (req, res) => {
     try {
         const auvie = await Auvie.findById(req.params.id);
@@ -325,7 +339,9 @@ exports.updateSegments = async (req, res) => {
         }
 
         const { segments: edits, voiceMap } = req.body;
-        if (!Array.isArray(edits)) return res.status(400).json({ error: 'Invalid segments' });
+        if (!Array.isArray(edits)) {
+            return res.status(400).json({ error: 'Invalid segments' });
+        }
 
         const editMap = {};
         for (const edit of edits) {
@@ -335,9 +351,15 @@ exports.updateSegments = async (req, res) => {
         auvie.segments.forEach((seg) => {
             const edit = editMap[seg.order];
             if (edit) {
-                if (typeof edit.volume === 'number') seg.volume = Math.min(2, Math.max(0, edit.volume));
-                if (typeof edit.delay === 'number') seg.delay = Math.min(15, Math.max(0, edit.delay));
-                if (edit.voiceId !== undefined) seg.voiceId = edit.voiceId;
+                if (typeof edit.volume === 'number') {
+                    seg.volume = Math.min(2, Math.max(0, edit.volume));
+                }
+                if (typeof edit.delay === 'number') {
+                    seg.delay = Math.min(15, Math.max(0, edit.delay));
+                }
+                if (edit.voiceId !== undefined) {
+                    seg.voiceId = edit.voiceId;
+                }
             }
         });
 
@@ -354,6 +376,7 @@ exports.updateSegments = async (req, res) => {
 
 /* ── 4. GENERATION ENGINE ────────────────────────────────────────────── */
 
+// POST /api/f3/auvies/generate/:novelId/:chapterId
 exports.generateAuvie = async (req, res, next) => {
     try {
         const { novelId, chapterId } = req.params;
@@ -361,17 +384,22 @@ exports.generateAuvie = async (req, res, next) => {
 
         const novel = await Novel.findOne({ _id: novelId, author: req.user._id });
         if (!novel) return res.status(404).json({ error: 'Novel not found' });
-        if (novel.status !== 'published') return res.status(400).json({ error: 'Publish novel first' });
+        if (novel.status !== 'published') {
+            return res.status(400).json({ error: 'Publish novel first' });
+        }
 
         const chapter = novel.chapters.id(chapterId);
         if (!chapter) return res.status(404).json({ error: 'Chapter not found' });
 
         const user = await User.findById(req.user._id);
         if (user.coins < AUVIE_GENERATION_COST) {
-            return res.status(400).json({ error: 'Insufficient coins', current: user.coins });
+            return res.status(400).json({
+                error: 'Insufficient coins',
+                current: user.coins
+            });
         }
 
-        const segmentsToProcess = (workshopSegments?.length > 0)
+        const segmentsToProcess = (workshopSegments && workshopSegments.length > 0)
             ? workshopSegments
             : parseHashtags(chapter.content);
 
@@ -391,6 +419,7 @@ exports.generateAuvie = async (req, res, next) => {
             relatedNovel: novel._id
         });
 
+        // Upsert by novel + chapterId so each chapter gets exactly one Auvie doc
         const auvie = await Auvie.findOneAndUpdate(
             { novel: novelId, chapterId },
             {
@@ -417,7 +446,14 @@ exports.generateAuvie = async (req, res, next) => {
             status: 'generating'
         });
 
-        _runBackgroundWorker(auvie._id, segmentsToProcess, voiceMap, novel.title, req.user._id);
+        // Fire and forget — runs in background
+        _runBackgroundWorker(
+            auvie._id,
+            segmentsToProcess,
+            voiceMap,
+            novel.title,
+            req.user._id
+        );
 
     } catch (err) {
         console.error('generateAuvie error:', err.message);
@@ -431,7 +467,9 @@ async function generateWithRetry(text, audioPath, voiceId, retries = 3) {
     } catch (err) {
         const status = err?.response?.status;
         const detail = err?.response?.data?.detail?.status;
+
         if (detail === 'detected_unusual_activity') await sleep(10000);
+
         if (retries > 0 && (status === 401 || status === 429)) {
             await sleep((4 - retries) * 2000);
             return generateWithRetry(text, audioPath, voiceId, retries - 1);
@@ -453,10 +491,12 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, use
         for (const seg of segments) {
             if (seg.type === 'text') {
                 const audioPath = path.join(workDir, `seg_${seg.order}.mp3`);
-                const resolvedVoiceId = seg.voiceId
-                    || voiceMap[seg.characterName?.toLowerCase()]
-                    || voiceMap['narrator']
-                    || 'pNInz6obpg8ndPey74S';
+                const resolvedVoiceId =
+                    seg.voiceId ||
+                    voiceMap[seg.characterName?.toLowerCase()] ||
+                    voiceMap['narrator'] ||
+                    'pNInz6obpg8ndPey74S';
+
                 const textToSend = DEV_MODE
                     ? seg.value.substring(0, DEV_MAX_CHARS_PER_SEGMENT)
                     : seg.value;
@@ -477,7 +517,9 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, use
             } else if (seg.type === 'hashtag') {
                 const sfxUrl = soundLibrary[seg.value];
                 processedSegments.push({ ...seg, audioUrl: sfxUrl || null });
+
             } else {
+                // loop_start, loop_stop, pause, etc.
                 processedSegments.push(seg);
             }
         }
@@ -491,39 +533,42 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, use
         await Auvie.findByIdAndUpdate(auvieId, {
             $set: { status: 'failed', errorMessage: genErr.message }
         });
-        await User.findByIdAndUpdate(userId, { $inc: { coins: AUVIE_GENERATION_COST } });
+        // Refund coins
+        await User.findByIdAndUpdate(userId, {
+            $inc: { coins: AUVIE_GENERATION_COST }
+        });
     } finally {
         if (await fs.pathExists(workDir)) await fs.remove(workDir);
     }
 }
 
-/* ── 6. COMMERCE ─────────────────────────────────────────────────────── */
+/* ── 6. COMMERCE (PURCHASING) ────────────────────────────────────────── */
 
-/**
- * POST /api/f3/auvies/:id/purchase
- *
- * Chapter 1 Auvies are free — return 400 if someone tries to purchase one.
- * Chapter 2+ Auvies cost 200 coins regardless of subscription.
- * Author always has access — no purchase needed.
- */
+// POST /api/f3/auvies/:id/purchase
 exports.purchaseAuvie = async (req, res, next) => {
     try {
-        const auvie = await Auvie.findById(req.params.id).populate('novel', 'title');
+        const auvie = await Auvie.findById(req.params.id)
+            .populate('novel', 'title');
+
         if (!auvie || auvie.status !== 'ready') {
             return res.status(400).json({ error: 'Auvie not available' });
         }
 
         const userId = req.user._id;
-        const access = await resolveAuvieAccess(auvie, userId);
+        const access = await resolveAccess(auvie, userId);
 
-        // Author doesn't need to purchase
+        // Author never needs to purchase
         if (access.isAuthor) {
-            return res.status(400).json({ error: 'Authors have free access to their own Auvies' });
+            return res.status(400).json({
+                error: 'Authors have free access to their own Auvies'
+            });
         }
 
-        // Chapter 1 Auvie is free — no purchase needed
+        // Chapter 1 is always free — no purchase needed
         if (access.isChapterOne) {
-            return res.status(400).json({ error: 'Chapter 1 Auvies are free — no purchase needed' });
+            return res.status(400).json({
+                error: 'Chapter 1 Auvies are free — no purchase needed'
+            });
         }
 
         // Already purchased
@@ -540,11 +585,13 @@ exports.purchaseAuvie = async (req, res, next) => {
         const authorEarning = auvie.coinPrice - commission;
 
         user.coins -= auvie.coinPrice;
-        user.purchasedAuvies = user.purchasedAuvies || [];
+        if (!user.purchasedAuvies) user.purchasedAuvies = [];
         user.purchasedAuvies.push(auvie._id);
         await user.save();
 
-        await User.findByIdAndUpdate(auvie.author, { $inc: { coins: authorEarning } });
+        await User.findByIdAndUpdate(auvie.author, {
+            $inc: { coins: authorEarning }
+        });
 
         auvie.purchasedBy.push(userId);
         auvie.plays += 1;
