@@ -9,6 +9,7 @@ const axios = require('axios');
 const mongoose = require("mongoose");
 
 const Book = require("../models/Book");
+const Novel = require("../models/Novel");
 const { protect } = require("../middleware/authMiddleware");
 const router = express.Router();
 
@@ -19,20 +20,6 @@ const Folder = mongoose.models.Folder || mongoose.model("Folder", new mongoose.S
     name: { type: String, required: true },
     user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
 }));
-
-/* ── ADDED CONTROLLER IMPORTS ─────────────────────────────────────────── */
-const { saveNovel, unsaveNovel, getSavedNovels } = require('../controllers/bookController');
-
-/* ── ADDED INTERCEPT ROUTEMATCHERS ────────────────────────────────────── */
-// Save an F3 novel to personal library
-router.post('/save-novel', protect, saveNovel);
-
-// Unsave an F3 novel from personal library
-router.delete('/save-novel/:novelId', protect, unsaveNovel);
-
-// Get all saved F3 novels (used by LibraryScreen)
-router.get('/saved-novels', protect, getSavedNovels);
-/* ─────────────────────────────────────────────────────────────────────── */
 
 /* -------------------- CONFIG & DIRECTORIES -------------------- */
 const pdfDir = path.join(__dirname, "../../temp/pdfs");
@@ -55,7 +42,7 @@ const upload = multer({
     }
 });
 
-/* ---------------- HELPERS (Updated with new schema fields) ---------------- */
+/* ---------------- HELPERS ---------------- */
 
 const formatBook = (book) => ({
     _id: book._id,
@@ -74,11 +61,12 @@ const formatBook = (book) => ({
     toc: book.toc || [],
     lastAccessed: book.lastAccessed,
     createdAt: book.createdAt,
-    // Safely mapping the new fields to your frontend responses
-    source: book.source || 'upload',
+    // F3 novel fields
+    source: book.source || "upload",
     novelId: book.novelId || null,
-    genre: book.genre || '',
-    description: book.description || ''
+    genre: book.genre || "",
+    description: book.description || "",
+    author: book.author || "",
 });
 
 function getCloudinaryPublicId(url) {
@@ -115,26 +103,21 @@ function isHeaderLine(line) {
 function extractTOC(text, pageNum) {
     const isTOCPage = /contents|table of contents/i.test(text);
     if (!isTOCPage) return [];
-
     const tocEntries = [];
     const tocRegex = /^(.+?)\s*[.\-·_ ]{2,}\s*(\d+)\s*$/gim;
-
     let match;
     while ((match = tocRegex.exec(text)) !== null) {
         const raw = match[1].trim();
         const page = parseInt(match[2]);
         if (!raw || raw.length < 2 || /^(page|contents)$/i.test(raw)) continue;
-
         let level = 1;
         if (/^\d+\.\d+\.\d+/.test(raw)) level = 2;
         else if (/^\d+\.\d+/.test(raw)) level = 1;
         else if (/^(chapter|part|unit|lesson|act|psalm|book)\s+(\d+|[ivxlc]+)/i.test(raw)) level = 0;
         else if (/^\d+\.?\s+[A-Z]/.test(raw)) level = 0;
         else if (/^[A-Z\s]{4,}$/.test(raw)) level = 0;
-
         tocEntries.push({ text: raw, page, level, type: 'toc' });
     }
-
     return tocEntries;
 }
 
@@ -150,54 +133,42 @@ function isSandwichedHeader(line, prevLine, nextLine) {
 
 function smartClean(text) {
     if (!text) return "";
-
     const paragraphs = text.split(/\n\n+/);
     const cleanedParagraphs = [];
-
     for (const para of paragraphs) {
         const trimmed = para.trim();
         if (!trimmed) continue;
-
         const lines = trimmed.split('\n').map(l => l.trim()).filter(l => l.length > 0);
         if (lines.length === 0) continue;
-
         if (lines.length === 1 && isHeaderLine(lines[0])) {
             cleanedParagraphs.push(lines[0]);
             continue;
         }
-
         let buffer = '';
-
         for (let i = 0; i < lines.length; i++) {
             const line = lines[i];
             const prev = i > 0 ? lines[i - 1] : null;
             const next = i + 1 < lines.length ? lines[i + 1] : null;
             const nextNext = i + 2 < lines.length ? lines[i + 2] : null;
-
             const lineIsHeader = isHeaderLine(line) || isSandwichedHeader(line, prev, next);
             const nextIsHeader = next && (isHeaderLine(next) || isSandwichedHeader(next, line, nextNext));
-
             if (/\w-$/.test(line) && next && /^\w/.test(next) && !lineIsHeader && !nextIsHeader) {
                 buffer += line.replace(/-$/, '');
                 continue;
             }
-
             if (lineIsHeader) {
                 if (buffer.trim()) cleanedParagraphs.push(buffer.trim());
                 buffer = '';
                 cleanedParagraphs.push(line.trim());
                 continue;
             }
-
             if (nextIsHeader) {
                 buffer += line;
                 if (buffer.trim()) cleanedParagraphs.push(buffer.trim());
                 buffer = '';
                 continue;
             }
-
             const isRealEnd = /[.!?]['""\)\]»]?$/.test(line);
-
             if (isRealEnd || !next) {
                 buffer += line;
                 if (buffer.trim()) cleanedParagraphs.push(buffer.trim());
@@ -206,23 +177,15 @@ function smartClean(text) {
                 buffer += line + ' ';
             }
         }
-
         if (buffer.trim()) cleanedParagraphs.push(buffer.trim());
     }
-
-    return cleanedParagraphs
-        .join('\n\n')
-        .replace(/[ \t]+/g, ' ')
-        .trim();
+    return cleanedParagraphs.join('\n\n').replace(/[ \t]+/g, ' ').trim();
 }
 
 function getPageCount(pdfPath) {
     return new Promise((resolve) => {
         exec(`pdfinfo "${pdfPath}" | grep Pages: | awk '{print $2}'`, (err, stdout) => {
-            if (err) {
-                console.warn("pdfinfo failed, defaulting to 1 page:", err.message);
-                return resolve(1);
-            }
+            if (err) { console.warn("pdfinfo failed:", err.message); return resolve(1); }
             const count = parseInt(stdout.trim());
             resolve(isNaN(count) ? 1 : count);
         });
@@ -233,49 +196,119 @@ async function extractPageText(pdfPath, pageNum) {
     const uniqueId = Date.now() + "_" + Math.round(Math.random() * 1000);
     const pageImgBase = path.join(coversDir, `ocr_tmp_${pageNum}_${uniqueId}`);
     const pageImgFull = `${pageImgBase}.png`;
-
     try {
         const { stdout: digitalText } = await execAsync(
             `pdftotext -f ${pageNum} -l ${pageNum} "${pdfPath}" -`,
             { encoding: 'utf8' }
         );
-
-        if (isUsableText(digitalText)) {
-            return smartClean(digitalText.trim());
-        }
-
-        await execAsync(
-            `pdftoppm -f ${pageNum} -l ${pageNum} -png -r 300 -singlefile "${pdfPath}" "${pageImgBase}"`
-        );
-
-        if (!(await fs.pathExists(pageImgFull))) {
-            console.warn(`pdftoppm produced no output for page ${pageNum}`);
-            return "";
-        }
-
+        if (isUsableText(digitalText)) return smartClean(digitalText.trim());
+        await execAsync(`pdftoppm -f ${pageNum} -l ${pageNum} -png -r 300 -singlefile "${pdfPath}" "${pageImgBase}"`);
+        if (!(await fs.pathExists(pageImgFull))) { console.warn(`pdftoppm no output p${pageNum}`); return ""; }
         const scriptPath = path.join(__dirname, "../ocr_worker/ocr_service.py");
         const { stdout: ocrResult, stderr: ocrStderr } = await execAsync(
             `python3 "${scriptPath}" "${pageImgFull}"`,
             { encoding: 'utf8', maxBuffer: 1024 * 1024 * 10 }
         );
-
         if (ocrStderr && ocrStderr.includes("RuntimeError")) {
-            console.error(`OCR Python error on page ${pageNum}:`, ocrStderr.trim());
+            console.error(`OCR error p${pageNum}:`, ocrStderr.trim());
             if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
             return "";
         }
-
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
         return smartClean(ocrResult);
-
     } catch (e) {
         if (await fs.pathExists(pageImgFull)) await fs.remove(pageImgFull);
-        console.warn(`extractPageText failed for page ${pageNum}:`, e.message);
+        console.warn(`extractPageText p${pageNum}:`, e.message);
         return "";
     }
 }
 
-/* ---------------- CONTINGENT SYSTEM ROUTEMATCHERS ---------------- */
+/* ─────────────────────────────────────────────────────────────────────
+   SAVE / UNSAVE F3 NOVELS
+   These routes must come BEFORE /:id to avoid param collisions.
+   ───────────────────────────────────────────────────────────────────── */
+
+/**
+ * POST /api/books/save-novel
+ * Saves an F3 novel to the user's personal library.
+ * Idempotent — safe to call twice.
+ */
+router.post("/save-novel", protect, async (req, res) => {
+    try {
+        const { novelId } = req.body;
+        if (!novelId) return res.status(400).json({ error: "novelId required" });
+
+        const novel = await Novel.findById(novelId).populate('author', 'name username');
+        if (!novel || novel.status !== 'published') {
+            return res.status(404).json({ error: "Novel not found" });
+        }
+
+        // Idempotency check
+        const existing = await Book.findOne({ user: req.user._id, novelId });
+        if (existing) {
+            return res.status(200).json({ success: true, already: true, data: formatBook(existing) });
+        }
+
+        const saved = await Book.create({
+            user: req.user._id,
+            title: novel.title,
+            author: novel.author?.name || novel.author?.username || "Unknown",
+            cover: novel.cover || "",
+            description: novel.description || "",
+            genre: novel.genre || "",
+            source: "f3",
+            novelId: novelId,
+            pdfPath: "",       // no PDF for F3 novels
+            folder: "All",
+            content: "",
+            totalPages: 0,
+            processedPages: 0,
+            status: "f3_novel",
+            words: 0,
+            toc: [],
+            lastAccessed: Date.now(),
+        });
+
+        res.status(201).json({ success: true, already: false, data: formatBook(saved) });
+    } catch (err) {
+        console.error("save-novel error:", err.message);
+        res.status(500).json({ error: "Failed to save novel" });
+    }
+});
+
+/**
+ * DELETE /api/books/save-novel/:novelId
+ * Removes an F3 novel from the user's library.
+ */
+router.delete("/save-novel/:novelId", protect, async (req, res) => {
+    try {
+        const deleted = await Book.findOneAndDelete({
+            user: req.user._id,
+            novelId: req.params.novelId,
+        });
+        if (!deleted) return res.status(404).json({ error: "Not in library" });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: "Failed to remove" });
+    }
+});
+
+/**
+ * GET /api/books/save-novel/check/:novelId
+ * Returns whether the current user has saved this novel.
+ */
+router.get("/save-novel/check/:novelId", protect, async (req, res) => {
+    try {
+        const exists = await Book.exists({ user: req.user._id, novelId: req.params.novelId });
+        res.json({ saved: !!exists });
+    } catch (err) {
+        res.status(500).json({ error: "Check failed" });
+    }
+});
+
+/* ─────────────────────────────────────────────────────────────────────
+   EXISTING BOOK ROUTES (unchanged)
+   ───────────────────────────────────────────────────────────────────── */
 
 router.get("/continue", protect, async (req, res) => {
     try {
@@ -309,11 +342,7 @@ router.post("/folders", protect, async (req, res) => {
     try {
         const exists = await Folder.findOne({ name: req.body.name, user: req.user._id });
         if (exists) return res.status(400).json({ error: "Folder already exists" });
-
-        const folder = await Folder.create({
-            name: req.body.name,
-            user: req.user._id
-        });
+        const folder = await Folder.create({ name: req.body.name, user: req.user._id });
         res.status(201).json(folder);
     } catch {
         res.status(400).json({ error: "Folder creation failed" });
@@ -362,63 +391,42 @@ router.get("/:id/load-pages", protect, async (req, res) => {
             { status: 'processing_pages' },
             { new: false }
         );
-
         if (!book) {
             const current = await Book.findOne({ _id: req.params.id, user: req.user._id });
             if (!current) return res.status(404).json({ error: "Book not found" });
             if (current.status === 'completed') return res.json({ addedText: "", status: "completed" });
             return res.status(429).json({ error: "Processing. Please wait." });
         }
-
         const startPage = (book.processedPages || 0) + 1;
         const endPage = Math.min(startPage + 4, book.totalPages);
-
         if (startPage > book.totalPages) return res.json({ addedText: "", status: "completed" });
-
         tempPath = path.join(pdfDir, `temp_load_${book._id}.pdf`);
-
         if (await fs.pathExists(tempPath)) {
             const stat = await fs.stat(tempPath);
-            if (stat.size < 1024) {
-                console.warn(`Cached temp PDF is corrupt (${stat.size} bytes), re-downloading`);
-                await fs.remove(tempPath);
-            }
+            if (stat.size < 1024) { console.warn("Corrupt temp PDF, re-downloading"); await fs.remove(tempPath); }
         }
-
         if (!(await fs.pathExists(tempPath))) {
-            const response = await axios.get(book.pdfPath, {
-                responseType: 'arraybuffer',
-                timeout: 30000
-            });
+            const response = await axios.get(book.pdfPath, { responseType: 'arraybuffer', timeout: 30000 });
             const buffer = Buffer.from(response.data);
-            if (buffer.length < 1024) {
-                throw new Error(`Downloaded PDF too small (${buffer.length} bytes)`);
-            }
+            if (buffer.length < 1024) throw new Error(`Downloaded PDF too small (${buffer.length} bytes)`);
             await fs.writeFile(tempPath, buffer);
         }
-
         let newTextParts = [];
         let newTOCEntries = [];
-
         for (let i = startPage; i <= endPage; i++) {
             const text = await extractPageText(tempPath, i);
             if (text) {
                 newTextParts.push(`[PAGE_${i}]\n${text}`);
-                if ((!book.toc || book.toc.length === 0) && i <= 10) {
-                    newTOCEntries.push(...extractTOC(text, i));
-                }
+                if ((!book.toc || book.toc.length === 0) && i <= 10) newTOCEntries.push(...extractTOC(text, i));
             }
         }
-
         const newText = newTextParts.join("\n\n");
         const currentContent = (book.content || "").trim();
         const updatedContent = currentContent ? (currentContent + "\n\n" + newText) : newText;
         const actualWordCount = updatedContent.split(/\s+/).filter(w => w.length > 0).length;
-
         const mergedTOC = [...(book.toc || []), ...newTOCEntries].filter((v, i, a) =>
             a.findIndex(t => t.text === v.text && t.page === v.page) === i
         );
-
         const updatedBook = await Book.findOneAndUpdate(
             { _id: req.params.id, user: req.user._id },
             {
@@ -430,11 +438,7 @@ router.get("/:id/load-pages", protect, async (req, res) => {
             },
             { new: true }
         );
-
-        if (updatedBook.status === 'completed' && await fs.pathExists(tempPath)) {
-            await fs.remove(tempPath);
-        }
-
+        if (updatedBook.status === 'completed' && await fs.pathExists(tempPath)) await fs.remove(tempPath);
         res.json({
             addedText: newText,
             processedPages: endPage,
@@ -442,7 +446,6 @@ router.get("/:id/load-pages", protect, async (req, res) => {
             totalWords: actualWordCount,
             toc: mergedTOC
         });
-
     } catch (err) {
         console.error("load-pages error:", err.message);
         await Book.findOneAndUpdate({ _id: req.params.id, user: req.user._id }, { status: 'processing' });
@@ -456,7 +459,6 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
         if (!req.file) return res.status(400).json({ error: "No file uploaded" });
         const pdfDiskPath = req.file.path;
         const totalPages = await getPageCount(pdfDiskPath);
-
         const book = await Book.create({
             user: req.user._id,
             title: req.body.title || req.file.originalname.replace(/\.[^/.]+$/, ""),
@@ -464,6 +466,7 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
             cover: "https://via.placeholder.com/300x450?text=Processing...",
             folder: req.body.folder || "All",
             content: "",
+            source: "upload",
             totalPages,
             processedPages: 0,
             status: 'processing',
@@ -471,48 +474,40 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
             toc: [],
             lastAccessed: Date.now()
         });
-
         res.status(201).json(formatBook(book));
-
         (async () => {
             try {
                 const baseName = path.parse(req.file.filename).name;
                 const outputPrefix = path.join(coversDir, baseName);
-
                 const [cloudUrl, coverUrl] = await Promise.all([
                     cloudinary.uploader.upload(pdfDiskPath, {
-                        folder: "storyteller_pdfs",
-                        resource_type: "raw"
+                        folder: "storyteller_pdfs", resource_type: "raw"
                     }).then(r => r.secure_url),
                     new Promise((resolve) => {
                         exec(`pdftoppm -f 1 -l 1 -png -r 150 -singlefile "${pdfDiskPath}" "${outputPrefix}"`, async (err, stdout, stderr) => {
-                            if (err) { console.warn("Cover generation failed:", stderr); return resolve(null); }
+                            if (err) { console.warn("Cover gen failed:", stderr); return resolve(null); }
                             const coverFile = `${outputPrefix}.png`;
-                            if (!(await fs.pathExists(coverFile))) { console.warn("Cover PNG not found"); return resolve(null); }
+                            if (!(await fs.pathExists(coverFile))) { return resolve(null); }
                             try {
                                 const r = await cloudinary.uploader.upload(coverFile, { folder: "storyteller_covers" });
                                 await fs.remove(coverFile);
                                 resolve(r.secure_url);
                             } catch (uploadErr) {
-                                console.warn("Cover upload failed:", uploadErr.message);
                                 if (await fs.pathExists(coverFile)) await fs.remove(coverFile);
                                 resolve(null);
                             }
                         });
                     })
                 ]);
-
                 await Book.findByIdAndUpdate(book._id, { pdfPath: cloudUrl, cover: coverUrl });
-
                 let runningText = "";
                 let runningTOC = [];
                 const limit = Math.min(10, totalPages);
-
                 for (let i = 1; i <= limit; i++) {
                     const text = await extractPageText(pdfDiskPath, i);
                     if (text) {
-                        const separator = (runningText.length > 0 && !runningText.endsWith('\n\n')) ? "\n\n" : "";
-                        runningText += separator + `[PAGE_${i}]\n` + text;
+                        const sep = (runningText.length > 0 && !runningText.endsWith('\n\n')) ? "\n\n" : "";
+                        runningText += sep + `[PAGE_${i}]\n` + text;
                         if (i <= 10) runningTOC.push(...extractTOC(text, i));
                     }
                     await Book.findByIdAndUpdate(book._id, {
@@ -523,16 +518,13 @@ router.post("/", protect, upload.single("file"), async (req, res) => {
                         status: i >= totalPages ? 'completed' : 'processing'
                     });
                 }
-
                 if (await fs.pathExists(pdfDiskPath)) await fs.remove(pdfDiskPath);
-
             } catch (e) {
                 console.error("Worker Error:", e.message);
                 await Book.findByIdAndUpdate(book._id, { status: 'failed' });
                 if (await fs.pathExists(pdfDiskPath)) await fs.remove(pdfDiskPath);
             }
         })();
-
     } catch (err) {
         res.status(500).json({ error: "Upload failed" });
     }
@@ -542,7 +534,6 @@ router.post("/bulk-delete", protect, async (req, res) => {
     try {
         const { ids } = req.body;
         const booksToDelete = await Book.find({ _id: { $in: ids }, user: req.user._id });
-
         for (const book of booksToDelete) {
             if (book.pdfPath?.includes("cloudinary")) {
                 const pId = getCloudinaryPublicId(book.pdfPath);
@@ -560,30 +551,22 @@ router.delete("/:id", protect, async (req, res) => {
     try {
         const book = await Book.findOne({ _id: req.params.id, user: req.user._id });
         if (!book) return res.status(404).json({ error: "Book not found" });
-
         try {
             if (book.pdfPath && book.pdfPath.includes("cloudinary")) {
                 const pdfPublicId = getCloudinaryPublicId(book.pdfPath);
-                if (pdfPublicId) {
-                    await cloudinary.uploader.destroy(pdfPublicId, { resource_type: 'raw' });
-                }
+                if (pdfPublicId) await cloudinary.uploader.destroy(pdfPublicId, { resource_type: 'raw' });
             }
             if (book.cover && book.cover.includes("cloudinary")) {
                 const coverPublicId = getCloudinaryPublicId(book.cover);
-                if (coverPublicId) {
-                    await cloudinary.uploader.destroy(coverPublicId);
-                }
+                if (coverPublicId) await cloudinary.uploader.destroy(coverPublicId);
             }
         } catch (cErr) {
             console.warn("Cloudinary cleanup failed:", cErr.message);
         }
-
         const tempPdf = path.join(pdfDir, `temp_load_${book._id}.pdf`);
         if (await fs.pathExists(tempPdf)) await fs.remove(tempPdf);
-
         await Book.findByIdAndDelete(req.params.id);
         res.json({ message: "Book deleted successfully" });
-
     } catch (err) {
         res.status(500).json({ error: "Failed to delete book" });
     }
