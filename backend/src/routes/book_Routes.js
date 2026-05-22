@@ -225,13 +225,11 @@ async function extractPageText(pdfPath, pageNum) {
 
 /* ─────────────────────────────────────────────────────────────────────
    SAVE / UNSAVE F3 NOVELS
-   These routes must come BEFORE /:id to avoid param collisions.
    ───────────────────────────────────────────────────────────────────── */
 
 /**
  * POST /api/books/save-novel
  * Saves an F3 novel to the user's personal library.
- * Idempotent — safe to call twice.
  */
 router.post("/save-novel", protect, async (req, res) => {
     try {
@@ -258,7 +256,7 @@ router.post("/save-novel", protect, async (req, res) => {
             genre: novel.genre || "",
             source: "f3",
             novelId: novelId,
-            pdfPath: "",       // no PDF for F3 novels
+            pdfPath: "",
             folder: "All",
             content: "",
             totalPages: 0,
@@ -307,7 +305,7 @@ router.get("/save-novel/check/:novelId", protect, async (req, res) => {
 });
 
 /* ─────────────────────────────────────────────────────────────────────
-   EXISTING BOOK ROUTES (unchanged)
+   EXISTING BOOK ROUTES
    ───────────────────────────────────────────────────────────────────── */
 
 router.get("/continue", protect, async (req, res) => {
@@ -379,9 +377,16 @@ router.patch("/:id/folder", protect, async (req, res) => {
     }
 });
 
+/* ── SAFETY INTERCEPT ADDED HERE ── */
 router.get("/:id/load-pages", protect, async (req, res) => {
     let tempPath = "";
     try {
+        // Quick check: If this is an F3 novel database document, short circuit immediately!
+        const targetCheck = await Book.findOne({ _id: req.params.id, user: req.user._id });
+        if (targetCheck && (targetCheck.source === 'f3' || targetCheck.status === 'f3_novel')) {
+            return res.json({ addedText: "", status: "completed" });
+        }
+
         const book = await Book.findOneAndUpdate(
             {
                 _id: req.params.id,
