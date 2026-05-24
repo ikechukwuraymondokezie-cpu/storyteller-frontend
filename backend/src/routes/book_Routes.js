@@ -42,7 +42,7 @@ const upload = multer({
     }
 });
 
-/* ---------------- HELPERS ---------------- */
+/* -------------------- HELPERS -------------------- */
 
 const formatBook = (book) => ({
     _id: book._id,
@@ -61,7 +61,6 @@ const formatBook = (book) => ({
     toc: book.toc || [],
     lastAccessed: book.lastAccessed,
     createdAt: book.createdAt,
-    // F3 novel fields
     source: book.source || "upload",
     novelId: book.novelId || null,
     genre: book.genre || "",
@@ -81,7 +80,7 @@ function getCloudinaryPublicId(url) {
     }
 }
 
-/* ---------------- TOC & TEXT CLEANING HELPERS ---------------- */
+/* -------------------- TOC & TEXT CLEANING HELPERS -------------------- */
 
 function isUsableText(text) {
     if (!text || text.trim().length < 50) return false;
@@ -225,37 +224,75 @@ async function extractPageText(pdfPath, pageNum) {
 
 /* ─────────────────────────────────────────────────────────────────────
    SAVE / UNSAVE F3 NOVELS
+   MUST stay before /:id routes to avoid param collision.
    ───────────────────────────────────────────────────────────────────── */
 
 /**
  * POST /api/books/save-novel
- * Saves an F3 novel to the user's personal library.
  */
 router.post("/save-novel", protect, async (req, res) => {
     try {
         const { novelId } = req.body;
-        if (!novelId) return res.status(400).json({ error: "novelId required" });
 
-        const novel = await Novel.findById(novelId).populate('author', 'name username');
-        if (!novel || novel.status !== 'published') {
+        if (!novelId) {
+            return res.status(400).json({ error: "novelId required" });
+        }
+
+        // Validate ObjectId format before hitting DB
+        if (!mongoose.Types.ObjectId.isValid(novelId)) {
+            return res.status(400).json({ error: "Invalid novelId format" });
+        }
+
+        // Fetch novel — do NOT populate to avoid broken-ref crashes
+        const novel = await Novel.findById(novelId)
+            .select('title cover description genre status author')
+            .lean();
+
+        if (!novel) {
             return res.status(404).json({ error: "Novel not found" });
         }
 
-        // Idempotency check
-        const existing = await Book.findOne({ user: req.user._id, novelId });
+        // Idempotency — return 200 if already saved
+        const existing = await Book.findOne({
+            user: req.user._id,
+            novelId: novel._id,
+        }).lean();
+
         if (existing) {
-            return res.status(200).json({ success: true, already: true, data: formatBook(existing) });
+            return res.status(200).json({
+                success: true,
+                already: true,
+                data: formatBook(existing),
+            });
         }
 
-        const saved = await Book.create({
+        // Resolve author name with a separate lean query (safe, no populate crash)
+        let authorName = "Unknown";
+        try {
+            const User = require('../models/User');
+            const authorDoc = await User.findById(novel.author)
+                .select('name username')
+                .lean();
+            if (authorDoc) {
+                authorName = authorDoc.name || authorDoc.username || "Unknown";
+            }
+        } catch (authorErr) {
+            console.warn("save-novel: could not resolve author:", authorErr.message);
+        }
+
+        // Build the create payload using $set-style to match whatever your
+        // Book schema requires. pdfPath is set to "" to satisfy required:true
+        // if your schema has it — change to null if your schema allows null.
+        const createPayload = {
             user: req.user._id,
-            title: novel.title,
-            author: novel.author?.name || novel.author?.username || "Unknown",
+            title: novel.title || "Untitled",
+            author: authorName,
             cover: novel.cover || "",
             description: novel.description || "",
             genre: novel.genre || "",
             source: "f3",
-            novelId: novelId,
+            novelId: novel._id,
+            // pdfPath: required field in most Book schemas — use "" for F3 novels
             pdfPath: "",
             folder: "All",
             content: "",
@@ -265,47 +302,81 @@ router.post("/save-novel", protect, async (req, res) => {
             words: 0,
             toc: [],
             lastAccessed: Date.now(),
+        };
+
+        console.log('[save-novel] creating Book for user:', req.user._id.toString(), 'novel:', novel._id.toString());
+
+        const saved = await Book.create(createPayload);
+
+        console.log('[save-novel] success, bookId:', saved._id.toString());
+
+        return res.status(201).json({
+            success: true,
+            already: false,
+            data: formatBook(saved),
         });
 
-        res.status(201).json({ success: true, already: false, data: formatBook(saved) });
     } catch (err) {
-        console.error("save-novel error:", err.message);
-        res.status(500).json({ error: "Failed to save novel" });
+        // Print the full error so Render logs show the real cause
+        console.error("save-novel error:", err.name, err.message);
+        console.error("save-novel stack:", err.stack);
+
+        return res.status(500).json({
+            error: "Failed to save novel",
+            detail: err.message,   // surfaced to Flutter logs
+            type: err.name,        // ValidationError / CastError / etc.
+        });
     }
 });
 
 /**
  * DELETE /api/books/save-novel/:novelId
- * Removes an F3 novel from the user's library.
  */
 router.delete("/save-novel/:novelId", protect, async (req, res) => {
     try {
+        if (!mongoose.Types.ObjectId.isValid(req.params.novelId)) {
+            return res.status(400).json({ error: "Invalid novelId" });
+        }
+
         const deleted = await Book.findOneAndDelete({
             user: req.user._id,
             novelId: req.params.novelId,
         });
-        if (!deleted) return res.status(404).json({ error: "Not in library" });
-        res.json({ success: true });
+
+        if (!deleted) {
+            return res.status(404).json({ error: "Not in library" });
+        }
+
+        return res.json({ success: true });
     } catch (err) {
-        res.status(500).json({ error: "Failed to remove" });
+        console.error("unsave-novel error:", err.message);
+        return res.status(500).json({ error: "Failed to remove", detail: err.message });
     }
 });
 
 /**
  * GET /api/books/save-novel/check/:novelId
- * Returns whether the current user has saved this novel.
  */
 router.get("/save-novel/check/:novelId", protect, async (req, res) => {
     try {
-        const exists = await Book.exists({ user: req.user._id, novelId: req.params.novelId });
-        res.json({ saved: !!exists });
+        if (!mongoose.Types.ObjectId.isValid(req.params.novelId)) {
+            return res.json({ saved: false });
+        }
+
+        const exists = await Book.exists({
+            user: req.user._id,
+            novelId: req.params.novelId,
+        });
+
+        return res.json({ saved: !!exists });
     } catch (err) {
-        res.status(500).json({ error: "Check failed" });
+        console.error("save-novel check error:", err.message);
+        return res.status(500).json({ error: "Check failed", detail: err.message });
     }
 });
 
 /* ─────────────────────────────────────────────────────────────────────
-   EXISTING BOOK ROUTES
+   EXISTING BOOK ROUTES (unchanged)
    ───────────────────────────────────────────────────────────────────── */
 
 router.get("/continue", protect, async (req, res) => {
@@ -377,12 +448,15 @@ router.patch("/:id/folder", protect, async (req, res) => {
     }
 });
 
-/* ── SAFETY INTERCEPT ADDED HERE ── */
 router.get("/:id/load-pages", protect, async (req, res) => {
     let tempPath = "";
     try {
-        // Quick check: If this is an F3 novel database document, short circuit immediately!
-        const targetCheck = await Book.findOne({ _id: req.params.id, user: req.user._id });
+        // Short-circuit for F3 novels — they have no PDF to process
+        const targetCheck = await Book.findOne({
+            _id: req.params.id,
+            user: req.user._id
+        }).select('source status').lean();
+
         if (targetCheck && (targetCheck.source === 'f3' || targetCheck.status === 'f3_novel')) {
             return res.json({ addedText: "", status: "completed" });
         }
