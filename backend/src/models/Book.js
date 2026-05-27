@@ -11,24 +11,33 @@ const bookSchema = new mongoose.Schema(
         title: { type: String, required: true },
         words: { type: Number, default: 0 },
         cover: { type: String },
-        pdfPath: { type: String },
+        pdfPath: { type: String, default: "" }, // Made default empty string for F3 novels
         content: { type: String, default: "" },
         summary: { type: String, default: "" },
         folder: { type: String, default: "All" },
         downloads: { type: Number, default: 0 },
         ttsRequests: { type: Number, default: 0 },
 
+        // --- F3 WEB NOVEL INTEGRATION FIELDS ---
+        source: {
+            type: String,
+            enum: ['upload', 'f3'],
+            default: 'upload'
+        },
+        novelId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Novel',
+            default: null
+        },
+        genre: { type: String, default: "" },
+        description: { type: String, default: "" },
+        author: { type: String, default: "Unknown" },
+
         // --- CONTINUE LISTENING FIELDS ---
-        // Tracks the last time the user opened this specific book
         lastAccessed: { type: Date, default: Date.now },
-
-        // Stores the percentage or specific index where the user left off
         readingProgress: { type: Number, default: 0 },
-
-        // Optional: Store the last chapter/section title for the UI
         currentChapter: { type: String, default: "Beginning" },
 
-        // Updated to match the "toc" naming convention in your routes
         toc: [{
             text: { type: String },
             page: { type: Number },
@@ -39,15 +48,16 @@ const bookSchema = new mongoose.Schema(
         processedPages: { type: Number, default: 0 },
         status: {
             type: String,
-            enum: ['processing', 'processing_pages', 'completed'],
+            enum: ['processing', 'processing_pages', 'completed', 'f3_novel'], // Added 'f3_novel' here
             default: 'processing'
         },
     },
     { timestamps: true }
 );
 
-// Index for the Home Screen: Find newest books AND the most recently accessed
+// Indexes for fast querying on the Library & Home Screen
 bookSchema.index({ user: 1, lastAccessed: -1 });
 bookSchema.index({ user: 1, createdAt: -1 });
+bookSchema.index({ user: 1, novelId: 1 }); // Fast check if a user already bookmarked an F3 novel
 
 module.exports = mongoose.model("Book", bookSchema);
