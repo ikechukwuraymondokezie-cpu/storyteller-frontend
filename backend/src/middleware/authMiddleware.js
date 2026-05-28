@@ -1,25 +1,35 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
+/* ── FIELDS SELECTED ON EVERY AUTH ──────────────────────────────────────
+ * -password removes the hashed password from all responses.
+ * The access arrays are needed by routes that check ownership / purchase
+ * status without a separate DB round-trip.
+ * ─────────────────────────────────────────────────────────────────────── */
+const USER_FIELDS = '-password purchasedAuvies unlockedNovels savedNovels coins currency';
+
 /* ── protect ─────────────────────────────────────────────────────────────
  * Requires a valid JWT. Returns 401 if missing or invalid.
  * ─────────────────────────────────────────────────────────────────────── */
 const protect = async (req, res, next) => {
-    let token;
-
-    if (req.headers.authorization?.startsWith('Bearer')) {
-        try {
-            token = req.headers.authorization.split(' ')[1];
-            const decoded = jwt.verify(token, process.env.JWT_SECRET);
-            req.user = await User.findById(decoded.id).select('-password');
-            return next();
-        } catch (error) {
-            console.error("JWT Verify Error:", error.message);
-            return res.status(401).json({ message: 'Not authorized, token failed' });
-        }
+    if (!req.headers.authorization?.startsWith('Bearer')) {
+        return res.status(401).json({ message: 'Not authorized, no token' });
     }
 
-    return res.status(401).json({ message: 'Not authorized, no token' });
+    try {
+        const token = req.headers.authorization.split(' ')[1];
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        req.user = await User.findById(decoded.id).select(USER_FIELDS);
+
+        if (!req.user) {
+            return res.status(401).json({ message: 'Not authorized, user not found' });
+        }
+
+        return next();
+    } catch (error) {
+        console.error('JWT Verify Error:', error.message);
+        return res.status(401).json({ message: 'Not authorized, token failed' });
+    }
 };
 
 /* ── optionalProtect ─────────────────────────────────────────────────────
@@ -31,9 +41,9 @@ const optionalProtect = async (req, res, next) => {
         try {
             const token = req.headers.authorization.split(' ')[1];
             const decoded = jwt.verify(token, process.env.JWT_SECRET);
-            req.user = await User.findById(decoded.id).select('-password');
+            req.user = await User.findById(decoded.id).select(USER_FIELDS);
         } catch (error) {
-            console.warn("Optional JWT Verify Error:", error.message);
+            console.warn('Optional JWT Verify Error:', error.message);
             req.user = null;
         }
     } else {
@@ -51,14 +61,15 @@ const optionalProtect = async (req, res, next) => {
  * Returns 403 with { subscriptionRequired: true } if the user is not
  * subscribed, which the Flutter client can intercept to show a paywall.
  * ─────────────────────────────────────────────────────────────────────── */
-const requireSubscription = async (req, res, next) => {
+const requireSubscription = (req, res, next) => {
     if (!req.user) {
         return res.status(401).json({ message: 'Not authorized, no token' });
     }
 
     // isSubscribed is a boolean field on the User model.
     // subscriptionExpiry is optional — if set, check it hasn't lapsed.
-    const subscribed = req.user.isSubscribed &&
+    const subscribed =
+        req.user.isSubscribed &&
         (!req.user.subscriptionExpiry ||
             new Date(req.user.subscriptionExpiry) > new Date());
 
@@ -74,13 +85,15 @@ const requireSubscription = async (req, res, next) => {
 
 /* ── isAuthorOf ──────────────────────────────────────────────────────────
  * Factory middleware: verifies req.user is the author of a novel.
- * Attach the novel to req.novel so the route handler doesn't refetch it.
+ * Attaches the novel to req.novel so the route handler doesn't refetch it.
  *
- * Usage: router.get('/:id/...',  protect, isAuthorOf(Novel), handler)
+ * Usage: router.get('/:id/...', protect, isAuthorOf(Novel), handler)
  * ─────────────────────────────────────────────────────────────────────── */
 const isAuthorOf = (NovelModel) => async (req, res, next) => {
     try {
-        const novel = await NovelModel.findById(req.params.id || req.params.novelId);
+        const novel = await NovelModel.findById(
+            req.params.id || req.params.novelId
+        );
         if (!novel) return res.status(404).json({ error: 'Novel not found' });
 
         if (novel.author.toString() !== req.user._id.toString()) {
