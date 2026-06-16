@@ -1,84 +1,107 @@
-const User = require('../models/User');
 const jwt = require('jsonwebtoken');
+const User = require('../models/User');
 
-/**
- * Helper to create JWT.
- * Using 90d so users stay logged in for 3 months.
- * When a token does eventually expire, the app detects it cleanly
- * and redirects to login without wiping anything prematurely.
- */
-const generateToken = (id) => {
-    return jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: '90d' });
-};
+/* ── FIELDS SELECTED ON EVERY AUTH ──────────────────────────────────────
+ * MongoDB does not allow mixing exclusions (-field) with inclusions
+ * (field) in the same .select() call — except for _id.
+ *
+ * WRONG:  '-password purchasedAuvies coins'   ← mixed = crash
+ * RIGHT:  '-password -__v'                    ← exclusions only
+ *
+ * password has `select: false` in the schema so it's already hidden
+ * by default. We exclude it explicitly here as a safety belt.
+ * All other fields (coins, purchasedAuvies, savedNovels, etc.)
+ * are returned automatically because we're only excluding, not picking.
+ * ─────────────────────────────────────────────────────────────────────── */
+const USER_FIELDS = '-password -__v';
 
-/**
- * @desc    Register a new user
- * @route   POST /api/auth/register
- */
-const registerUser = async (req, res) => {
-    const { name, email, password, username } = req.body;
+/* ── protect ─────────────────────────────────────────────────────────────
+ * Requires a valid JWT. Returns 401 if missing or invalid.
+ * ─────────────────────────────────────────────────────────────────────── */
+const protect = async (req, res, next) => {
+    if (!req.headers.authorization?.startsWith('Bearer')) {
+        return res.status(401).json({ message: 'Not authorized, no token' });
+    }
 
     try {
-        const emailExists = await User.findOne({ email });
-        if (emailExists) {
-            return res.status(400).json({ message: 'Email already registered' });
+        const token = req.headers.authorization.split(' ')[1];
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        req.user = await User.findById(decoded.id).select(USER_FIELDS);
+
+        if (!req.user) {
+            return res.status(401).json({ message: 'Not authorized, user not found' });
         }
 
-        if (username) {
-            const usernameExists = await User.findOne({ username });
-            if (usernameExists) {
-                return res.status(400).json({ message: 'Username is already taken' });
-            }
-        }
-
-        const user = await User.create({
-            name,
-            email,
-            password,
-            username: username || null,
-        });
-
-        res.status(201).json({
-            token: generateToken(user._id),
-            user: {
-                id: user._id,
-                name: user.name,
-                email: user.email,
-                username: user.username,
-                coins: user.coins,
-            },
-        });
+        return next();
     } catch (error) {
-        res.status(500).json({ message: error.message });
+        console.error('JWT Verify Error:', error.message);
+        return res.status(401).json({ message: 'Not authorized, token failed' });
     }
 };
 
-/**
- * @desc    Authenticate user & get token
- * @route   POST /api/auth/login
- */
-const loginUser = async (req, res) => {
-    const { email, password } = req.body;
-    try {
-        const user = await User.findOne({ email }).select('+password');
-
-        if (user && (await user.comparePassword(password))) {
-            res.json({
-                token: generateToken(user._id),
-                user: {
-                    id: user._id,
-                    name: user.name,
-                    email: user.email,
-                    username: user.username,
-                    coins: user.coins,   // ← send coins on login so Flutter
-                },                       //   can show it immediately
-            });
-        } else {
-            res.status(401).json({ message: 'Invalid email or password' });
+/* ── optionalProtect ─────────────────────────────────────────────────────
+ * Identifies the user if a token is present, but never blocks the request.
+ * req.user is null for guests.
+ * ─────────────────────────────────────────────────────────────────────── */
+const optionalProtect = async (req, res, next) => {
+    if (req.headers.authorization?.startsWith('Bearer')) {
+        try {
+            const token = req.headers.authorization.split(' ')[1];
+            const decoded = jwt.verify(token, process.env.JWT_SECRET);
+            req.user = await User.findById(decoded.id).select(USER_FIELDS);
+        } catch (error) {
+            console.warn('Optional JWT Verify Error:', error.message);
+            req.user = null;
         }
-    } catch (error) {
-        res.status(500).json({ message: error.message });
+    } else {
+        req.user = null;
+    }
+    next();
+};
+
+/* ── requireSubscription ─────────────────────────────────────────────────
+ * Must be used AFTER protect or optionalProtect.
+ * ─────────────────────────────────────────────────────────────────────── */
+const requireSubscription = (req, res, next) => {
+    if (!req.user) {
+        return res.status(401).json({ message: 'Not authorized, no token' });
+    }
+
+    const subscribed =
+        req.user.isSubscribed &&
+        (!req.user.subscriptionExpiry ||
+            new Date(req.user.subscriptionExpiry) > new Date());
+
+    if (!subscribed) {
+        return res.status(403).json({
+            subscriptionRequired: true,
+            message: 'An active subscription is required to access this content.',
+        });
+    }
+
+    next();
+};
+
+/* ── isAuthorOf ──────────────────────────────────────────────────────────
+ * Factory middleware: verifies req.user is the author of a document.
+ * Usage: router.get('/:id/...', protect, isAuthorOf(Novel), handler)
+ * ─────────────────────────────────────────────────────────────────────── */
+const isAuthorOf = (NovelModel) => async (req, res, next) => {
+    try {
+        const novel = await NovelModel.findById(
+            req.params.id || req.params.novelId
+        );
+        if (!novel) return res.status(404).json({ error: 'Novel not found' });
+
+        if (novel.author.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ error: 'Not authorized — author only' });
+        }
+
+        req.novel = novel;
+        next();
+    } catch (err) {
+        res.status(500).json({ error: 'Authorization check failed' });
     }
 };
 
-module.exports = { registerUser, loginUser };
+module.exports = { protect, optionalProtect, requireSubscription, isAuthorOf };
