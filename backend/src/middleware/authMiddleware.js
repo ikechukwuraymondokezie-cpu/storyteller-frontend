@@ -2,11 +2,18 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
 /* ── FIELDS SELECTED ON EVERY AUTH ──────────────────────────────────────
- * -password removes the hashed password from all responses.
- * The access arrays are needed by routes that check ownership / purchase
- * status without a separate DB round-trip.
+ * MongoDB does not allow mixing exclusions (-field) with inclusions
+ * (field) in the same .select() call — except for _id.
+ *
+ * WRONG:  '-password purchasedAuvies coins'   ← mixed = crash
+ * RIGHT:  '-password -__v'                    ← exclusions only
+ *
+ * password has `select: false` in the schema so it's already hidden
+ * by default. We exclude it explicitly here as a safety belt.
+ * All other fields (coins, purchasedAuvies, savedNovels, etc.)
+ * are returned automatically because we're only excluding, not picking.
  * ─────────────────────────────────────────────────────────────────────── */
-const USER_FIELDS = '-password purchasedAuvies unlockedNovels savedNovels coins currency';
+const USER_FIELDS = '-password -__v';
 
 /* ── protect ─────────────────────────────────────────────────────────────
  * Requires a valid JWT. Returns 401 if missing or invalid.
@@ -53,21 +60,13 @@ const optionalProtect = async (req, res, next) => {
 };
 
 /* ── requireSubscription ─────────────────────────────────────────────────
- * Checks whether req.user has an active subscription.
- * Must be used AFTER protect or optionalProtect (so req.user is set).
- *
- * Usage: router.get('/something', protect, requireSubscription, handler)
- *
- * Returns 403 with { subscriptionRequired: true } if the user is not
- * subscribed, which the Flutter client can intercept to show a paywall.
+ * Must be used AFTER protect or optionalProtect.
  * ─────────────────────────────────────────────────────────────────────── */
 const requireSubscription = (req, res, next) => {
     if (!req.user) {
         return res.status(401).json({ message: 'Not authorized, no token' });
     }
 
-    // isSubscribed is a boolean field on the User model.
-    // subscriptionExpiry is optional — if set, check it hasn't lapsed.
     const subscribed =
         req.user.isSubscribed &&
         (!req.user.subscriptionExpiry ||
@@ -84,9 +83,7 @@ const requireSubscription = (req, res, next) => {
 };
 
 /* ── isAuthorOf ──────────────────────────────────────────────────────────
- * Factory middleware: verifies req.user is the author of a novel.
- * Attaches the novel to req.novel so the route handler doesn't refetch it.
- *
+ * Factory middleware: verifies req.user is the author of a document.
  * Usage: router.get('/:id/...', protect, isAuthorOf(Novel), handler)
  * ─────────────────────────────────────────────────────────────────────── */
 const isAuthorOf = (NovelModel) => async (req, res, next) => {
