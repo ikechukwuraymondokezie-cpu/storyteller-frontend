@@ -5,42 +5,29 @@
 
 const express = require('express');
 const router = express.Router();
-const { protect } = require('../middleware/authMiddleware');
+const { protect, optionalProtect } = require('../middleware/authMiddleware');
 const ctrl = require('../controllers/auvieController');
 
-// ── 1. PUBLIC ROUTES ──────────────────────────────────────────────────
-// These must be accessible without a token for immediate UI checks.
-
+// ── PUBLIC ROUTES (token optional — enriches author/purchase checks) ───
 router.get('/sounds', ctrl.getSounds);
 
-// Specific lookups must come BEFORE generic /:id routes
-router.get('/chapter/:chapterId', ctrl.getAuvieByChapter);
-router.get('/novel/:novelId', ctrl.getAuvieByNovel);
+// optionalProtect: sets req.user if token present, never blocks if absent.
+// This is critical — without it, authors always appear as guests on these
+// public routes and get the paywall even for their own content.
+router.get('/chapter/:chapterId', optionalProtect, ctrl.getAuvieByChapter);
+router.get('/novel/:novelId', optionalProtect, ctrl.getAuvieByNovel);
 
+// ── PROTECTED ROUTES (token required) ─────────────────────────────────
+router.get('/novel/:novelId/chapters', protect, ctrl.getChapterAuvieStatuses);
+router.get('/voices', protect, ctrl.getVoices);
+router.get('/draft/:novelId/:chapterId', protect, ctrl.getDraftPreview);
 
-// ── 2. PROTECTED ROUTES (Require Auth) ────────────────────────────────
-router.use(protect);
+// Generic ID lookups — must come AFTER specific named routes
+router.get('/:id/status', protect, ctrl.getStatus);
+router.get('/:id', optionalProtect, ctrl.getAuvie);
 
-// Status list for a specific novel's chapters
-router.get('/novel/:novelId/chapters', ctrl.getChapterAuvieStatuses);
-
-// Populate Flutter Workshop dropdown
-router.get('/voices', ctrl.getVoices);
-
-// Draft preview for the Workshop
-router.get('/draft/:novelId/:chapterId', ctrl.getDraftPreview);
-
-// Generic ID lookups (Keep these at the bottom)
-router.get('/:id/status', ctrl.getStatus);
-router.get('/:id', ctrl.getAuvie);
-
-// Audio generation
-router.post('/generate/:novelId/:chapterId', ctrl.generateAuvie);
-
-// Commerce
-router.post('/:id/purchase', ctrl.purchaseAuvie);
-
-// Persistent Workshop edits
-router.put('/:id/segments', ctrl.updateSegments);
+router.post('/generate/:novelId/:chapterId', protect, ctrl.generateAuvie);
+router.post('/:id/purchase', protect, ctrl.purchaseAuvie);
+router.put('/:id/segments', protect, ctrl.updateSegments);
 
 module.exports = router;
