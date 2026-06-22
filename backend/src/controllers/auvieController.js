@@ -41,16 +41,9 @@ fs.ensureDirSync(tmpDir);
 
 /* ── ACCESS RESOLVER ─────────────────────────────────────────────────── */
 
-/**
- * Resolves access for an Auvie.
- *
- * Returns:
- *   isChapterOne  — this is the first chapter of the novel (always free)
- *   isAuthor      — user is the novel's author (always free)
- *   hasPurchased  — user has bought this auvie with coins
- *   canAccess     — combined: may see segments/audio
- */
 const resolveAccess = async (auvie, userId) => {
+    // Always do a fresh DB fetch — never trust the populated novel object
+    // because populate depth varies between routes and may be missing author.
     const novelId = auvie.novel?._id
         ? auvie.novel._id.toString()
         : auvie.novel?.toString();
@@ -58,21 +51,40 @@ const resolveAccess = async (auvie, userId) => {
     const novel = await Novel.findById(novelId).select('author chapters._id');
 
     if (!novel) {
+        console.error('[resolveAccess] Novel not found:', novelId);
         return { isChapterOne: false, isAuthor: false, hasPurchased: false, canAccess: false };
     }
 
-    const isChapterOne = novel.chapters.length > 0 &&
-        novel.chapters[0]._id.toString() === auvie.chapterId?.toString();
+    const novelAuthorId = novel.author.toString();
+    const userIdStr = userId ? userId.toString() : null;
 
-    const isAuthor = userId
-        ? novel.author.toString() === userId.toString()
-        : false;
+    // isAuthor: compare as strings to avoid ObjectId type mismatches
+    const isAuthor = !!(userIdStr && novelAuthorId === userIdStr);
 
-    const hasPurchased = userId
-        ? auvie.purchasedBy.some(id => id.toString() === userId.toString())
-        : false;
+    // isChapterOne: compare chapterId (stored on auvie) against first chapter's _id
+    // Both sides cast to string to avoid ObjectId vs string mismatch
+    const auvieChapterId = auvie.chapterId?.toString();
+    const firstChapterId = novel.chapters.length > 0
+        ? novel.chapters[0]._id.toString()
+        : null;
+    const isChapterOne = !!(auvieChapterId && firstChapterId && auvieChapterId === firstChapterId);
+
+    // hasPurchased: check purchasedBy array
+    const hasPurchased = !!(userIdStr &&
+        auvie.purchasedBy?.some(id => id.toString() === userIdStr));
 
     const canAccess = isChapterOne || isAuthor || hasPurchased;
+
+    console.log('[resolveAccess]', {
+        novelAuthorId,
+        userIdStr,
+        isAuthor,
+        auvieChapterId,
+        firstChapterId,
+        isChapterOne,
+        hasPurchased,
+        canAccess,
+    });
 
     return { isChapterOne, isAuthor, hasPurchased, canAccess };
 };
@@ -81,7 +93,6 @@ const resolveAccess = async (auvie, userId) => {
 
 const formatAuvieResponse = (auvie, access) => {
     const { isChapterOne, isAuthor, hasPurchased, canAccess } = access;
-
     return {
         _id: auvie._id,
         novel: auvie.novel,
@@ -145,15 +156,6 @@ exports.getAuvie = async (req, res, next) => {
     }
 };
 
-/**
- * GET /api/f3/auvies/chapter/:chapterId
- *
- * Public route — no token required to check chapter 1.
- * Token enriches access for authors and coin-purchasers.
- *
- * Returns 403 { coinRequired, coinPrice } for locked chapters
- * so Flutter can show the purchase dialog.
- */
 exports.getAuvieByChapter = async (req, res, next) => {
     try {
         const { chapterId } = req.params;
@@ -162,7 +164,6 @@ exports.getAuvieByChapter = async (req, res, next) => {
             .populate('novel', 'title cover')
             .populate('author', 'name username avatar');
 
-        // Fallback: find by novel that contains this chapter
         if (!auvie) {
             const novel = await Novel.findOne({ 'chapters._id': chapterId }).select('_id');
             if (novel) {
@@ -209,7 +210,6 @@ exports.getAuvieByNovel = async (req, res, next) => {
             return res.status(404).json({ error: 'No Auvie found for this novel' });
         }
 
-        // Auto-assign chapterId if missing (legacy data)
         if (!auvie.chapterId) {
             const novel = await Novel.findById(novelId).select('chapters._id');
             if (novel?.chapters?.length > 0) {
@@ -229,7 +229,6 @@ exports.getAuvieByNovel = async (req, res, next) => {
 exports.getChapterAuvieStatuses = async (req, res, next) => {
     try {
         const { novelId } = req.params;
-
         const novel = await Novel.findOne({ _id: novelId, author: req.user._id })
             .select('chapters._id');
         if (!novel) return res.status(404).json({ error: 'Novel not found' });
@@ -277,7 +276,6 @@ exports.getStatus = async (req, res) => {
 exports.getDraftPreview = async (req, res) => {
     try {
         const { novelId, chapterId } = req.params;
-
         const novel = await Novel.findOne({ _id: novelId, author: req.user._id });
         if (!novel) return res.status(404).json({ error: 'Novel not found' });
 
@@ -473,7 +471,6 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, use
         await Auvie.findByIdAndUpdate(auvieId, {
             $set: { status: 'failed', errorMessage: genErr.message }
         });
-        // Refund coins on failure
         await User.findByIdAndUpdate(userId, { $inc: { coins: AUVIE_GENERATION_COST } });
     } finally {
         if (await fs.pathExists(workDir)) await fs.remove(workDir);
@@ -482,12 +479,6 @@ async function _runBackgroundWorker(auvieId, segments, voiceMap, novelTitle, use
 
 /* ── 5. PURCHASE ─────────────────────────────────────────────────────── */
 
-/**
- * POST /api/f3/auvies/:id/purchase
- *
- * Deducts coins from buyer, credits author (minus platform commission).
- * Author and chapter-1 are always free — cannot purchase what's already free.
- */
 exports.purchaseAuvie = async (req, res, next) => {
     try {
         const auvie = await Auvie.findById(req.params.id)
@@ -503,11 +494,9 @@ exports.purchaseAuvie = async (req, res, next) => {
         if (access.isAuthor) {
             return res.status(400).json({ error: 'Authors always have free access to their own Auvies' });
         }
-
         if (access.isChapterOne) {
             return res.status(400).json({ error: 'Chapter 1 Auvies are free — no purchase needed' });
         }
-
         if (access.hasPurchased) {
             return res.status(400).json({ error: 'Already owned' });
         }
