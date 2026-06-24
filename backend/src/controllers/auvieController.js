@@ -73,7 +73,14 @@ const resolveAccess = async (auvie, userId) => {
     const hasPurchased = !!(userIdStr &&
         auvie.purchasedBy?.some(id => id.toString() === userIdStr));
 
-    const canAccess = isChapterOne || isAuthor || hasPurchased;
+    // isAuthor always wins regardless of chapter position.
+    // isChapterOne check may fail if auvie.chapterId was set before chapters
+    // were finalised — in that case isAuthor still grants access.
+    const canAccess = isAuthor || isChapterOne || hasPurchased;
+
+    if (isAuthor && !isChapterOne) {
+        console.log('[resolveAccess] Author access granted (chapterId mismatch is OK for authors)');
+    }
 
     console.log('[resolveAccess]', {
         novelAuthorId,
